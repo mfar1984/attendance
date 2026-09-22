@@ -1,0 +1,27 @@
+{
+  "name": "attendance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Attendance system for Hikvision face recognition terminals (ISAPI)",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean",
+    "typecheck": "tsc --build",
+    "probe": "tsx scripts/probe.mts",
+    "build:prod": "npm run build && npm run build:prod --workspace @attendance/server && npm run build --workspace @attendance/web",
+    "start": "npm run start --workspace @attendance/server"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "smtp-server": "3.19.4",
+    "tsx": "4.23.12",
+    "typescript": "6.0.3"
+  }
+}

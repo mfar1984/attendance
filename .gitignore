@@ -1,0 +1,57 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Secrets - device credentials and DB passwords must never be committed
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Runtime artifacts
+logs/
+*.log
+storage/
+# Database dumps contain every attendance record and every hashed credential
+backups/
+*.sql
+tmp/
+.probe/
+# Session cookie jars from verification scripts
+cookies.txt
+
+# ---------------------------------------------------------------------------
+# Agent workspace
+#
+# Only the steering documents are versioned. Everything else under `.kiro` is
+# local working material: 12 GB of it at the time this rule was written.
+#
+# Three separate reasons, and each one alone is sufficient:
+#
+#   - `session/` holds full chat transcripts. Anything pasted into a
+#     conversation - a database password, a device admin credential - is in
+#     there verbatim. Committing it publishes it.
+#   - `docs/` holds vendor SDK archives, installers and DLLs. Redistributing
+#     those is not ours to do, and one file exceeds GitHub's 100 MB limit, so
+#     the push would be refused outright.
+#   - `*.sql` dumps carry `user_accounts`, `sessions` and `api_tokens` - hashed
+#     passwords, TOTP secrets and live session tokens for real staff.
+#
+# Steering is the exception because it is the reasoning behind the code, and it
+# belongs beside the code it explains.
+# ---------------------------------------------------------------------------
+.kiro/*
+!.kiro/steering/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/settings.json
+
+# Local archives
+*.zip
+*.rar
+*.7z

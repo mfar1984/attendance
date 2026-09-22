@@ -1,0 +1,5 @@
+KUNCI=4062
+YATIM=3
+hr.approval.title
+hr.approval.suspended.note
+hr.notify.profile.notSending

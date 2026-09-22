@@ -1,0 +1,25 @@
+{
+  /*
+   * Production build.
+   *
+   * Separate from `tsconfig.json`, which is `noEmit` for typechecking during
+   * development. Production runs plain `node` against compiled output rather than
+   * `tsx`: a transpile-on-boot step is a dependency the running service does not
+   * need, and it turns a syntax error in a file nobody imports yet into a crash at
+   * request time instead of at build time.
+   *
+   * `declaration` is off here. Nothing imports the server as a library, and the
+   * declaration files roughly double the build for no reader.
+   */
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "noEmit": false,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

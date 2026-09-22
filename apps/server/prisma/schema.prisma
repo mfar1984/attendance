@@ -1,0 +1,2864 @@
+// Attendance schema for Hikvision face recognition terminals.
+//
+// Design rules that the rest of the system depends on:
+//
+//  1. RawEvent is append-only and never edited. It is the copy of what the
+//     terminal reported and the only thing that settles a payroll dispute.
+//     Everything else is derived and can be rebuilt from it.
+//  2. Serial numbers are BigInt. The terminal advertises values up to
+//     3,000,000,000, which overflows a signed INT.
+//  3. employeeNo is capped at 32 characters because that is the terminal's own
+//     limit. Allowing more would let the UI create staff that can never be
+//     enrolled.
+//  4. Every login is tied to a staff record. There are no free-floating
+//     accounts, so the audit trail always resolves to a real person.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7 no longer accepts a connection URL here. Migrations read it from
+// prisma.config.ts, and the runtime client receives a driver adapter instead.
+datasource db {
+  provider = "mysql"
+}
+
+// ---------------------------------------------------------------------------
+// Organisation
+// ---------------------------------------------------------------------------
+
+model Location {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(120)
+  address   String?  @db.Text
+  latitude  Decimal? @db.Decimal(10, 7)
+  longitude Decimal? @db.Decimal(10, 7)
+  /// Radius for app check-in geofencing, in metres.
+  geofenceRadiusM Int @default(200)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  devices  Device[]
+  staff    Staff[]
+  postings JobPosting[]
+
+  @@map("locations")
+}
+
+model Department {
+  id       Int    @id @default(autoincrement())
+  name     String @db.VarChar(120)
+  code     String? @unique @db.VarChar(32)
+  parentId Int?
+
+  parent   Department?  @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Department[] @relation("DepartmentTree")
+  staff    Staff[]
+  postings JobPosting[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([parentId])
+  @@map("departments")
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+/// A person whose attendance is tracked. Distinct from UserAccount: at this
+/// headcount most staff never log in, and merging the two would turn the user
+/// list into thousands of rows that have never been used.
+model Staff {
+  id Int @id @default(autoincrement())
+
+  /// Also the terminal's `employeeNo`, and the join key between this database
+  /// and every device. Deliberately not the primary key: a restore that
+  /// renumbers ids would otherwise silently reassign people's attendance.
+  employeeNo String @unique @db.VarChar(32)
+
+  fullName String  @db.VarChar(128)
+  icNo     String? @db.VarChar(20)
+  phone    String? @db.VarChar(20)
+  email    String? @db.VarChar(190)
+
+  /// `male` or `female`, and null where it has not been recorded.
+  ///
+  /// Here for one reason: `LeaveType.eligibility` restricts maternity leave to women and
+  /// paternity leave to men, and that cannot be enforced without it.
+  ///
+  /// Nullable because most of this directory was imported from the terminals, which carry no
+  /// such field, so thousands of rows legitimately have none. Not defaulted: a guessed value
+  /// would silently grant or refuse a statutory entitlement. An application for a restricted
+  /// category by somebody with no value recorded is refused and says which field to fill.
+  ///
+  /// Not derived from `icNo`. The Malaysian NRIC does encode sex in its last digit, but reading
+  /// it would make a leave refusal depend on a number somebody typed, with no way to correct it
+  /// where the digit is wrong or the person holds a passport instead.
+  gender String? @db.VarChar(10)
+
+  /// Job title, typed rather than chosen from a list. Titles at this headcount are
+  /// long-tailed and locally worded, and a lookup table would either be incomplete
+  /// or become a second HR system to maintain.
+  position String? @db.VarChar(120)
+
+  /// Home address, all free text.
+  ///
+  /// No state or city lookup on purpose: a cascade of Malaysian states, cities and
+  /// postcodes is a dataset to keep current for a field nothing computes against.
+  addressLine1 String? @db.VarChar(190)
+  addressLine2 String? @db.VarChar(190)
+  city         String? @db.VarChar(120)
+  state        String? @db.VarChar(120)
+  postcode     String? @db.VarChar(12)
+  country      String? @db.VarChar(120)
+
+  /// Avatar file under `STORAGE_DIR/avatars`, written by the profile upload only.
+  ///
+  /// Deliberately not the biometric face. `numOfFace` counts templates enrolled on
+  /// the terminal, which are the credential someone scans with; this is a picture
+  /// beside a name on a screen. Treating one as the other would mean a staff member
+  /// changing their avatar believing it re-enrols their face, or an operator deleting
+  /// a photo and removing somebody's ability to clock in.
+  photoPath String? @db.VarChar(190)
+
+  departmentId Int?
+  locationId   Int?
+
+  hireDate  DateTime? @db.Date
+  validFrom DateTime?
+  validTo   DateTime?
+
+  /// Monthly wage, and the only input the overtime hourly rate is derived from
+  /// (Employment Act 1955 s.60I: monthly ÷ 26 ÷ 8).
+  ///
+  /// Nullable because most of this directory was imported from the terminals, which
+  /// carry no wage. An overtime request for somebody without one is refused and says
+  /// so, rather than being priced from a zero.
+  ///
+  /// HR data, like `departmentId`: read-only on the self-service profile. Somebody
+  /// editing their own wage would reprice their own overtime.
+  basicSalary Decimal? @db.Decimal(10, 2)
+
+  /// Terminal door PIN. Stored encrypted: the device itself returns this in
+  /// cleartext, so it must not be readable here as well.
+  doorPinEncrypted String? @db.Text
+
+  /// Credential counts mirrored from the terminal. A staff member enrolled with
+  /// all three at zero exists on the device but cannot scan at all.
+  numOfFace Int @default(0)
+  numOfFp   Int @default(0)
+  numOfCard Int @default(0)
+
+  workPatternId Int?
+  active        Boolean @default(true)
+  notes         String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  department  Department?   @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  location    Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  workPattern WorkPattern?  @relation(fields: [workPatternId], references: [id], onDelete: SetNull)
+  account     UserAccount?
+  enrolments  DeviceEnrolment[]
+  punches     Punch[]
+  records     AttendanceRecord[]
+  rosters     RosterEntry[]
+  exceptions  AttendanceException[]
+  justifications AttendanceJustification[]
+  leaveRequests    LeaveRequest[]
+  overtimeRequests OvertimeRequest[]
+  claimRequests    ClaimRequest[]
+  expenseRequests  ExpenseRequest[]
+  jobApplication   JobApplicant?
+  kpiAssignments   KpiAssignment[]
+  payslips         Payslip[]
+  allowances       StaffAllowance[]
+  bonuses          StaffBonus[]
+  commissions      StaffCommission[]
+  loans            StaffLoan[]
+  advances         StaffAdvance[]
+
+  @@index([departmentId])
+  @@index([locationId])
+  @@index([fullName])
+  @@index([active])
+  @@map("staff")
+}
+
+model Role {
+  id          Int    @id @default(autoincrement())
+  name        String @unique @db.VarChar(64)
+  description String? @db.VarChar(255)
+  /// Permission grants keyed by screen, as `{ "attendance.records": ["view","edit"] }`.
+  ///
+  /// Keyed by screen rather than by table so the person editing a role reasons
+  /// about what someone can open, not about which tables a feature touches.
+  permissions Json
+  /// Blocks deletion of the roles the system relies on.
+  systemRole  Boolean @default(false)
+  /// An inactive role denies login rather than being deleted, so the accounts
+  /// holding it keep their audit history.
+  status      String  @default("active") @db.VarChar(16)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts       UserAccount[]
+  approvalLevels HrApprovalLevel[]
+
+  @@map("roles")
+}
+
+/// A login. Always bound to a staff record.
+model UserAccount {
+  id Int @id @default(autoincrement())
+
+  /// Unique, so one person cannot hold two accounts and split their own audit
+  /// trail across them.
+  staffId Int @unique
+
+  /// `admin` administers the system; `staff` is the mobile check-in app.
+  accountType String @default("staff") @db.VarChar(16)
+  status      String @default("pending") @db.VarChar(16)
+
+  email        String  @unique @db.VarChar(190)
+  passwordHash String? @db.VarChar(255)
+
+  roleId Int
+
+  /// TOTP secret, encrypted at rest. Mandatory for admin accounts, impractical
+  /// to enforce across five thousand staff app logins.
+  totpSecretEncrypted String?  @db.Text
+  totpConfirmedAt     DateTime?
+
+  /// One device per staff account. Two bindings for one person is the visible
+  /// symptom of a shared login.
+  boundDeviceId   String? @db.VarChar(128)
+  boundDeviceAt   DateTime?
+
+  /// Off by default. App check-in only proves possession of a token, so it is
+  /// granted per person rather than opened to everyone.
+  allowAppCheckIn Boolean @default(false)
+
+  /// The language this person reads the interface in.
+  ///
+  /// Null means "follow whatever the deployment's default is", which is a different
+  /// state from "chose the language that happens to be the default today". Copying the
+  /// default into five thousand rows would freeze it: moving the default afterwards
+  /// would change nothing for anybody, and `TranslationLocale.isDefault` would become a
+  /// flag that only describes new accounts.
+  ///
+  /// A bare code with no foreign key, matching `TranslationValue.locale`. The route
+  /// checks it against an active locale on write and again on read — a language can be
+  /// switched off after somebody picked it, and nobody should be left pinned to a
+  /// half-translated screen because of an ON DELETE rule that never fired.
+  locale String? @db.VarChar(8)
+
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff    Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  role     Role      @relation(fields: [roleId], references: [id])
+  sessions Session[]
+  approvalLevels HrApprovalLevel[]
+
+  @@index([roleId])
+  @@index([status])
+  @@map("user_accounts")
+}
+
+model Session {
+  /// SHA-256 of the cookie value. A database leak must not yield usable
+  /// sessions.
+  tokenHash String   @id @db.Char(64)
+  accountId Int
+  issuedAt  DateTime @default(now())
+  expiresAt DateTime
+  lastSeenAt DateTime @default(now())
+  ipAddress String?  @db.VarChar(45)
+  userAgent String?  @db.VarChar(255)
+  revokedAt DateTime?
+
+  account UserAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// Client application that brokers user logins, as opposed to a server-to-server
+/// API key. Its tokens act on behalf of one staff member and are scoped to that
+/// person's own records.
+model AppClient {
+  id           Int     @id @default(autoincrement())
+  name         String  @db.VarChar(120)
+  platform     String  @db.VarChar(32)
+  clientId     String  @unique @db.VarChar(64)
+  secretHash   String  @db.VarChar(255)
+  minVersion   String? @db.VarChar(32)
+  status       String  @default("active") @db.VarChar(16)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("app_clients")
+}
+
+// ---------------------------------------------------------------------------
+// Terminals
+// ---------------------------------------------------------------------------
+
+model Device {
+  id       Int    @id @default(autoincrement())
+  name     String @db.VarChar(120)
+
+  /// Manufacturer of the physical terminal: `hikvision`, `zkteco`, or a future
+  /// registered vendor.
+  ///
+  /// Immutable after creation. Raw events and enrolment mappings belong to the
+  /// protocol semantics of the vendor that produced them; changing this field on
+  /// an existing row would reinterpret history rather than change a connection.
+  vendor String @default("hikvision") @db.VarChar(24)
+
+  /// Driver/protocol selected for this unit. Kept separate from `vendor` because one
+  /// manufacturer can have several transports — ZKTeco alone has TA Push/ADMS, AC
+  /// Push, BEST and the legacy 4370 protocol.
+  protocol String @default("isapi") @db.VarChar(32)
+
+  /// IP or hostname. For callback protocols this is the last/expected address and
+  /// not the identity — the serial number is. It remains useful for diagnosis and
+  /// for direct protocols such as ISAPI.
+  host     String @db.VarChar(190)
+  port     Int    @default(443)
+  useHttps Boolean @default(true)
+  /// Terminals ship with self-signed certificates, so verification is off by
+  /// default and opted into per device.
+  verifyTls Boolean @default(false)
+
+  username String? @db.VarChar(64)
+  /// AES-256-GCM ciphertext for a direct protocol such as ISAPI.
+  ///
+  /// Null for callback protocols. TA Push identifies a SenseFace by its serial
+  /// number; inventing a database password for a protocol that never sends one
+  /// would make the UI claim a credential protects something it does not.
+  passwordEncrypted String? @db.Text
+
+  model        String? @db.VarChar(64)
+  serialNumber String? @unique @db.VarChar(96)
+  firmware     String? @db.VarChar(32)
+  macAddress   String? @db.VarChar(32)
+
+  locationId Int?
+  doorNo     Int @default(1)
+
+  /// Face capacity read from the device, used to warn before enrolment fails.
+  faceCapacity Int @default(1500)
+
+  /// Capabilities confirmed for this exact unit, as neutral feature names.
+  ///
+  /// Null means the driver has not seen the unit yet. Stored because a callback
+  /// terminal may be offline while its editor is open; it is not a mirror of live
+  /// door settings, only a record of which operations the unit says exist.
+  capabilities Json?
+
+  status       String    @default("unknown") @db.VarChar(16)
+  lastSeenAt   DateTime?
+  clockDriftS  Int?
+  clockMode    String?   @db.VarChar(16)
+  lastErrorAt  DateTime?
+  lastError    String?   @db.VarChar(500)
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  location   Location?         @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  syncState  DeviceSyncState?
+  rawEvents  RawEvent[]
+  punches    Punch[]
+  enrolments DeviceEnrolment[]
+  unmapped   UnmappedDeviceUser[]
+  commands   DeviceCommand[]
+
+  @@index([locationId])
+  @@index([status])
+  @@index([vendor, protocol])
+  @@map("devices")
+}
+
+/// One command waiting for a callback-based terminal to collect it.
+///
+/// Hikvision is request/response: the server calls the unit and gets an answer before
+/// the HTTP request ends. ZKTeco TA Push reverses that direction. The SenseFace polls
+/// for work, receives one `C:<id>:...` command, then reports the result later. This
+/// table is the durable bridge between those two moments — an in-memory queue would
+/// lose a face enrolment whenever the server restarts.
+model DeviceCommand {
+  id       BigInt @id @default(autoincrement())
+  deviceId Int
+
+  /// Neutral intent (`person.upsert`, `face.enroll`, `person.remove`, `reboot`,
+  /// `people.query`). The payload below is deliberately protocol-shaped evidence;
+  /// the kind is what the rest of the application reasons about.
+  kind String @db.VarChar(32)
+
+  /// What the command is about, usually the terminal-local `employeeNo`.
+  ///
+  /// Exists so a newer command can supersede a pending one for the same subject. Without it,
+  /// saving a staff record three times leaves three identical writes waiting, and a face
+  /// superseded by a newer photograph is still collected — whichever arrives last wins, which
+  /// is not necessarily the one somebody just uploaded.
+  ///
+  /// Null for commands with no subject, such as a reboot.
+  subject String? @db.VarChar(64)
+
+  /// Exact command body handed to the terminal, excluding the `C:<id>:` envelope.
+  /// LongText because a base64 face is larger than MySQL TEXT's 64 KiB ceiling.
+  payload String @db.LongText
+
+  /// `pending`, `sent`, `succeeded`, or `failed`.
+  ///
+  /// A sent command may be delivered again until acknowledged. TA Push commands are
+  /// idempotent by content (upsert/delete), and repeating is safer than silently losing
+  /// one between the HTTP response and the device's acknowledgement.
+  status   String @default("pending") @db.VarChar(16)
+  attempts Int    @default(0)
+  result   String? @db.Text
+
+  createdAt   DateTime @default(now())
+  lastSentAt  DateTime?
+  completedAt DateTime?
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, status, createdAt])
+  /// Supports the supersede lookup, which runs on every queued write.
+  @@index([deviceId, kind, status, subject])
+  @@map("device_commands")
+}
+
+/// Pull cursor for one terminal.
+///
+/// Anchored on the serial number rather than a timestamp: serials survive clock
+/// corrections, and correcting these clocks is expected. A time-windowed cursor
+/// would skip or replay records the moment NTP moved the clock.
+model DeviceSyncState {
+  deviceId Int @id
+
+  lastSerialNo BigInt   @default(0)
+  lastSyncAt   DateTime?
+  lastPushAt   DateTime?
+  /// Events the pull found that push never delivered. A rising number means
+  /// push notifications are being lost.
+  recoveredByPull Int @default(0)
+
+  /// Single-flight guard for the reconcile pull.
+  ///
+  /// Cleared in the pass's own error handling, which never runs if the process is killed
+  /// mid-pull — and then this stays set and the device is never reconciled again.
+  syncing      Boolean @default(false)
+
+  /// When `syncing` was set, so an abandoned flag can be told from a running pass.
+  ///
+  /// A dedicated column rather than reusing `updatedAt`, which was tried and does not work: the
+  /// push path writes `lastPushAt` on this row for every scan, so `updatedAt` stays fresh even
+  /// while the flag has been stuck for weeks. That is exactly how the live database ended up
+  /// with a pull that had been dead since August while push kept working and nothing reported it.
+  syncingSince DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@map("device_sync_state")
+}
+
+/// Maps a person to their identity on one specific terminal.
+///
+/// This table exists because `employeeNo` is local to each device, not global.
+/// The same person can be 1001 on one terminal, 478 on another and 680 on a
+/// third - typically because the terminals were populated at different times, by
+/// different tools, or by hand at the keypad.
+///
+/// The terminal never sends us a face. It matches biometrics locally and reports
+/// only its own identifier, so this mapping is the sole link between a scan and a
+/// person. A wrong row here silently credits one employee's attendance to
+/// another, with nothing raising an error.
+///
+/// It also tracks distribution: each unit holds a fixed number of faces, so
+/// staff must be spread across terminals.
+model DeviceEnrolment {
+  id       Int @id @default(autoincrement())
+  deviceId Int
+  staffId  Int
+
+  /// The `employeeNo` this person carries on this terminal. Matches
+  /// `staff.employeeNo` whenever we performed the enrolment ourselves, and
+  /// differs on terminals that were already populated before we arrived.
+  deviceEmployeeNo String @db.VarChar(32)
+
+  /// False until a human has confirmed the pairing. Mappings discovered by
+  /// importing an existing terminal start unconfirmed, because the only clue
+  /// available is the name field, and names are neither unique nor trustworthy.
+  confirmed   Boolean   @default(false)
+  confirmedAt DateTime?
+  confirmedBy Int?
+
+  faceEnrolledAt DateTime?
+  syncedAt       DateTime?
+  /// Set when the last push to the device failed, so a retry can be targeted.
+  lastError String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  /// One person holds at most one identity per terminal.
+  @@unique([deviceId, staffId])
+  /// And one identifier on a terminal belongs to at most one person. Without
+  /// this, two staff could claim the same device ID and every scan from it would
+  /// be ambiguous.
+  @@unique([deviceId, deviceEmployeeNo])
+  @@index([staffId])
+  @@map("device_enrolments")
+}
+
+/// A device identifier that could not be matched to anybody.
+///
+/// Recorded rather than guessed at. Scans from an unmapped identifier still land
+/// in the raw log and raise an exception, so attendance is never silently
+/// attributed to the wrong person while this waits for review.
+model UnmappedDeviceUser {
+  id       Int @id @default(autoincrement())
+  deviceId Int
+
+  deviceEmployeeNo String @db.VarChar(32)
+  /// Name as held on the terminal. A hint for whoever reviews this, never used
+  /// to resolve automatically.
+  deviceName String? @db.VarChar(128)
+
+  numOfFace Int @default(0)
+  numOfFp   Int @default(0)
+  numOfCard Int @default(0)
+
+  /// Scans seen from this identifier while it remained unmapped.
+  scanCount   Int       @default(0)
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime?
+
+  dismissedAt DateTime?
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, deviceEmployeeNo])
+  @@map("unmapped_device_users")
+}
+
+// ---------------------------------------------------------------------------
+// Raw device log
+// ---------------------------------------------------------------------------
+
+/// Verbatim terminal event. Append-only.
+///
+/// No update or delete path exists for this table anywhere in the application,
+/// including for administrators. That is what makes it usable as evidence.
+model RawEvent {
+  id       BigInt @id @default(autoincrement())
+  deviceId Int
+
+  /// Stable identity supplied by the driver.
+  ///
+  /// Hikvision uses `isapi:<serialNo>`. ZKTeco TA Push has no monotonic event
+  /// serial, so its key is a SHA-256 digest of the terminal serial plus the complete
+  /// ATTLOG row. This, not a timestamp guess, is what makes a callback retry
+  /// idempotent. Namespaced by the driver so a future protocol cannot collide.
+  eventKey String @db.VarChar(96)
+
+  /// Terminal sequence where the protocol has one. Hikvision's serial can exceed
+  /// signed INT32. Null for TA Push, whose ATTLOG format has no event sequence.
+  serialNo BigInt?
+
+  /// Neutral meaning decided by the driver: `identified`, `unrecognised`, or
+  /// `other`. Derivation must not know that Hikvision face success is minor 75 or
+  /// that ZKTeco verify type 15 means face.
+  eventKind String @default("other") @db.VarChar(24)
+  verifyMethod String? @db.VarChar(16)
+
+  /// Vendor-native event codes, retained as evidence and for diagnostics. Null when
+  /// a protocol does not have a two-level numeric code (ZKTeco ATTLOG does not).
+  major Int?
+  minor Int?
+
+  /// Instant as reported by the terminal, offset included.
+  eventTime DateTime
+  /// Drift measured on the owning device when this arrived, so a record can be
+  /// judged later even after the clock is fixed.
+  deviceDriftS Int?
+
+  /// Raw `employeeNoString`. Intentionally not a foreign key: an event for an
+  /// unknown person must still be recorded, then surfaced as an exception.
+  employeeNo String? @db.VarChar(32)
+  personName String? @db.VarChar(128)
+
+  /// Kept only when it is a real credential. The firmware writes a 64-bit
+  /// sentinel here on face authentication, which is discarded on ingest.
+  cardNo     String? @db.VarChar(32)
+  verifyMode String? @db.VarChar(48)
+  doorNo     Int?
+  cardReaderNo Int?
+  maskWorn   String? @db.VarChar(8)
+
+  /// `attendanceStatus`, present only when the terminal's attendance mode is
+  /// enabled. Null on this configuration.
+  deviceDirection String? @db.VarChar(16)
+
+  /// Snapshot URL with the per-request `@WEB…` suffix stripped, since that
+  /// suffix changes on every read and is not part of the resource identity.
+  pictureUrl  String? @db.VarChar(255)
+  picturePath String? @db.VarChar(255)
+
+  /// `push` or `pull`, to show whether push delivery is keeping up.
+  arrivedVia String   @db.VarChar(8)
+  receivedAt DateTime @default(now())
+
+  /// Full payload, for diagnosing a firmware change without another site visit.
+  payload Json?
+
+  device Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  punch  Punch?
+
+  /// Makes ingest idempotent across every protocol. Push retries and a later pull
+  /// can both deliver the same event.
+  @@unique([deviceId, eventKey])
+  /// Retained for efficient Hikvision cursor lookups. MySQL permits multiple nulls,
+  /// so callback protocols without a sequence do not collide here.
+  @@unique([deviceId, serialNo])
+  @@index([employeeNo, eventTime])
+  @@index([eventTime])
+  @@index([eventKind, verifyMethod])
+  @@index([major, minor])
+  @@map("raw_events")
+}
+
+// ---------------------------------------------------------------------------
+// Derived attendance
+// ---------------------------------------------------------------------------
+
+/// A single accepted clock event for a known person.
+///
+/// Separate from RawEvent because not every event is a punch: major 5 also
+/// carries door and hardware events, unrecognised faces produce no person, and
+/// repeated scans seconds apart collapse into one.
+model Punch {
+  id Int @id @default(autoincrement())
+
+  staffId    Int
+  deviceId   Int?
+  rawEventId BigInt? @unique
+
+  punchAt DateTime
+
+  /// Terminal, app or manual. Recorded rather than inferred: a terminal scan
+  /// proves physical presence at a door, an app check-in proves only that a
+  /// token was held. Treating them alike would weaken every record.
+  source String @db.VarChar(16)
+  method String @default("unknown") @db.VarChar(16)
+
+  /// Resolved by the engine, since the hardware reports no direction while
+  /// attendance mode is off.
+  direction String @default("unknown") @db.VarChar(16)
+
+  /// True when suppressed by the dedup window. Kept rather than dropped so this
+  /// view and the raw log cannot disagree.
+  suppressed Boolean @default(false)
+
+  latitude  Decimal? @db.Decimal(10, 7)
+  longitude Decimal? @db.Decimal(10, 7)
+  /// Distance from the assigned location, for app check-ins.
+  distanceM Int?
+
+  note String? @db.VarChar(255)
+
+  createdAt DateTime @default(now())
+
+  staff    Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  device   Device?  @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  rawEvent RawEvent? @relation(fields: [rawEventId], references: [id], onDelete: SetNull)
+
+  @@index([staffId, punchAt])
+  @@index([punchAt])
+  @@index([deviceId])
+  @@map("punches")
+}
+
+model AttendanceRecord {
+  id Int @id @default(autoincrement())
+
+  staffId  Int
+  workDate DateTime @db.Date
+
+  shiftId Int?
+
+  scheduledStart DateTime?
+  scheduledEnd   DateTime?
+  checkInAt      DateTime?
+  checkOutAt     DateTime?
+
+  status String @db.VarChar(20)
+
+  lateMinutes       Int @default(0)
+  earlyLeaveMinutes Int @default(0)
+  overtimeMinutes   Int @default(0)
+  workedMinutes     Int @default(0)
+
+  /// `auto`, `manual` or `adjusted`, so a hand-edited row is never mistaken for
+  /// a computed one.
+  origin String @default("auto") @db.VarChar(16)
+
+  /// Set when the engine last rebuilt this row. A recalculation over a date
+  /// range replaces these in place from the raw log.
+  calculatedAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  shift  Shift? @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  blocks AttendanceBlock[]
+
+  @@unique([staffId, workDate])
+  @@index([workDate])
+  @@index([status])
+  @@map("attendance_records")
+}
+
+/// One worked interval inside a day. A day can hold several: split shifts and
+/// hospital night shifts that cross midnight both need more than one.
+model AttendanceBlock {
+  id       Int @id @default(autoincrement())
+  recordId Int
+  blockOrder Int
+
+  scheduledStart DateTime?
+  scheduledEnd   DateTime?
+  checkInAt      DateTime?
+  checkOutAt     DateTime?
+
+  lateMinutes       Int @default(0)
+  earlyLeaveMinutes Int @default(0)
+  overtimeMinutes   Int @default(0)
+  workedMinutes     Int @default(0)
+
+  record AttendanceRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@unique([recordId, blockOrder])
+  @@map("attendance_blocks")
+}
+
+/// Something the engine could not resolve and a human must review.
+model AttendanceException {
+  id Int @id @default(autoincrement())
+
+  kind    String @db.VarChar(32)
+  staffId Int?
+  deviceId Int?
+  rawEventId BigInt?
+
+  occurredAt DateTime
+  workDate   DateTime? @db.Date
+  detail     String?   @db.VarChar(500)
+
+  resolvedAt     DateTime?
+  resolvedBy     Int?
+  resolutionNote String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+
+  staff Staff? @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([kind, resolvedAt])
+  @@index([workDate])
+  @@index([staffId])
+  @@map("attendance_exceptions")
+}
+
+/// An employee's explanation for a day the engine already settled, and the decision on it.
+///
+/// ## Not the same thing as an exception, and deliberately not the same table
+///
+/// `AttendanceException` holds the eight conditions the engine *could not resolve* — an unmatched
+/// face, an unmapped identifier, a terminal whose clock had drifted. Resolving one corrects data.
+///
+/// This holds the four states the engine resolved with confidence and that a person wants to
+/// account for: late, left early, incomplete, absent. The record is right; the employee is
+/// explaining why. Deciding one changes no attendance figure anywhere.
+///
+/// Merging them would put "this terminal's clock drifted by 8 minutes" and "Siti was late because
+/// her child was ill" on one screen behind one form, and give the person deciding no way to tell
+/// which kind of thing they are looking at.
+///
+/// ## Why this points at a date and not at `attendance_records.id`
+///
+/// Attendance records are derived. `recomputeRange` deletes and rewrites them from the raw log
+/// whenever a shift rule changes or a terminal's clock is corrected, so a foreign key to one would
+/// cascade every justification into nothing on the next recalculation — silently, and only visibly
+/// much later. `(staffId, workDate)` survives a rebuild because it is what the rebuild is keyed on.
+///
+/// The route checks that a record exists carrying the claimed status before accepting a
+/// justification, so this is a soft reference that is verified on write rather than an unverified
+/// one.
+model AttendanceJustification {
+  id Int @id @default(autoincrement())
+
+  staffId Int
+  /// Calendar date. Domain 2 — see the `time-and-dates` steering.
+  workDate DateTime @db.Date
+
+  /// `late`, `early_leave`, `incomplete` or `absent`, from `AttendanceStatus`.
+  ///
+  /// No new enum. The engine already derives these four onto every record; what was missing was
+  /// somewhere to put the explanation.
+  statusKind String @db.VarChar(16)
+
+  reason String @db.VarChar(1000)
+
+  /**
+   * `pending`, `approved`, `rejected` or `reverted`.
+   *
+   * `reverted` is not a rejection. It sends the day back to the employee to write a better
+   * explanation, and it is a separate outcome because "your reason was not accepted" and "I cannot
+   * act on what you wrote" are different messages — and only one of them means the person should
+   * try again.
+   */
+  status String @default("pending") @db.VarChar(16)
+
+  submittedAt  DateTime  @default(now())
+  decidedAt    DateTime?
+  decidedBy    Int?
+  /// Written in source words. It is a historical record; translating it later is not possible.
+  decisionNote String?   @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  /// One explanation per person per day per kind. Ten reasons for one morning is not a record.
+  @@unique([staffId, workDate, statusKind])
+  @@index([status, workDate])
+  @@index([staffId, workDate])
+  @@map("attendance_justifications")
+}
+
+// ---------------------------------------------------------------------------
+// Scheduling
+// ---------------------------------------------------------------------------
+
+model WorkPattern {
+  id          Int    @id @default(autoincrement())
+  name        String @db.VarChar(120)
+  description String? @db.Text
+  /// `regular`, `shift` or `standby`.
+  kind        String @default("regular") @db.VarChar(16)
+  active      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  timeBlocks TimeBlock[]
+  shifts     Shift[]
+  staff      Staff[]
+
+  @@map("work_patterns")
+}
+
+model TimeBlock {
+  id            Int @id @default(autoincrement())
+  workPatternId Int
+  blockOrder    Int
+
+  startTime String @db.VarChar(5)
+  endTime   String @db.VarChar(5)
+  /// True when the block ends on the following calendar day. Without this a
+  /// night shift looks like a negative duration.
+  endsNextDay Boolean @default(false)
+
+  breakMinutes Int @default(0)
+  /// Grace window before the start and after the end within which a scan still
+  /// belongs to this block.
+  graceBeforeMinutes Int @default(30)
+  graceAfterMinutes  Int @default(30)
+
+  workPattern WorkPattern @relation(fields: [workPatternId], references: [id], onDelete: Cascade)
+
+  @@unique([workPatternId, blockOrder])
+  @@map("time_blocks")
+}
+
+model Shift {
+  id            Int     @id @default(autoincrement())
+  code          String  @unique @db.VarChar(20)
+  name          String  @db.VarChar(120)
+  colour        String? @db.VarChar(7)
+  workPatternId Int
+  active        Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workPattern WorkPattern        @relation(fields: [workPatternId], references: [id])
+  rosters     RosterEntry[]
+  records     AttendanceRecord[]
+
+  @@map("shifts")
+}
+
+model RosterEntry {
+  id       Int      @id @default(autoincrement())
+  staffId  Int
+  workDate DateTime @db.Date
+  shiftId  Int?
+  /// `work`, `rest` or `leave`.
+  entryType String  @default("work") @db.VarChar(16)
+  notes     String? @db.VarChar(255)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  shift Shift? @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  @@unique([staffId, workDate])
+  @@index([workDate])
+  @@map("roster_entries")
+}
+
+/// A category of leave, with the entitlement that goes with it.
+model LeaveType {
+  id   Int    @id @default(autoincrement())
+  code String @unique @db.VarChar(16)
+  name String @db.VarChar(120)
+
+  /// What this category is for, in the words the person applying will read.
+  ///
+  /// Separate from `name` because the name has to fit a table cell and a dropdown while
+  /// this has room to say when the category applies — "sick leave with a medical
+  /// certificate" is the part that stops somebody filing it without one.
+  ///
+  /// Nullable rather than defaulted to empty, so a type nobody has described yet is
+  /// distinguishable from one deliberately left bare.
+  description String? @db.VarChar(300)
+
+  /// Days granted per calendar year. Zero for unlimited categories such as unpaid
+  /// leave, where the balance is not the control. Counted in the unit `countedIn` names.
+  annualDays Int @default(0)
+
+  /// When set, `annualDays` is the first band and these two are the later ones.
+  ///
+  /// The Employment Act grades two entitlements by length of service: annual leave is 8/12/16
+  /// days (s.60E) and sick leave 14/18/22 (s.60F), stepping at two and five years of service.
+  /// So this is three numbers, not a flag with a rule hidden behind it.
+  ///
+  /// `serviceTiers` is stored rather than inferred from the two columns being non-null, because
+  /// "graded, and the later bands happen to equal the first" is a real configuration and has to
+  /// survive a save.
+  ///
+  /// Bands are chosen on `Staff.hireDate` at the start of the leave year. Somebody with no hire
+  /// date recorded gets the first band — the safe direction, and it is the band the statute gives
+  /// a new joiner.
+  serviceTiers Boolean @default(false)
+
+  /// Entitlement from two years of service, and from five. Null when `serviceTiers` is off.
+  annualDaysTier2 Int?
+  annualDaysTier3 Int?
+
+  /// Unused days roll into the next leave year, capped.
+  ///
+  /// Derived, never stored as a balance. The carried figure for year N is read from year N-1's
+  /// entitlement and usage at the moment somebody asks, so there is no year-end job to miss and
+  /// no stored number that can drift from the requests it was computed from. A cron that runs
+  /// once a year is a cron nobody notices has stopped.
+  ///
+  /// Carry chains only one year back on purpose. Rolling forward indefinitely turns an
+  /// entitlement into a savings account, and the balance stops resembling the year it is in.
+  carryForward        Boolean @default(false)
+  /// Ceiling on the carried days. Null means the whole unused remainder carries.
+  carryForwardMaxDays Int?
+
+  /// `working` or `calendar` — the unit `annualDays` is expressed in, and the unit a
+  /// request is charged in.
+  ///
+  /// `working` excludes rest days and public holidays inside the range: charging annual
+  /// leave for a Sunday is the kind of error that surfaces as a grievance.
+  ///
+  /// `calendar` charges every day in the range, because some entitlements are defined
+  /// that way by statute — maternity leave is 98 consecutive days (s.37), not 98 working
+  /// days, and counting it in working days would hand out roughly fourteen extra weeks.
+  ///
+  /// Whichever unit applies, the days charged and the `leave` roster rows written are the
+  /// same set. Those two numbers reconcile at payroll, so a mode that debited calendar days
+  /// while writing only working days would report less leave than it took off the balance.
+  countedIn String @default("working") @db.VarChar(10)
+
+  /// Unpaid days still suppress the absence, but payroll must be able to tell
+  /// them apart from paid days, so the flag lives on the type rather than being
+  /// inferred from the name.
+  paid Boolean @default(true)
+
+  /// `all`, `male` or `female` — who may file this category at all.
+  ///
+  /// Not cosmetic and not advisory. Maternity leave is a female entitlement and paternity
+  /// leave a male one, so a category restricted here is refused at apply time rather than
+  /// merely hidden on a form: the endpoint is reachable without the form.
+  ///
+  /// Checked against `Staff.gender`, which is nullable. A restricted category applied for by
+  /// somebody whose gender is not recorded is **refused**, naming the missing field — a gate
+  /// that waves through whatever it cannot verify is not a gate.
+  eligibility String @default("all") @db.VarChar(10)
+
+  /// A sick day needs the certificate; a day of annual leave needs nothing.
+  ///
+  /// Enforced on approval rather than on filing, so somebody can start the application and
+  /// attach the certificate they do not have in their hand yet. Refusing at filing time is how
+  /// people end up recording a medical absence as annual leave to get it submitted at all.
+  requiresDocument Boolean @default(false)
+
+  /// Emergency leave is filed after the fact; refusing a past date would make the
+  /// category unusable.
+  allowBackdated Boolean @default(false)
+
+  /// Off for categories a supervisor should not have to approve, such as
+  /// compassionate leave already agreed verbally.
+  requiresApproval Boolean @default(true)
+
+  colour String? @db.VarChar(16)
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requests LeaveRequest[]
+
+  @@map("leave_types")
+}
+
+/// One application, from request through to its effect on attendance.
+///
+/// Approving a request writes `RosterEntry` rows of type `leave` across the range
+/// and recomputes those days. That is the whole point of the feature: without it
+/// an approved application would change a status on this screen and leave the
+/// person marked absent in payroll.
+model LeaveRequest {
+  id          Int @id @default(autoincrement())
+  staffId     Int
+  leaveTypeId Int
+
+  /// Inclusive local dates.
+  fromDate DateTime @db.Date
+  toDate   DateTime @db.Date
+
+  /// Days consumed, in the unit `LeaveType.countedIn` names — working days for most
+  /// categories, every calendar day for statutory ones like maternity. Stored rather
+  /// than derived, because the roster and the holiday calendar can both change after
+  /// the fact and the figure that was approved is the one that counts against the
+  /// balance.
+  days Int
+
+  /// Why the leave is needed, in the applicant's words.
+  reason String? @db.VarChar(500)
+
+  /// Anything else the applicant wants on the record — a handover note, a contact number.
+  ///
+  /// Distinct from `reason`, which answers "why", and from `decisionNote`, which belongs to the
+  /// approver. Three free-text columns is two too many unless each answers a different question,
+  /// and these do: the ground for the request, the practical detail around it, and the verdict.
+  remarks String? @db.VarChar(500)
+
+  /// Supporting document under `STORAGE_DIR/leave`, when the category requires one.
+  ///
+  /// Same shape as `ClaimRequest.receiptPath`: the server derives the filename, the row
+  /// stores the name and never a path the client chose.
+  documentPath String? @db.VarChar(190)
+
+  /// `pending`, `approved`, `rejected` or `cancelled`.
+  status String @default("pending") @db.VarChar(16)
+
+  /// How far up the approval chain this has climbed. 0 means nobody has signed.
+  ///
+  /// Existing rows start at 0, which is correct: a pending row has no signatures, and a
+  /// row already `approved` is never re-read by the engine. With no chain configured the
+  /// behaviour is unchanged — one decision settles it and this becomes 1.
+  currentLevel Int @default(0)
+
+  decidedBy    Int?
+  decidedAt    DateTime?
+  decisionNote String?   @db.VarChar(500)
+
+  /// Set when approval replaced existing roster entries, so cancelling can warn
+  /// that the previous shifts are not restored automatically.
+  replacedRoster Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff     Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@index([staffId, fromDate])
+  @@index([status])
+  @@index([fromDate, toDate])
+  @@map("leave_requests")
+}
+
+/// One rung of an approval chain, for one HR request module.
+///
+/// Shared across every request module rather than one table per module, because the
+/// question is identical in each: who signs, in what order. A table per module would be
+/// four copies of the same engine, and the fourth would drift.
+///
+/// Either `approverAccountId` or `approverRoleId` is set, never both and never neither —
+/// enforced in `hr/approval.ts` because a database cannot express it. A level naming a
+/// role survives the person leaving; a level naming an account is exact. Both are useful,
+/// and forcing a choice between them would push somebody into hard-coding one.
+model HrApprovalLevel {
+  id     Int    @id @default(autoincrement())
+  /// `leave`, `overtime`, `claim` or `expenses`.
+  module String @db.VarChar(24)
+
+  /// 1-based rung. Contiguous from 1: a gap would make the chain length disagree with the
+  /// highest level, and a request could never reach its final rung.
+  level Int
+
+  approverAccountId Int?
+  approverRoleId    Int?
+
+  /// Off suspends the rung without losing who was on it. An inactive rung is skipped when
+  /// the chain is read, so the chain shortens rather than stalling.
+  active Boolean @default(true)
+
+  /// Shown beside the approver, for a rung whose purpose is not obvious from the name.
+  note String? @db.VarChar(255)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  approverAccount UserAccount? @relation(fields: [approverAccountId], references: [id], onDelete: Cascade)
+  approverRole    Role?        @relation(fields: [approverRoleId], references: [id], onDelete: Cascade)
+
+  /// Two rungs at the same level make the chain length wrong, and then nothing can ever
+  /// reach the last one. This is the constraint that prevents it.
+  @@unique([module, level])
+  @@index([module, active])
+  @@map("hr_approval_levels")
+}
+
+/// One decision on one request: the audit trail of a chain.
+///
+/// Append-only. Nothing updates or deletes a row here, because the point of the trail is
+/// that a decision cannot be quietly revised after the fact.
+///
+/// `applicationId` carries no foreign key — it points into a different table depending on
+/// `module`, which a single column cannot express. That means rows must be removed by hand
+/// when a request is deleted, or the trail attaches itself to whatever reuses the id.
+model HrApprovalRecord {
+  id            Int    @id @default(autoincrement())
+  module        String @db.VarChar(24)
+  applicationId Int
+
+  level Int
+
+  /// `approved` or `rejected`.
+  action String @db.VarChar(16)
+
+  actorAccountId Int?
+  /// The actor's name as it was, kept because an account can be renamed or removed and the
+  /// trail still has to say who signed.
+  actorLabel String @db.VarChar(150)
+
+  remarks String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+
+  @@index([module, applicationId])
+  @@index([createdAt])
+  @@map("hr_approval_records")
+}
+
+/// The wording of one notification, for one module and one event.
+///
+/// A table rather than more `HrModuleSetting` rows: a body runs to paragraphs, which a
+/// preference column has no business holding, and subject/body/enabled belong together.
+///
+/// Absent means the seeded default is used. That way an installation gets sensible mail
+/// without editing anything, and a row appears only once somebody has actually changed the
+/// wording — which also makes "has this been customised" answerable.
+model HrEmailTemplate {
+  id     Int    @id @default(autoincrement())
+  module String @db.VarChar(24)
+  /// `submitted`, `levelApproved`, `approved`, `rejected`, `cancelled`, `awaitingApprover`.
+  event String @db.VarChar(32)
+
+  subject String @db.VarChar(255)
+  body    String @db.Text
+
+  /// Off suspends this one event without discarding the wording somebody wrote.
+  enabled Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
+  updatedBy Int?
+
+  @@unique([module, event])
+  @@map("hr_email_templates")
+}
+
+/// A per-module preference, as a key and a value.
+///
+/// Key/value rather than a column per toggle: four modules times five preferences is a
+/// migration every time somebody wants one more switch, and the switches are exactly the
+/// part meant to change without a deployment.
+model HrModuleSetting {
+  id     Int    @id @default(autoincrement())
+  module String @db.VarChar(24)
+  key    String @db.VarChar(48)
+  /// Stored as text and parsed by the reader. Booleans are `'1'` and `'0'`.
+  value String @db.VarChar(500)
+
+  updatedAt DateTime @updatedAt
+  updatedBy Int?
+
+  @@unique([module, key])
+  @@map("hr_module_settings")
+}
+
+/// A competency somebody can be assessed against, held once for the whole organisation.
+///
+/// The catalogue exists so "Komunikasi" is one thing rather than ten spellings of one thing.
+/// Without it every template carried free text, which made two questions unanswerable: what is
+/// the average score for a given competency, and which forms use it. Both are the questions an
+/// appraisal cycle is read for.
+///
+/// `name` is unique and `category` groups the catalogue for the picker rather than affecting any
+/// arithmetic — weight is the only thing that decides what a competency is worth.
+model KpiCompetency {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique @db.VarChar(190)
+  /// `core`, `functional` or `leadership`.
+  category    String  @default("core") @db.VarChar(24)
+  description String? @db.VarChar(500)
+
+  /// Retired rather than deleted, so the templates that name it keep their wording.
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  templateItems KpiTemplateItem[]
+  scores        KpiScore[]
+
+  @@index([category, active])
+  @@map("kpi_competencies")
+}
+
+/// A scoring form: the competencies somebody is assessed against, and what each is worth.
+///
+/// Every competency is scored 0–100, always. An earlier draft made the scale configurable per
+/// template — 1–5, 1–10, 1–100 — and it was removed: two people assessed on different templates
+/// could not be compared, and a template whose scale changed after use silently rescaled every
+/// review already signed. A fixed 0–100 with weights as percentages says the same thing without
+/// carrying a second number that has to agree with the first.
+model KpiTemplate {
+  id          Int     @id @default(autoincrement())
+  code        String  @unique @db.VarChar(24)
+  name        String  @db.VarChar(190)
+  description String? @db.VarChar(500)
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items       KpiTemplateItem[]
+  assignments KpiAssignment[]
+
+  @@map("kpi_templates")
+}
+
+/// One competency on a template, and its share of the total.
+///
+/// Weights are a percentage and must sum to 100 across the template. Enforced in
+/// `hr/kpi.ts` rather than in the column, because a database cannot express a constraint across
+/// sibling rows — and a template summing to 90 produces totals that look like percentages and
+/// are not.
+model KpiTemplateItem {
+  id         Int  @id @default(autoincrement())
+  templateId Int
+
+  /// The catalogue entry. `SetNull` rather than `Restrict`, with the name kept below.
+  competencyId Int?
+  /**
+   * Denormalised from the catalogue.
+   *
+   * Kept so retiring a competency leaves the form readable instead of blanking a row on a
+   * template somebody is still assessed against. The FK answers "which forms use this"; this
+   * column answers "what does this row say".
+   */
+  competencyName String  @db.VarChar(190)
+  description    String? @db.VarChar(500)
+
+  /// Percent of the total. Two decimals, so thirds can be expressed as 33.33/33.33/33.34.
+  weight Decimal @db.Decimal(5, 2)
+
+  sortOrder Int
+
+  template   KpiTemplate    @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  competency KpiCompetency? @relation(fields: [competencyId], references: [id], onDelete: SetNull)
+
+  @@unique([templateId, sortOrder])
+  /// One competency once per form. Twice would weight it twice and read as two questions.
+  @@unique([templateId, competencyId])
+  @@index([templateId])
+  @@index([competencyId])
+  @@map("kpi_template_items")
+}
+
+/// A review cycle.
+///
+/// `dueOn` is when reviews are expected, not when the period ends. A cycle covering January to
+/// June is typically reviewed in July, and conflating the two would make every review look late.
+model KpiPeriod {
+  id   Int    @id @default(autoincrement())
+  code String @unique @db.VarChar(24)
+  name String @db.VarChar(190)
+
+  /// The span being assessed. Calendar dates.
+  fromDate DateTime @db.Date
+  toDate   DateTime @db.Date
+  /// When reviews are due, which is normally after `toDate`.
+  dueOn DateTime @db.Date
+
+  /// `open` or `closed`.
+  ///
+  /// Forward only. A closed period cannot be scored again: the grades in it have been read, and
+  /// in an installation with the payroll module they may have driven a bonus.
+  ///
+  /// There is no `draft`. A period that exists but cannot be assigned to is a row nobody can act
+  /// on, and the screen ended up carrying a status whose only purpose was to be left.
+  status String @default("open") @db.VarChar(16)
+
+  openedAt DateTime?
+  closedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments KpiAssignment[]
+
+  @@index([status])
+  @@map("kpi_periods")
+}
+
+/// Who is reviewed, by whom, against which template, in which period.
+///
+/// The template is captured here rather than looked up later, so editing a template does not
+/// change the form somebody was already assessed against.
+model KpiAssignment {
+  id         Int @id @default(autoincrement())
+  periodId   Int
+  staffId    Int
+  templateId Int
+
+  /**
+   * The one person who reviews this.
+   *
+   * Not a level chain. An appraisal is reviewed by the named reviewer on the assignment, and an
+   * earlier draft that routed it through `hr_approval_records` with a `currentLevel` had to be
+   * unwound: a chain says "anybody at level 2 may sign", and for an appraisal the whole point is
+   * that a particular person who observed the work signs it.
+   */
+  reviewerAccountId Int
+
+  /// `pending`, `inProgress`, `submitted` or `finalised`.
+  status String @default("pending") @db.VarChar(16)
+
+  /// Weighted percentage. Written when the review is submitted, not while it is being filled.
+  totalScore Decimal? @db.Decimal(5, 2)
+  /// Resolved from the score bands at submission and frozen, so later band edits do not
+  /// regrade a finished review.
+  gradeCode String? @db.VarChar(16)
+
+  submittedAt DateTime?
+  finalisedAt DateTime?
+
+  decidedBy    Int?
+  decisionNote String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  period   KpiPeriod   @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  staff    Staff       @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  template KpiTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  scores   KpiScore[]
+
+  /// One assessment per person per period. Two would produce two grades and no way to say
+  /// which one counts.
+  @@unique([periodId, staffId])
+  @@index([reviewerAccountId, status])
+  @@index([status])
+  @@map("kpi_assignments")
+}
+
+/// One competency's line on one assignment: the question, its weight, and the answer.
+///
+/// The whole row set is written when the assignment is created, copied off the template with
+/// `score` still null. That copy is the point of the table.
+///
+/// The earlier version pointed at `kpi_template_items` and read the weight through the FK, which
+/// meant editing a template regraded appraisals that had already been signed. The route defended
+/// against it by refusing to edit a template in use, so the form could not be corrected either —
+/// one fault producing two. Snapshotting the name and the weight here lets a template be edited
+/// freely, because nothing downstream reads it again.
+///
+/// It also means the client addresses a line by this row's own id. The weight is never sent by a
+/// caller and never accepted from one.
+model KpiScore {
+  id           Int @id @default(autoincrement())
+  assignmentId Int
+
+  /// Kept alongside the snapshot so "average score for this competency" is one query.
+  competencyId   Int?
+  competencyName String  @db.VarChar(190)
+  description    String? @db.VarChar(500)
+  /// Percent of the total, as it stood when this appraisal was created.
+  weight Decimal @db.Decimal(5, 2)
+
+  /// 0–100. Null until the reviewer answers this line.
+  score   Decimal? @db.Decimal(5, 2)
+  comment String?  @db.VarChar(500)
+
+  sortOrder Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignment KpiAssignment  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  competency KpiCompetency? @relation(fields: [competencyId], references: [id], onDelete: SetNull)
+
+  @@unique([assignmentId, sortOrder])
+  @@index([assignmentId])
+  @@index([competencyId])
+  @@map("kpi_scores")
+}
+
+/// A grade, and the score band that earns it.
+///
+/// Bands are inclusive at both ends and must neither overlap nor leave a gap — checked in
+/// `hr/kpi.ts`. A gap means a score that earns no grade at all, which surfaces as a blank on a
+/// review somebody has already signed.
+model KpiGrade {
+  id   Int    @id @default(autoincrement())
+  code String @unique @db.VarChar(16)
+  name String @db.VarChar(120)
+
+  /// Inclusive percentage band.
+  minScore Decimal @db.Decimal(5, 2)
+  maxScore Decimal @db.Decimal(5, 2)
+
+  /**
+   * Months of basic salary this grade is worth. Null means it carries no bonus.
+   *
+   * Named for its unit. It was `bonusFactor` and the screen showed `1.5`, which is a number
+   * without a meaning — a multiplier of what, over what period. Everybody who reads a bonus policy
+   * reads it in months, so the column says months and the screen says "1.50 bulan gaji asas".
+   */
+  bonusMonths Decimal? @db.Decimal(5, 2)
+
+  /**
+   * Hex, `#rrggbb`. Rendered as the chip behind the grade letter.
+   *
+   * On the results screen a grade is scanned rather than read — a column of A/B/C/D/E in one
+   * colour makes a distribution something you have to count. Stored rather than derived from the
+   * sort order, because bands get inserted and renamed and the colours should not shuffle.
+   */
+  color String @default("#64748b") @db.VarChar(7)
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("kpi_grades")
+}
+
+/// A vacancy, and what it is advertised as.
+///
+/// `code` is what a candidate quotes on the phone, so it is short and stable. Renaming the
+/// title later must not change it, which is why they are separate columns.
+model JobPosting {
+  id    Int    @id @default(autoincrement())
+  code  String @unique @db.VarChar(24)
+  title String @db.VarChar(190)
+
+  departmentId Int?
+  locationId   Int?
+
+  summary      String? @db.Text
+  requirements String? @db.Text
+
+  /// Vacancies advertised. The screen counts hires against it so a post nobody closed is
+  /// visible rather than quietly over-filled.
+  positions Int @default(1)
+
+  /// `permanent`, `contract`, `temporary` or `internship`.
+  employmentType String @default("permanent") @db.VarChar(24)
+
+  /// Advertised range. Both optional: some posts publish a range, some do not publish one.
+  salaryMin Decimal? @db.Decimal(10, 2)
+  salaryMax Decimal? @db.Decimal(10, 2)
+
+  /// Calendar dates, not timestamps.
+  openedOn DateTime  @db.Date
+  closesOn DateTime? @db.Date
+
+  /// `draft`, `published` or `closed`.
+  ///
+  /// A draft is invisible to candidates. Closing is not deleting: applicants already filed
+  /// against it still have to name the post they applied for.
+  status String @default("draft") @db.VarChar(16)
+
+  publishedAt DateTime?
+  closedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  location   Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  applicants JobApplicant[]
+
+  @@index([status])
+  @@index([openedOn])
+  @@map("job_postings")
+}
+
+/// One candidate against one posting.
+///
+/// Deliberately not a `Staff` row. A candidate is a member of the public: they have no employee
+/// number, no department, and no attendance. Filing them in the staff directory would put
+/// people who do not work here into every headcount and every report.
+///
+/// `staffId` is set when they are hired, which is the moment they become both — and it is what
+/// lets the hire happen without anybody retyping a name, an IC and a phone number.
+model JobApplicant {
+  id          Int    @id @default(autoincrement())
+  applicantNo String @unique @db.VarChar(24)
+  postingId   Int
+
+  fullName String  @db.VarChar(190)
+  icNo     String? @db.VarChar(20)
+  email    String? @db.VarChar(190)
+  phone    String? @db.VarChar(20)
+
+  /// CV file under `STORAGE_DIR/resumes`.
+  resumePath String? @db.VarChar(190)
+  coverNote  String? @db.Text
+
+  /**
+   * Recruitment pipeline, not an approval status.
+   *
+   * `new`, `screening`, `interview`, `offered`, `hired`, `rejected` or `withdrawn`. There is no
+   * "approved" candidate, which is why the shared approval engine is given explicit
+   * `statusWords` for this module rather than writing its own vocabulary here.
+   */
+  status       String @default("new") @db.VarChar(16)
+  currentLevel Int    @default(0)
+
+  interviewAt   DateTime?
+  interviewNote String?   @db.VarChar(500)
+
+  /// Set on hire, pointing at the staff record created from this application.
+  staffId Int? @unique
+
+  decidedBy    Int?
+  decidedAt    DateTime?
+  decisionNote String?   @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  posting JobPosting @relation(fields: [postingId], references: [id], onDelete: Restrict)
+  staff   Staff?     @relation(fields: [staffId], references: [id], onDelete: SetNull)
+
+  @@index([postingId, status])
+  @@index([status])
+  @@map("job_applicants")
+}
+
+/// A category of claim, with the rule that prices it.
+///
+/// Two shapes in one table, told apart by `ratePerUnit`:
+///
+///   set   — a rated claim. Mileage at RM0.60/km: the applicant enters a quantity and the
+///           amount is derived, so nobody can type a figure the rate does not support.
+///   null  — a flat claim. The applicant enters the amount and attaches the receipt.
+///
+/// Separate tables were considered and rejected: the approval chain, the numbering and every
+/// screen are identical, and the difference is one nullable column.
+model ClaimType {
+  id          Int     @id @default(autoincrement())
+  code        String  @unique @db.VarChar(16)
+  name        String  @db.VarChar(120)
+  description String? @db.VarChar(255)
+
+  /// Set for a rated claim. Amount is quantity × this, computed on the server.
+  ratePerUnit Decimal? @db.Decimal(10, 2)
+  /// What a unit is, for the form to label the quantity box. `km`, `hari`, `malam`.
+  unitLabel String? @db.VarChar(24)
+
+  /// Ceiling per claim. Null means the category has no cap of its own.
+  maxAmount Decimal? @db.Decimal(10, 2)
+
+  /// A claim without the receipt it requires cannot be filed. Off for rated categories
+  /// where the rate is the evidence.
+  requiresReceipt Boolean @default(true)
+
+  /// Off for categories granted the moment they are filed, matching `LeaveType.requiresApproval`.
+  ///
+  /// Recorded as approved on submit, and still **not paid** — payment is a separate step either way.
+  /// That distinction is why this is not the same thing as skipping the claim: somebody still has to
+  /// pay it, and the trail still says who.
+  requiresApproval Boolean @default(true)
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requests ClaimRequest[]
+
+  @@map("claim_types")
+}
+
+/// One claim, filed by or for a staff member.
+///
+/// `approvedAmount` is separate from `amount` and stays zero until the chain finishes. An
+/// approver may allow less than was claimed — a receipt for RM120 against a RM100 cap is
+/// approved at RM100, and both figures have to survive so the difference is answerable.
+model ClaimRequest {
+  id          Int      @id @default(autoincrement())
+  requestNo   String   @unique @db.VarChar(24)
+  staffId     Int
+  claimTypeId Int
+
+  /// The date on the claim itself, which is when it was put in — not when the money was spent.
+  ///
+  /// Each line carries its own `incurredOn`, because one claim covers several days: a trip filed on
+  /// Friday holds Monday's toll, Tuesday's parking and Wednesday's mileage. This is the date the
+  /// request number is sequenced from and the date the screen sorts by.
+  incurredOn DateTime @db.Date
+
+  /// Sum of the lines' quantities, for a rated category. Derived on write, never typed.
+  quantity Decimal? @db.Decimal(10, 2)
+  /// Rate at the time of filing, frozen so a later rate change cannot move a decided claim.
+  ///
+  /// One rate for the whole claim rather than per line: it is the category's rate captured when the
+  /// claim was made, and a claim whose lines were priced at different rates would have no single
+  /// figure anybody could check.
+  ratePerUnit Decimal? @db.Decimal(10, 2)
+
+  /// Sum of the lines. Derived on write, so no line can be added without the total moving.
+  amount Decimal @db.Decimal(10, 2)
+  /// What was allowed. Zero until the chain finishes.
+  approvedAmount Decimal @default(0) @db.Decimal(10, 2)
+
+  /// What the claim as a whole is for. Each line describes itself separately.
+  description String @db.VarChar(500)
+
+  /// `pending`, `approved`, `rejected` or `cancelled`.
+  status       String @default("pending") @db.VarChar(16)
+  currentLevel Int    @default(0)
+
+  decidedBy    Int?
+  decidedAt    DateTime?
+  decisionNote String?   @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff     Staff       @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  claimType ClaimType   @relation(fields: [claimTypeId], references: [id], onDelete: Restrict)
+  items     ClaimItem[]
+
+  @@index([staffId, incurredOn])
+  @@index([status])
+  @@index([incurredOn])
+  @@map("claim_requests")
+}
+
+/// One line on a claim: one cost, on one date, with its own receipt.
+///
+/// A claim used to be a single amount with a single receipt. That works for one taxi fare and
+/// breaks for the ordinary case — a week of travel is four tolls, two parkings and a hotel, each
+/// with a different date and a different piece of paper. Filing them as separate claims meant four
+/// request numbers and four trips through the approval chain for one journey.
+///
+/// ## What lives here and what stays on the claim
+///
+/// The date, the description, the quantity, the amount and the receipt are per line, because those
+/// are the things that differ between them. The category, the rate and the approval state belong to
+/// the claim, because those are the things that must not.
+///
+/// `ClaimRequest.amount` is the sum of these and is written in the same transaction, so there is no
+/// moment where a line exists that the total does not include.
+model ClaimItem {
+  id             Int @id @default(autoincrement())
+  claimRequestId Int
+
+  /// When this cost was incurred. A calendar date, not a timestamp.
+  incurredOn DateTime @db.Date
+
+  description String @db.VarChar(255)
+
+  /// Free text, and optional. A sub-heading the applicant chooses — "Tol", "Parkir", "Hotel".
+  ///
+  /// Deliberately not a lookup table. These are long-tailed and locally worded, and a second
+  /// table of categories under the category would be another list for somebody to maintain for a
+  /// field nothing computes against.
+  category String? @db.VarChar(120)
+
+  /// Set for a rated category. This line's amount is quantity × the claim's frozen rate.
+  quantity Decimal? @db.Decimal(10, 2)
+
+  /// What this line claims. Derived from the rate where there is one, typed where there is not.
+  amount Decimal @db.Decimal(10, 2)
+
+  /// Receipt file under `STORAGE_DIR/receipts`.
+  ///
+  /// Per line, not per claim: one journey's hotel bill and its toll slips are different documents,
+  /// and `ClaimType.requiresReceipt` therefore means "every line needs one" rather than "the claim
+  /// needs one somewhere".
+  receiptPath String? @db.VarChar(190)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  claim ClaimRequest @relation(fields: [claimRequestId], references: [id], onDelete: Cascade)
+
+  @@index([claimRequestId])
+  @@map("claim_items")
+}
+
+/// A spending category, for money a staff member paid out and wants back.
+///
+/// Distinct from `ClaimType`: a claim is priced by a rule the organisation sets, an expense
+/// is priced by what the receipt says. There is no rate here, and a receipt is not optional.
+model ExpenseCategory {
+  id          Int     @id @default(autoincrement())
+  code        String  @unique @db.VarChar(16)
+  name        String  @db.VarChar(120)
+  description String? @db.VarChar(255)
+
+  /// Ceiling per claim, null for none.
+  maxAmount Decimal? @db.Decimal(10, 2)
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requests ExpenseRequest[]
+
+  @@map("expense_categories")
+}
+
+/// One out-of-pocket expense, claimed back.
+model ExpenseRequest {
+  id         Int      @id @default(autoincrement())
+  requestNo  String   @unique @db.VarChar(24)
+  staffId    Int
+  categoryId Int
+
+  incurredOn DateTime @db.Date
+
+  amount         Decimal @db.Decimal(10, 2)
+  approvedAmount Decimal @default(0) @db.Decimal(10, 2)
+
+  /// Who was paid. A receipt without a payee is hard to reconcile against a statement.
+  payee String @db.VarChar(190)
+
+  description String  @db.VarChar(500)
+  /// Always required for an expense: the receipt is the entire basis of the figure.
+  receiptPath String? @db.VarChar(190)
+
+  status       String @default("pending") @db.VarChar(16)
+  currentLevel Int    @default(0)
+
+  decidedBy    Int?
+  decidedAt    DateTime?
+  decisionNote String?   @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff    Staff           @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  category ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([staffId, incurredOn])
+  @@index([status])
+  @@index([incurredOn])
+  @@map("expense_requests")
+}
+
+/// A multiplier, tied to the kind of day it applies to.
+///
+/// `dayType` is not decoration. The rate a date is paid at is looked up by it, so a
+/// rate saved without one would land on whatever the first row happened to be — a
+/// "public holiday" rate quietly becoming a weekday rate. It is required here.
+model OvertimeRate {
+  id          Int     @id @default(autoincrement())
+  code        String  @unique @db.VarChar(16)
+  name        String  @db.VarChar(120)
+  description String? @db.VarChar(255)
+
+  /// `weekday`, `restDay`, `holiday` or `holidayRestDay`.
+  dayType String @db.VarChar(20)
+
+  /// Times the hourly rate. Employment Act floors are 1.5 on a normal day, 2.0 on a
+  /// rest day and 3.0 on a public holiday; paying above the floor is a contractual
+  /// choice and is left alone. Below it is reported, not blocked — see `overtime.ts`.
+  multiplier Decimal @db.Decimal(4, 2)
+
+  /// Preferred when several active rates share a day type.
+  isDefault Boolean @default(false)
+  active    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requests OvertimeRequest[]
+
+  @@index([dayType, active])
+  @@map("overtime_rates")
+}
+
+/// One overtime claim, priced from measured scans rather than from typed hours.
+///
+/// The hours are not an input. The engine already derived `overtimeMinutes` for the
+/// day from the raw log, and that is what a claim is checked against — a four-hour
+/// window cannot be submitted as twenty. `requestedMinutes` may be lower than
+/// measured, because not all measured overtime is necessarily authorised, but never
+/// higher.
+///
+/// `amount` stays zero until approval. The approver is who picks the rate, so a
+/// pending request does not owe anybody money and there is nothing to unpick on a
+/// rejection.
+model OvertimeRequest {
+  id        Int      @id @default(autoincrement())
+  requestNo String   @unique @db.VarChar(24)
+  staffId   Int
+  workDate  DateTime @db.Date
+
+  /// What the engine measured on `workDate`, captured when the claim was filed.
+  /// Kept beside the claimed figure so the gap between them is visible later.
+  measuredMinutes  Int
+  requestedMinutes Int
+
+  /// Frozen at submission (s.60I). A later pay rise must not move a figure that has
+  /// already been decided, and a decided figure must stay reproducible.
+  hourlyRate Decimal @db.Decimal(10, 2)
+
+  /// Resolved at submission from this person's roster and the holiday calendar.
+  dayType String @db.VarChar(20)
+
+  /// Null while pending: the approver chooses it.
+  overtimeRateId Int?
+
+  /// Written only when the claim is approved.
+  amount Decimal @default(0) @db.Decimal(10, 2)
+
+  task   String @db.VarChar(190)
+  reason String @db.VarChar(500)
+
+  /// `pending`, `approved`, `rejected` or `cancelled`.
+  ///
+  /// No `paid` yet. Nothing can write it until the payroll run exists, and a status
+  /// no code path reaches reads as a broken feature rather than an absent one.
+  status String @default("pending") @db.VarChar(16)
+
+  /// How far up the approval chain this has climbed. 0 means nobody has signed.
+  currentLevel Int @default(0)
+
+  decidedBy    Int?
+  decidedAt    DateTime?
+  decisionNote String?   @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  rate  OvertimeRate? @relation(fields: [overtimeRateId], references: [id], onDelete: Restrict)
+
+  @@index([staffId, workDate])
+  @@index([status])
+  @@index([workDate])
+  @@map("overtime_requests")
+}
+
+model Holiday {
+  id       Int      @id @default(autoincrement())
+  name     String   @db.VarChar(120)
+  date     DateTime @db.Date
+  /// Null for a nationwide holiday, otherwise a state code.
+  stateCode String? @db.VarChar(8)
+  /// True for company-declared days, which no public API will ever return.
+  companyDeclared Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([date, stateCode])
+  @@map("holidays")
+}
+
+// ---------------------------------------------------------------------------
+// Configuration and trails
+// ---------------------------------------------------------------------------
+
+model Setting {
+  key       String   @id @db.VarChar(64)
+  value     Json
+  /// Marks values that must be encrypted before storage, such as API keys.
+  secret    Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+  updatedBy Int?
+
+  @@map("settings")
+}
+
+/// A named SMTP sender.
+///
+/// Several rather than one because the mail this system sends comes from different
+/// parts of the hospital: a payroll notice from Accounting, a leave decision from HR, a
+/// device fault from whoever runs the terminals. One shared sender address means a
+/// recipient cannot tell which, and a reply goes to whoever owns that mailbox.
+///
+/// The profile a notification uses is selected by `key`, so the code refers to
+/// "accounting" and never to a row id — which is what lets a profile be renamed, or
+/// repointed at a different relay, without touching the code that sends through it.
+model EmailProfile {
+  id Int @id @default(autoincrement())
+
+  /// Selected by code, so it is fixed once created. Renaming it would silently
+  /// detach every notification that names it.
+  key String @unique @db.VarChar(32)
+
+  name String @db.VarChar(120)
+
+  /// What recipients see. Separate from `name`, which is what operators see here.
+  fromName  String  @db.VarChar(120)
+  fromEmail String  @db.VarChar(190)
+  /// Where replies land when that is not the sending address, as with a no-reply.
+  replyTo   String? @db.VarChar(190)
+
+  /// An inactive profile is skipped and anything needing it stops sending. Kept as a
+  /// flag rather than a deletion so a misconfigured relay can be taken out of service
+  /// without losing what it was set to.
+  active Boolean @default(true)
+
+  /// `custom`, `gmail`, `outlook365` or `ses`. A preset only fills the host, port and
+  /// encryption below; the stored values remain authoritative, so a preset that
+  /// changes upstream cannot silently repoint an existing profile.
+  provider String @default("custom") @db.VarChar(24)
+
+  host String @db.VarChar(190)
+  port Int    @default(587)
+
+  /// `none`, `tls` for STARTTLS on 587, or `ssl` for implicit TLS on 465. Stored
+  /// explicitly rather than inferred from the port, because relays do get configured
+  /// on non-standard ports and guessing produces a handshake failure nobody can read.
+  encryption String @default("tls") @db.VarChar(8)
+
+  /// A relay that accepts the connection then never answers would otherwise hold a
+  /// request open until the client gives up.
+  timeoutSeconds Int @default(30)
+  maxRetries     Int @default(3)
+
+  /// Off for an internal relay that authorises by source address, which is the common
+  /// arrangement for a hospital's own SMTP server.
+  authenticate Boolean @default(true)
+
+  username String? @db.VarChar(190)
+  /// AES-256-GCM ciphertext, never returned by any endpoint.
+  passwordEncrypted String? @db.Text
+
+  /// Outcome of the last test send.
+  ///
+  /// Stored rather than held in memory because the question it answers — "did this
+  /// ever work" — is asked days later by somebody who did not run the test, and a
+  /// relay that worked at setup and fails now is the case worth catching.
+  lastTestAt     DateTime?
+  lastTestOk     Boolean?
+  lastTestDetail String?   @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("email_profiles")
+}
+
+/// SMS through Infobip.
+///
+/// A single row, unlike `EmailProfile`. One gateway account serves the whole hospital
+/// because the sender is a registered short code rather than a mailbox, and Infobip
+/// bills per account — there is nothing to gain from several.
+model SmsConfig {
+  /// Fixed. Upserted at 1 so there can only ever be one configuration.
+  id Int @id @default(1)
+
+  /// Off leaves the credentials in place and stops sending. Taking a gateway out of
+  /// service should not mean retyping an API key to put it back.
+  enabled Boolean @default(false)
+
+  /// Personalised per account, in the form `{subdomain}.api.infobip.com`. There is no
+  /// shared host to default to, which is why it is asked for rather than assumed.
+  baseUrl String @default("") @db.VarChar(190)
+
+  /// AES-256-GCM ciphertext, never returned by any endpoint. Needs the
+  /// `sms:message:send` scope on the Infobip side.
+  apiKeyEncrypted String? @db.Text
+
+  /// Alphanumeric or short-code sender registered with Infobip. An unregistered sender
+  /// is accepted by the API and then dropped by the carrier, so it is worth stating.
+  senderId String @default("") @db.VarChar(32)
+
+  /// Event keys that send an SMS, from the notification trigger registry.
+  triggers Json?
+
+  lastTestAt     DateTime?
+  lastTestOk     Boolean?
+  lastTestDetail String?   @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("sms_config")
+}
+
+/// Telegram notifications through a bot.
+///
+/// Also a single row: a bot belongs to the installation, not to a department, and a
+/// second bot posting into the same channel would only duplicate every message.
+model TelegramConfig {
+  id Int @id @default(1)
+
+  enabled Boolean @default(false)
+
+  /// AES-256-GCM ciphertext. Issued by @BotFather and equivalent to the bot itself —
+  /// anyone holding it can post as the bot and read everything it can see.
+  botTokenEncrypted String? @db.Text
+
+  /// Read back from `getMe` rather than typed, so it cannot disagree with the token.
+  botUsername String? @db.VarChar(64)
+
+  /// `@channelusername` for a public channel, or the numeric `-100…` id for a private
+  /// one. The bot has to be an administrator of it either way.
+  chatId String @default("") @db.VarChar(64)
+
+  /// Optional direct recipient for alerts that should reach a person rather than a
+  /// channel. Numeric, because a bot cannot start a chat from a username alone.
+  ownerUserId   String? @db.VarChar(32)
+  ownerUsername String? @db.VarChar(64)
+
+  triggers Json?
+
+  lastTestAt     DateTime?
+  lastTestOk     Boolean?
+  lastTestDetail String?   @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("telegram_config")
+}
+
+// ---------------------------------------------------------------------------
+// Public API and webhooks
+// ---------------------------------------------------------------------------
+
+/// How the public API behaves. A single row, upserted at 1.
+///
+/// Off by default. An API that starts serving the moment the software is installed is
+/// an attack surface nobody agreed to open.
+model ApiConfig {
+  id Int @id @default(1)
+
+  /// Master switch. With this off the public routes answer 404, not 403 — an endpoint
+  /// that admits it exists is an endpoint worth probing.
+  enabled Boolean @default(false)
+
+  /// Off means the API answers unauthenticated requests. Kept switchable because a
+  /// read-only feed on an isolated VLAN is a legitimate arrangement, but it is a
+  /// decision that should be made deliberately rather than inherited from a default.
+  requireToken Boolean @default(true)
+
+  /// Every call recorded in the activity log. Costs a row per request.
+  logRequests Boolean @default(true)
+
+  /// `*` for any origin. Only affects browsers; a server-to-server caller ignores CORS
+  /// entirely, so this is not an access control.
+  allowAllOrigins Boolean @default(false)
+  allowedOrigins  Json?
+
+  rateLimitEnabled Boolean @default(true)
+  maxPerMinute     Int     @default(120)
+
+  /// Addresses or CIDR ranges allowed to call the API. Empty means any.
+  ipWhitelist Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("api_config")
+}
+
+/// A server-to-server API credential.
+///
+/// Distinct from `AppClient`, which brokers a staff member's own login. A token here
+/// acts on its own behalf and is limited by its scopes.
+///
+/// Only the hash is stored, so a database dump does not hand over API access and the
+/// value cannot be re-read even by an administrator. It is shown once, at creation.
+model ApiToken {
+  id   Int    @id @default(autoincrement())
+  name String @db.VarChar(120)
+
+  /// `hka_` followed by the leading characters of the secret.
+  ///
+  /// Serves two purposes: the screen can identify a token without revealing it, and a
+  /// token that leaks into a log or a repository is greppable by prefix.
+  prefix String @unique @db.VarChar(24)
+
+  /// SHA-256 hex of the whole token.
+  ///
+  /// A fast hash on purpose, unlike a password. Passwords need a slow KDF because they
+  /// are low-entropy and guessable; this is 192 bits of randomness, where brute force is
+  /// not the threat and a slow hash would only add latency to every single request.
+  tokenHash String @unique @db.VarChar(64)
+
+  /// `screen.key:action` pairs from the permission registry. A token cannot hold a scope
+  /// the registry does not define.
+  scopes Json
+
+  expiresAt DateTime?
+  revokedAt DateTime?
+
+  /// Set when this token has been rotated out.
+  ///
+  /// Rotation issues a replacement and leaves the old one working until `graceUntil`, so
+  /// a deployment can pick up the new value without a window where every call fails.
+  supersededAt   DateTime?
+  graceUntil     DateTime?
+  rotatedToPrefix String?  @db.VarChar(24)
+
+  lastUsedAt   DateTime?
+  lastUsedIp   String?   @db.VarChar(64)
+  requestCount Int       @default(0)
+
+  createdBy Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tokenHash])
+  @@map("api_tokens")
+}
+
+/// An outbound subscription: we POST to somebody else when something happens.
+model Webhook {
+  id   Int    @id @default(autoincrement())
+  name String @db.VarChar(120)
+  url  String @db.VarChar(500)
+
+  /// Signing key, encrypted at rest. Shown once at creation because the receiver needs
+  /// it to verify signatures; regenerated rather than revealed if it is lost.
+  secretEncrypted String @db.Text
+
+  /// Event keys from the notification trigger registry.
+  events Json
+
+  active Boolean @default(true)
+
+  /// Consecutive failures. A receiver that has been unreachable for days is switched off
+  /// rather than retried forever — an endless retry loop against a dead host is
+  /// indistinguishable from an outbound scan.
+  failureCount   Int     @default(0)
+  disabledReason String? @db.VarChar(255)
+
+  lastDeliveryAt DateTime?
+  lastStatus     Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deliveries WebhookDelivery[]
+
+  @@map("webhooks")
+}
+
+/// One delivery attempt, kept so a silent failure is visible.
+///
+/// Without this the only evidence of a webhook that stopped working is its absence at the
+/// other end, which nobody notices.
+model WebhookDelivery {
+  id        BigInt @id @default(autoincrement())
+  webhookId Int
+  event     String @db.VarChar(48)
+  attempt   Int    @default(1)
+
+  ok         Boolean @default(false)
+  httpStatus Int?
+  durationMs Int?
+  error      String? @db.VarChar(500)
+
+  requestBody  String  @db.Text
+  /// Truncated: a receiver that answers with an HTML error page would otherwise fill the
+  /// table with markup.
+  responseBody String? @db.VarChar(1000)
+
+  createdAt DateTime @default(now())
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId, createdAt])
+  @@index([createdAt])
+  @@map("webhook_deliveries")
+}
+
+/// Authentication policy the operator controls.
+///
+/// These three were constants in the code. They are here because the numbers a hospital
+/// wants are a policy decision, and because the API makes the login surface worth
+/// tightening rather than leaving at whatever the first developer typed.
+model SecurityConfig {
+  id Int @id @default(1)
+
+  /// Failed attempts before an account is locked.
+  maxFailedLogins Int @default(5)
+  /// How long a lock lasts. An operator editing the account clears it early.
+  lockoutMinutes  Int @default(15)
+  /// Minimum characters for an administrator or staff account password.
+  passwordMinLength Int @default(12)
+
+  /// Applied to a new API token when no expiry is chosen. Zero means no expiry, which is
+  /// allowed but stated on the screen as what it is.
+  tokenDefaultDays Int @default(90)
+
+  /// How long a rotated token keeps working after its replacement is issued.
+  rotationGraceHours Int @default(24)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("security_config")
+}
+
+/// Who did what. Includes reads such as exports.
+model ActivityLog {
+  id        BigInt   @id @default(autoincrement())
+  accountId Int?
+  actorLabel String  @db.VarChar(128)
+
+  /// `info`, `warn`, `error` or `debug`.
+  ///
+  /// Stored rather than derived from `action` at read time, because the severity
+  /// counters above the table have to be answerable from an index. Deriving them
+  /// would mean scanning the whole table on every page load.
+  level String @default("info") @db.VarChar(8)
+
+  /// Functional area, using the same vocabulary as the permission registry so the
+  /// filter cannot offer a category the system does not actually enforce.
+  category String @default("system") @db.VarChar(32)
+
+  /// Where the action came from: `web`, `terminal`, `app` or `system`.
+  source String @default("web") @db.VarChar(16)
+
+  action String  @db.VarChar(64)
+  detail String? @db.VarChar(500)
+
+  /// Request path. Lets an entry be traced back to the endpoint that produced it.
+  path      String?  @db.VarChar(190)
+  ipAddress String?  @db.VarChar(45)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([accountId])
+  @@index([level, createdAt])
+  @@index([category, createdAt])
+  @@map("activity_log")
+}
+
+/// What changed, from what, to what, and why. Append-only.
+///
+/// Separate from ActivityLog because mixing reads in buries the changes, and
+/// this is the table that answers a payroll dispute.
+model AuditLog {
+  id        BigInt   @id @default(autoincrement())
+  accountId Int?
+  actorLabel String  @db.VarChar(128)
+
+  action     String @db.VarChar(16)
+  entityType String @db.VarChar(64)
+  entityId   String @db.VarChar(64)
+
+  /// Only the fields that moved, as `{ field: { before, after } }`.
+  changes Json?
+  reason  String? @db.VarChar(500)
+
+  ipAddress String?  @db.VarChar(45)
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_log")
+}
+
+// ---------------------------------------------------------------------------
+// Translation
+// ---------------------------------------------------------------------------
+
+/// A language the interface can be shown in.
+///
+/// Malay is marked as the source rather than stored as a translation of itself. The
+/// interface is written in Malay, so a stored Malay copy of every label would be a second
+/// place the wording lives — and the moment the two disagreed, the copy would win and a
+/// correction made in the code would silently do nothing.
+model TranslationLocale {
+  /// BCP-47-ish short code: `ms`, `en`, `zh-Hans`.
+  code String @id @db.VarChar(8)
+
+  /// What it is called in the language list, e.g. `English`.
+  name String @db.VarChar(64)
+
+  /// The language the source strings are written in. Exactly one, and it cannot be
+  /// removed or renamed away — deleting it would leave the labels with no origin.
+  isSource Boolean @default(false)
+
+  /// Off until somebody decides it is complete enough to offer.
+  ///
+  /// A half-translated language switched on in front of users shows a screen that is
+  /// partly one language and partly another, which reads as a broken screen rather than
+  /// as an unfinished translation.
+  active Boolean @default(false)
+
+  /// The language the interface opens in.
+  ///
+  /// Exactly one row holds this, enforced in the route rather than by the database —
+  /// MySQL has no partial unique index, so a `@@unique` here would allow one default in
+  /// total including the falses. Setting it clears the previous holder in the same
+  /// transaction, and it can only be set on a language that is active: opening the
+  /// interface in a language nobody has finished is the same broken screen, shown to
+  /// everybody instead of to whoever chose it.
+  isDefault Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("translation_locales")
+}
+
+/// One translatable string in the interface.
+///
+/// The numeric id is the whole reason this table exists. Numbering the labels by
+/// iteration order at read time would mean "label 1" is a different label the moment a
+/// screen is added, so the number could not be written down, quoted in a message, or
+/// stamped onto the interface to find a string. Here the id is assigned once against a
+/// stable text key and never reused.
+model TranslationLabel {
+  id Int @id @default(autoincrement())
+
+  /// Stable key from the code registry, e.g. `permission.screen.staff.directory`.
+  /// The id follows this key for the life of the installation.
+  key String @unique @db.VarChar(190)
+
+  /// Which registry it came from, for filtering.
+  groupKey String @db.VarChar(32)
+
+  /// The string as it appears in the source, kept so an override can be compared
+  /// against it and so a source change is visible rather than silently overridden.
+  sourceText String @db.Text
+
+  /// Where in the interface it appears. Somebody editing a string needs to know what
+  /// they are changing before they change it.
+  context String? @db.VarChar(190)
+
+  /// Set when the key disappears from the code registry.
+  ///
+  /// Not deleted: the id may already have been written down, and a row that vanishes
+  /// takes its history with it. A retired label is shown as retired instead.
+  retiredAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  values TranslationValue[]
+
+  @@index([groupKey])
+  @@index([retiredAt])
+  @@map("translation_labels")
+}
+
+/// An operator-supplied string for one label in one locale.
+///
+/// Absent means "use the source string". Storing a copy of the source for every label
+/// would make a later wording change in the code invisible, because the stored copy
+/// would keep winning.
+model TranslationValue {
+  labelId Int
+  locale  String @db.VarChar(8)
+  text    String @db.Text
+
+  updatedBy Int?
+  updatedAt DateTime @updatedAt
+
+  label TranslationLabel @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([labelId, locale])
+  @@index([locale])
+  @@map("translation_values")
+}
+
+// ---------------------------------------------------------------------------
+// Payroll
+//
+// A payslip is a derived artefact, like `AttendanceRecord`: it is built from the attendance
+// figures, the compensation rows and the statutory rates that were in force. So a period in
+// `draft` can be processed again and again — each run discards the previous payslips and
+// rebuilds them, which is what makes a corrected terminal clock or a fixed identity mapping
+// reachable. Once a period is approved that stops: from then on the payslips ARE the record,
+// and the way to change one is a later adjustment, not a rewrite of a figure somebody signed.
+//
+// The hours never come from here. `reports/aggregate.ts` produces them for both the payroll
+// export and the payroll run, because a payroll period that counted its own hours would be a
+// second attendance engine and nobody reconciles the second against the first.
+// ---------------------------------------------------------------------------
+
+/// A pay cycle, and how far along it is.
+///
+/// `fromDate`/`toDate` are operator-set rather than derived from the month. A cycle running the
+/// 26th to the 25th is ordinary, and a month-only period would force every hospital on that
+/// cycle to pay the wrong days. `periodYear`/`periodMonth` name the cycle for the payslip
+/// number and for sorting; they are not its bounds.
+///
+/// Periods must not overlap. Enforced in `hr/payroll.ts` rather than in a column, because a
+/// database cannot express a constraint across sibling rows — and two periods covering one day
+/// pay that day's overtime twice, to the same person, from two payslips that each look right.
+model PayrollPeriod {
+  id   Int    @id @default(autoincrement())
+  code String @unique @db.VarChar(24)
+  name String @db.VarChar(120)
+
+  periodYear  Int
+  periodMonth Int
+
+  /// Calendar bounds of the cycle, and the day wages are transferred.
+  fromDate    DateTime @db.Date
+  toDate      DateTime @db.Date
+  paymentDate DateTime @db.Date
+
+  /// `draft`, `processing`, `approved`, `paid` or `closed`. One way, no reverse.
+  ///
+  /// `draft` is the only status a run may rebuild. `closed` refuses every write, enforced in
+  /// the route rather than left to the interface — the reference locked it by convention and
+  /// nothing stopped an update reaching a closed period's payslips.
+  status String @default("draft") @db.VarChar(16)
+
+  /// Written by the run, from the same figures the payslips hold, so a period total and the
+  /// payslips under it cannot disagree.
+  staffCount      Int     @default(0)
+  totalGross      Decimal @default(0) @db.Decimal(15, 2)
+  totalDeductions Decimal @default(0) @db.Decimal(15, 2)
+  totalNet        Decimal @default(0) @db.Decimal(15, 2)
+  /// Employer EPF/SOCSO/EIS. Not deducted from anybody; it is what the cycle costs.
+  totalEmployerCost Decimal @default(0) @db.Decimal(15, 2)
+
+  processedBy Int?
+  processedAt DateTime?
+  approvedBy  Int?
+  approvedAt  DateTime?
+  paidBy      Int?
+  paidAt      DateTime?
+  closedBy    Int?
+  closedAt    DateTime?
+
+  /// How wages left the building. Recorded on the period because a bulk transfer is one
+  /// instruction covering every payslip in it.
+  paymentMethod    String? @db.VarChar(24)
+  paymentReference String? @db.VarChar(120)
+
+  note String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payslips    Payslip[]
+  bonuses     StaffBonus[]
+  commissions StaffCommission[]
+
+  @@index([periodYear, periodMonth])
+  @@index([status])
+  @@index([fromDate, toDate])
+  @@map("payroll_periods")
+}
+
+/// One person's pay for one period.
+///
+/// Every figure is stored rather than computed on read, and that is the point: the statutory
+/// rates change by government announcement, so a payslip recomputed next year would not match
+/// the one that was paid. The attendance denominators are stored for the same reason — a
+/// payslip has to stay answerable after the roster it was built from has moved on.
+///
+/// Prisma has no generated columns, so `gross`, `totalDeductions` and `netPay` are written by
+/// `computePayslip` and asserted by `scripts/test-payroll.mts`: gross − deductions must equal
+/// net on every row, or the lines on the payslip do not add up to the figure at the bottom.
+model Payslip {
+  id        Int    @id @default(autoincrement())
+  payslipNo String @unique @db.VarChar(24)
+  periodId  Int
+  staffId   Int
+
+  // ── Earnings, each one snapshotted ──
+  basicSalary      Decimal @default(0) @db.Decimal(12, 2)
+  allowanceAmount  Decimal @default(0) @db.Decimal(12, 2)
+  overtimeAmount   Decimal @default(0) @db.Decimal(12, 2)
+  bonusAmount      Decimal @default(0) @db.Decimal(12, 2)
+  commissionAmount Decimal @default(0) @db.Decimal(12, 2)
+  gross            Decimal @default(0) @db.Decimal(12, 2)
+
+  /// The two statutory bases, stored because they are not derivable from `gross`.
+  /// Overtime is outside both; whether bonus counts toward EPF is a setting.
+  epfWages          Decimal @default(0) @db.Decimal(12, 2)
+  contributoryWages Decimal @default(0) @db.Decimal(12, 2)
+
+  // ── Deducted from this person ──
+  epfEmployee     Decimal @default(0) @db.Decimal(12, 2)
+  socsoEmployee   Decimal @default(0) @db.Decimal(12, 2)
+  eisEmployee     Decimal @default(0) @db.Decimal(12, 2)
+  taxDeduction    Decimal @default(0) @db.Decimal(12, 2)
+  loanDeduction   Decimal @default(0) @db.Decimal(12, 2)
+  advanceDeduction Decimal @default(0) @db.Decimal(12, 2)
+  otherDeductions Decimal @default(0) @db.Decimal(12, 2)
+  totalDeductions Decimal @default(0) @db.Decimal(12, 2)
+  netPay          Decimal @default(0) @db.Decimal(12, 2)
+
+  // ── Paid by the employer, on top ──
+  epfEmployer   Decimal @default(0) @db.Decimal(12, 2)
+  socsoEmployer Decimal @default(0) @db.Decimal(12, 2)
+  eisEmployer   Decimal @default(0) @db.Decimal(12, 2)
+
+  /// The attendance figures this was built from, copied out of `reports/aggregate.ts`.
+  /// `scheduledDays` is the denominator every percentage on a payslip divides by; without it
+  /// stored, a payslip queried after the roster changed cannot be checked against itself.
+  scheduledDays  Int @default(0)
+  presentDays    Int @default(0)
+  absentDays     Int @default(0)
+  leaveDays      Int @default(0)
+  overtimeMinutes Int @default(0)
+
+  /// `draft`, `approved`, `paid` or `cancelled`. Follows the period, except that a single
+  /// payslip may be cancelled without unwinding the whole cycle.
+  status String @default("draft") @db.VarChar(16)
+
+  note String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  period PayrollPeriod  @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  staff  Staff          @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  lines  PayslipLine[]
+
+  @@unique([periodId, staffId])
+  @@index([staffId])
+  @@index([status])
+  @@map("payroll_payslips")
+}
+
+/// One line on a payslip, and what produced it.
+///
+/// The totals above could be read without these rows; the lines exist so a figure can be
+/// answered rather than only shown. "RM540 of allowances" is not an answer to somebody asking
+/// why their pay changed — three named rows are.
+///
+/// `label` is written in source words and never translated afterwards. It is a historical
+/// record of what the money was called at the time, and an allowance renamed next year must
+/// not silently rename itself on a payslip that has already been paid.
+model PayslipLine {
+  id        Int @id @default(autoincrement())
+  payslipId Int
+
+  /// `earning` or `deduction`. Which side of the payslip this sits on.
+  kind String @db.VarChar(12)
+
+  /// What produced it: `basic`, `allowance`, `overtime`, `bonus`, `commission`, `epf`,
+  /// `socso`, `eis`, `tax`, `loan`, `advance` or `other`.
+  source String @db.VarChar(16)
+
+  /// The row it came from, where there is one. Null for `basic` and the statutory lines,
+  /// which are computed rather than filed.
+  sourceId Int?
+
+  label  String  @db.VarChar(190)
+  amount Decimal @db.Decimal(12, 2)
+
+  sortOrder Int @default(0)
+
+  payslip Payslip @relation(fields: [payslipId], references: [id], onDelete: Cascade)
+
+  @@index([payslipId])
+  @@map("payroll_payslip_lines")
+}
+
+/// A kind of allowance the organisation pays, and how it is worked out.
+///
+/// A catalogue rather than four fixed columns. The reference had `housing_allowance`,
+/// `transport_allowance`, `meal_allowance` and `other_allowances`, which means a fifth kind of
+/// allowance is a schema migration and a deployment — and the whole reason this is a table is
+/// that allowances are the part meant to change without one.
+///
+/// `taxable` and `epfLiable` are per type because they genuinely differ: a travel
+/// reimbursement is neither, a housing allowance is both.
+model AllowanceType {
+  id          Int     @id @default(autoincrement())
+  code        String  @unique @db.VarChar(24)
+  name        String  @db.VarChar(120)
+  description String? @db.VarChar(500)
+
+  /// `fixed` for a ringgit amount, `percentOfBasic` for a share of basic salary.
+  calcMode String @default("fixed") @db.VarChar(20)
+
+  /// Default the form offers. A per-person row may differ; this only saves typing.
+  defaultAmount Decimal? @db.Decimal(10, 2)
+
+  /// Whether this counts toward the EPF wage base and toward taxable income. Both default
+  /// true, which is the conservative direction: under-contributing is the employee's problem
+  /// to discover, and they discover it years later.
+  epfLiable Boolean @default(true)
+  taxable   Boolean @default(true)
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  allowances StaffAllowance[]
+
+  @@map("allowance_types")
+}
+
+/// A standing allowance for one person.
+///
+/// Recurring by nature, so there is no period link: the run picks up every row that is active
+/// and whose `effectiveFrom` has arrived. `effectiveTo` ends one without deleting it, because a
+/// payslip already paid names an allowance that has to keep existing.
+///
+/// No approval action on this screen, unlike bonuses. An allowance is part of what somebody was
+/// hired on; it is configured, not applied for.
+model StaffAllowance {
+  id      Int @id @default(autoincrement())
+  staffId Int
+  typeId  Int
+
+  /// A ringgit amount, or a percentage, according to the type's `calcMode`.
+  value Decimal @db.Decimal(10, 2)
+
+  /// Calendar window this applies to. `effectiveFrom` is compared against the period, which
+  /// the reference stored and then never filtered on — so an allowance dated next quarter
+  /// started paying immediately.
+  effectiveFrom DateTime  @db.Date
+  effectiveTo   DateTime? @db.Date
+
+  active Boolean @default(true)
+  note   String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+
+  staff Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  type  AllowanceType @relation(fields: [typeId], references: [id], onDelete: Restrict)
+
+  @@index([staffId, active])
+  @@index([effectiveFrom])
+  @@map("staff_allowances")
+}
+
+/// A one-off bonus, tied to the period that pays it.
+///
+/// `kpiAssignmentId` is unique, so one appraisal can pay at most one bonus. The bonus is still
+/// an ordinary row: a KPI grade carrying a bonus factor produces one of these for somebody to
+/// approve, rather than reaching a payslip on its own. That is the difference between a figure
+/// HR can withhold or reschedule and a figure that appears from nowhere on payday.
+model StaffBonus {
+  id       Int    @id @default(autoincrement())
+  bonusNo  String @unique @db.VarChar(24)
+  staffId  Int
+  periodId Int?
+
+  /// `performance`, `annual`, `festival`, `project`, `attendance` or `other`.
+  bonusType String @db.VarChar(20)
+  name      String @db.VarChar(190)
+
+  amount Decimal  @db.Decimal(10, 2)
+  awardedOn DateTime @db.Date
+
+  /// Set when this came from a finalised appraisal. Unique: an appraisal pays once.
+  kpiAssignmentId Int? @unique
+
+  /// `pending`, `approved`, `paid` or `cancelled`. Only `approved` reaches a payslip.
+  status String @default("pending") @db.VarChar(16)
+
+  approvedBy Int?
+  approvedAt DateTime?
+  note       String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+
+  staff  Staff          @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  period PayrollPeriod? @relation(fields: [periodId], references: [id], onDelete: SetNull)
+
+  @@index([staffId])
+  @@index([periodId, status])
+  @@map("staff_bonuses")
+}
+
+/// A one-off commission, tied to the period that pays it. Same shape as a bonus, kept separate
+/// because they are granted by different people for different reasons and the permission
+/// registry splits them.
+model StaffCommission {
+  id           Int    @id @default(autoincrement())
+  commissionNo String @unique @db.VarChar(24)
+  staffId      Int
+  periodId     Int?
+
+  /// `sales`, `project`, `referral` or `other`.
+  commissionType String @db.VarChar(20)
+  name           String @db.VarChar(190)
+
+  amount Decimal  @db.Decimal(10, 2)
+  earnedOn DateTime @db.Date
+
+  status String @default("pending") @db.VarChar(16)
+
+  approvedBy Int?
+  approvedAt DateTime?
+  note       String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+
+  staff  Staff          @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  period PayrollPeriod? @relation(fields: [periodId], references: [id], onDelete: SetNull)
+
+  @@index([staffId])
+  @@index([periodId, status])
+  @@map("staff_commissions")
+}
+
+/// A loan repaid by instalment out of wages.
+///
+/// `remainingBalance` and `paidInstalments` are moved by the payroll run, inside the same
+/// transaction as the payslip that deducted the money. Outside it, the balance and the payslip
+/// could disagree, and the one somebody trusts is the balance.
+///
+/// `startsOn` IS compared against the period. The reference stored it and never filtered on it,
+/// so a loan approved with a future start date began deducting from the next run.
+model StaffLoan {
+  id      Int    @id @default(autoincrement())
+  loanNo  String @unique @db.VarChar(24)
+  staffId Int
+
+  principal        Decimal @db.Decimal(10, 2)
+  monthlyInstalment Decimal @db.Decimal(10, 2)
+  totalInstalments Int
+
+  /// Moved by the run. `remainingBalance` reaching zero flips `status` to `completed`.
+  remainingBalance Decimal @db.Decimal(10, 2)
+  paidInstalments  Int     @default(0)
+
+  issuedOn DateTime  @db.Date
+  startsOn DateTime  @db.Date
+  closedOn DateTime? @db.Date
+
+  purpose String? @db.VarChar(190)
+
+  /// `pending`, `active`, `completed` or `cancelled`. Only `active` is deducted.
+  status String @default("pending") @db.VarChar(16)
+
+  approvedBy Int?
+  approvedAt DateTime?
+  note       String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, status])
+  @@index([startsOn])
+  @@map("staff_loans")
+}
+
+/// A salary advance, recovered over a chosen number of months.
+///
+/// The difference from a loan is only where the instalment comes from: a loan carries an agreed
+/// instalment, an advance divides the amount by the months. Kept as its own table because the
+/// permission registry grants them separately — an advance is a favour a supervisor arranges,
+/// a loan is a contract.
+model StaffAdvance {
+  id        Int    @id @default(autoincrement())
+  advanceNo String @unique @db.VarChar(24)
+  staffId   Int
+
+  principal       Decimal @db.Decimal(10, 2)
+  repaymentMonths Int
+  /// Derived from `principal / repaymentMonths`, stored so a payslip stays reproducible after
+  /// somebody reschedules the recovery.
+  monthlyDeduction Decimal @db.Decimal(10, 2)
+
+  remainingBalance Decimal @db.Decimal(10, 2)
+  paidMonths       Int     @default(0)
+
+  issuedOn DateTime  @db.Date
+  startsOn DateTime  @db.Date
+  closedOn DateTime? @db.Date
+
+  reason String? @db.VarChar(190)
+
+  status String @default("pending") @db.VarChar(16)
+
+  approvedBy Int?
+  approvedAt DateTime?
+  note       String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy Int?
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, status])
+  @@index([startsOn])
+  @@map("staff_advances")
+}

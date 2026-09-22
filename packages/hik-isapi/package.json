@@ -1,0 +1,26 @@
+{
+  "name": "@attendance/hik-isapi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Typed ISAPI client for Hikvision access control terminals",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "fast-xml-parser": "5.11.1",
+    "undici": "7.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3"
+  }
+}
