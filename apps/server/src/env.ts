@@ -19,6 +19,16 @@ const schema = z.object({
   HOST: z.string().default('0.0.0.0'),
 
   /**
+   * Whether this process runs the background timers.
+   *
+   * On by default, because a LAN install is one process that owns everything. Set to
+   * false where a supervisor stops the application when it goes idle — the timers die
+   * with it, and a reconcile pull that silently stopped is harder to notice than one
+   * that was never started. Those hosts run the work from cron instead.
+   */
+  RUN_WORKERS: z.stringbool().default(true),
+
+  /**
    * 32 bytes hex. Encrypts device passwords, TOTP secrets and door PINs at rest,
    * so a database dump does not hand over door access.
    */
