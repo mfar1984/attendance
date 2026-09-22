@@ -6,8 +6,13 @@ build/
 # Secrets - device credentials and DB passwords must never be committed
 .env
 .env.*
+# Templates are named after the installation SHAPE, not the environment, because
+# standalone IS production. A file called `.env.production.example` invites somebody
+# to copy the cloud settings onto a LAN server, where RUN_WORKERS=false would mean
+# nothing ever pulls attendance.
 !.env.example
-!.env.production.example
+!.env.standalone.example
+!.env.cloud-agent.example
 
 # Runtime artifacts
 logs/

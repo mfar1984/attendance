@@ -8,30 +8,39 @@ soalan per terminal: **siapa yang boleh menyentuh kotak itu?**
 | **Standalone** | dalam LAN hospital | pelayan itu sendiri | satu tapak, tiada app mudah alih |
 | **Cloud + agent** | hos awam | agent di setiap tapak | banyak tapak, atau app Android/iOS |
 
-Standalone dibina dahulu dan dihantar dahulu. Agent ialah fasa berasingan; membinanya
-sebelum kontrak driver terbukti bermakna menulis dua kali.
+**Standalone ialah bentuk yang dihantar.** Agent ialah fasa berasingan; membinanya sebelum
+kontrak driver terbukti bermakna menulis dua kali.
 
-## Persekitaran produksi
+## Standalone ialah lalai, bukan konfigurasi khas
 
-Hos ialah **cPanel** dengan Node.js Selector, yang menjalankan Phusion Passenger.
-Folder subdomain juga menjadi akar aplikasi.
+Empat sahaja medan `.env` yang tiada lalai: `DATABASE_URL`, `ENCRYPTION_KEY`,
+`SESSION_SECRET`, `INGEST_PASSWORD`. Lalai bagi `CONNECTOR_MODE` (`direct`), `RUN_WORKERS`
+(`true`) dan `HOST` (`0.0.0.0`) **sudah** bentuk standalone.
 
-| | |
-|---|---|
-| Domain | `attendance.malaysiadev.com` |
-| Klon / akar aplikasi | `/home/malaysiadev/attendance.malaysiadev.com` |
-| Fail permulaan | `server.js` (di akar klon) |
-| Data berterusan | `/home/malaysiadev/attendance-data` (di **luar** klon) |
-| Pangkalan data | `malaysiadev_attendance` |
-| Pengguna MySQL | `malaysiadev_attendance` |
-| Git | `https://github.com/mfar1984/attendance.git` |
+Itu bukan kebetulan dan patut kekal begitu: bentuk yang paling banyak dipasang patut bentuk
+yang paling sedikit perlu ditaip. `.env.standalone.example` ialah templatnya.
 
-**Kata laluan tidak ditulis di sini, dan tidak dalam mana-mana fail yang dijejak.** Ia hidup
-dalam `.env` pada pelayan sahaja. `.env.production.example` ialah templatnya.
+**Kata laluan tidak ditulis dalam mana-mana fail yang dijejak.** Ia hidup dalam `.env` pada
+mesin itu sahaja.
 
-`~/attendance-data` duduk di luar klon dengan sengaja. Avatar yang dimuat naik dan dump
+`STORAGE_DIR` dan `BACKUP_DIR` menunjuk **di luar** klon. Avatar yang dimuat naik dan dump
 pangkalan data tidak boleh berada dalam pokok kerja git — satu `git clean` atau checkout
 cawangan akan membuangnya, dan tiada apa dalam output git yang akan menyebut ia berlaku.
+
+### Mengikat antara muka
+
+Terminal kena menghubungi pelayan untuk menghantar peristiwa, jadi ia tidak boleh mengikat
+loopback sahaja. **Utamakan alamat LAN mesin itu daripada `0.0.0.0`** — mesin yang juga ada
+NIC kedua, VPN, atau WiFi akan menerbitkan API pada kesemuanya.
+
+Trafik pada port itu **HTTP biasa**: kuki sesi dan kredensial ingest menyeberangi LAN dalam
+bentuk jelas. Letakkan terminal dan pelayan pada VLAN sendiri, atau tamatkan TLS di hadapan
+dan tuding terminal ke situ. Ini dinyatakan kerana ia mudah tidak disedari, bukan kerana ia
+menghalang pemasangan.
+
+`INGEST_PUBLIC_URL` ditulis ke dalam konfigurasi pendengar HTTP setiap terminal, jadi ia
+mesti alamat yang **terminal** boleh capai — alamat LAN pelayan ini, bukan nama hos awam dan
+bukan localhost.
 
 ## Apa yang dijejak
 
@@ -58,8 +67,19 @@ sebelah kod yang diterangkannya.
 npm run build:prod
 ```
 
-Tiga langkah dalam satu: `packages/*` melalui project references, kemudian
-`apps/server` ke `dist/` melalui `tsconfig.build.json`, kemudian `apps/web` ke `dist/`.
+Tiga langkah dalam satu: `packages/*` melalui project references, kemudian `apps/server`
+(`prisma generate`, kemudian `tsc -p tsconfig.build.json` ke `dist/`), kemudian `apps/web`
+ke `dist/`.
+
+**`prisma generate` berjalan SEBELUM `tsc`, dan susunan itu bukan kosmetik.** Jenis Prisma
+dijana, bukan ditulis. Tanpa langkah itu, `tsc` pada klon bersih gagal dengan **301 ralat**
+yang setiap satunya berbunyi seperti masalah lain — `Module '@prisma/client' has no exported
+member 'Staff'`, kemudian tiga ratus `implicitly has an 'any' type` kerana setiap hasil query
+menjadi `{}`. Tiada satu pun daripadanya menyebut punca sebenar.
+
+Ia lulus pada mesin pembangunan kerana `node_modules/.prisma/client` sudah ada dari kerja
+sebelumnya. Bug yang hanya muncul pada pemasangan bersih ialah bug yang hanya muncul semasa
+pengedaran.
 
 **Produksi menjalankan `node` terhadap output yang dikompil, bukan `tsx`.** Transpile-pada-boot
 ialah kebergantungan yang servis berjalan tidak perlukan, dan ia menukar ralat sintaks dalam
@@ -69,36 +89,70 @@ fail yang belum diimport daripada kegagalan bina menjadi kegagalan pada masa per
 ialah satu yang mengeluarkan. Dua fail kerana satu daripadanya berjalan pada setiap simpan
 dan yang satu lagi hanya semasa pengedaran.
 
-## cPanel: tiga perkara yang bukan pilihan
+### `prisma.config.ts` memuatkan `.env` sendiri
 
-**Passenger menjalankan satu fail, bukan skrip npm.** Jadi `npm start` dan bendera
-`--env-file`-nya tidak pernah terpakai. `apps/server/src/bootstrap.ts` memuatkan `.env`
-dari dalam proses untuk sebab itu, dan `server.js` di akar klon ialah fail yang Passenger
-mulakan. Ia hanya mengalihkan ke `apps/server/dist/main.js` — satu pelayan, satu laluan
-boot, siapa pun yang melancarkannya.
+CLI Prisma tidak membaca `.env` akar repo, jadi setiap arahan Prisma dahulunya perlukan
+`DATABASE_URL` di-export dengan tangan atau ia gagal dengan `PrismaConfigEnvError`. Itu juga
+yang menjadikan `prisma generate` mustahil dipanggil dari skrip bina.
 
-**`RUN_WORKERS=false`, dan kerja itu berpindah ke cron.** Passenger menghentikan aplikasi
-yang lama tidak digunakan, dan pemasa dalam proses mati bersamanya. Tarikan rekonsil akan
-berjalan beberapa minit selepas setiap lawatan lalu berhenti — lebih buruk daripada tidak
-bermula, kerana skrin peranti terus menunjukkan kursor yang bergerak pagi tadi, jadi
-tarikan yang sudah mati sehari kelihatan seperti yang sekadar sunyi.
+`prisma.config.ts` sekarang memuatkannya sendiri, dengan pembolehubah yang sudah ditetapkan
+menang. Ia kekal `env('DATABASE_URL')` dan bukan rentetan sandaran: URL yang hilang mesti
+gagal dengan nama, kerana alternatifnya ialah `db push` mendamaikan secara senyap terhadap
+pangkalan data yang salah.
 
+## Pemasangan pertama
+
+```bash
+git clone https://github.com/mfar1984/attendance.git
+cd attendance
+npm ci
+
+cp .env.standalone.example .env
+# isi empat nilai; jana rahsia pada mesin ini
+nano .env
+
+npm run build:prod
+
+cd apps/server
+npx prisma db push          # betul di sini sahaja - lihat peraturan migrasi
+node --env-file=../../.env dist/seed.js
 ```
-*/5 * * * *  cd /home/malaysiadev/attendance.malaysiadev.com && node apps/server/dist/cron.js sync
-7 * * * *    cd /home/malaysiadev/attendance.malaysiadev.com && node apps/server/dist/cron.js retention
-17 * * * *   cd /home/malaysiadev/attendance.malaysiadev.com && node apps/server/dist/cron.js backup
+
+Seed mencetak kunci TOTP admin. **Simpan** — `REQUIRE_ADMIN_2FA=true` bermakna tanpanya tiada
+siapa boleh log masuk.
+
+Kemudian jalankan pelayan di bawah penyelia supaya ia bangun semula selepas boot dan selepas
+crash. `loadDotEnvIfNeeded()` dalam `bootstrap.ts` memuatkan `.env` dari dalam proses, jadi
+entri tidak perlukan bendera `--env-file`:
+
+```ini
+# /etc/systemd/system/attendance.service
+[Unit]
+Description=Sistem Kehadiran
+After=network.target mysql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/attendance
+ExecStart=/usr/bin/node apps/server/dist/main.js
+Restart=always
+RestartSec=5
+User=attendance
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-`cron.js` memanggil fungsi yang sama dengan pemasa. Kerja berjadual yang mengambil laluan
-kod berbeza ialah kerja yang mod kegagalannya belum pernah dilihat sesiapa, dan yang ini
-berjalan pada pukul dua pagi tanpa sesiapa menonton. Gerbang jam untuk retention dan backup
-kekal dalam polisi, bukan dalam crontab — jika tidak, seseorang yang menukar jam pada skrin
-kena tahu ada crontab yang tidak bersetuju dengannya.
+Pada Windows, gunakan Scheduled Task pada startup atau bungkus sebagai servis; arahannya
+sama (`node apps\server\dist\main.js` dengan `WorkingDirectory` pada akar klon).
 
-**Terminal tidak boleh dicapai dari cloud.** Hos cPanel tidak boleh menghubungi
-`192.168.1.250`. Sehingga agent siap, pemasangan cloud menjalankan web, API, dan daftar
-masuk mudah alih — **tiada terminal**. Itu bukan pepijat konfigurasi dan tidak ada tetapan
-yang membetulkannya.
+**Tiada crontab.** `RUN_WORKERS=true` bermakna tarikan rekonsil, sapuan retention dan jadual
+backup hidup dalam proses itu. Itu keseluruhan kelebihan standalone: tiada jadual luar yang
+perlu bersetuju dengan skrin tetapan, dan gerbang jam kekal dalam polisi di tempat operator
+boleh melihatnya.
+
+`cron.js` masih ada dan masih memanggil fungsi yang sama, untuk sesiapa yang mahu penjadualan
+luar. Ia tidak diperlukan di sini.
 
 ## Kitaran pengedaran
 
@@ -113,15 +167,13 @@ git push
 Pada pelayan:
 
 ```bash
-cd ~/attendance.malaysiadev.com
+cd /opt/attendance
 git pull
 npm ci
 npm run build:prod
+sudo systemctl restart attendance
 # migrasi hanya jika skema berubah - lihat peraturan di bawah
 ```
-
-Kemudian **Restart** dalam cPanel › Setup Node.js App. Passenger tidak mengambil kod
-baharu tanpa itu.
 
 `npm ci` dan bukan `npm install`: ia memasang tepat apa yang `package-lock.json` namakan.
 `npm install` boleh menaikkan versi transitif pada pelayan yang tiada siapa uji.
@@ -140,15 +192,15 @@ npm 11.19+ **menyekat skrip pemasangan dependensi secara lalai**. Kelulusan hidu
 ```
 
 Tanpa dua yang pertama, `@prisma/engines` tidak meletakkan binari enjinnya dan Prisma gagal
-pada masa jalan dengan ralat yang tidak menyebut skrip pemasangan sama sekali.
+dengan ralat yang tidak menyebut skrip pemasangan sama sekali.
 
 **Entri disematkan pada versi**, jadi menaikkan Prisma bermakna menyunting medan ini juga.
 Itu disengajakan: postinstall Prisma memuat turun binari dari rangkaian, dan versi yang
 diluluskan patut versi yang seseorang telah semak. `npm ci` memberi amaran apabila entri
-tidak sepadan, dan `npm run build:prod` selepasnya gagal dengan kuat kerana `prisma generate`
-tidak menemui enjin — jadi terlupa tidak berakhir senyap.
+tidak sepadan, dan `npm run build:prod` selepasnya gagal dengan kuat — jadi terlupa tidak
+berakhir senyap.
 
-**Jangan luluskannya secara manual pada pelayan.** `npm install-scripts approve` menulis ke
+**Jangan luluskannya dengan tangan pada pelayan.** `npm install-scripts approve` menulis ke
 `package.json`, yang menjadikan pokok kerja kotor; `git checkout -- package.json` seterusnya
 membuang kelulusan itu dan pengedaran berikutnya memerlukannya semula. Itu sudah berlaku.
 
@@ -157,22 +209,24 @@ melalui `approve --all`, jadi penolakan itu tidak boleh hilang secara tidak seng
 
 ### Kenapa kata laluan guna scrypt dan bukan Argon2id
 
-Hos ini membawa **glibc 2.28**. Prebuild `linux-x64` yang `argon2` hantar memerlukan
-**glibc 2.34**, jadi `require('argon2')` gagal dengan `ERR_DLOPEN_FAILED` dan setiap log
-masuk menjadi mustahil. Mengkompil dari sumber perlukan toolchain yang hos ini tiada, dan
-perlu diulang pada setiap `npm ci`.
+Ditemui semasa mencuba hos terurus, tetapi keputusannya berdiri atas kakinya sendiri.
+
+`argon2` ialah modul natif. Prebuild `linux-x64` yang ia hantar memerlukan **glibc 2.34**;
+hos itu membawa **2.28**, jadi `require('argon2')` gagal dengan `ERR_DLOPEN_FAILED` dan
+setiap log masuk menjadi mustahil. Mengkompil dari sumber perlukan toolchain, dan perlu
+diulang pada setiap `npm ci`.
 
 Dokumen ini pernah menyatakan sebaliknya — bahawa prebuild itu bermakna tiada kompilasi
-diperlukan. Prebuild yang ada bukan prebuild yang boleh dimuatkan.
+diperlukan. **Prebuild yang ada bukan prebuild yang boleh dimuatkan.**
 
-`apps/server/src/auth/password.ts` sekarang guna `scrypt` dari `node:crypto`: memori-keras,
-dalam pustaka standard, dan tidak boleh dipatahkan oleh hos menukar imej asasnya. Hash yang
-tiada siapa boleh hitung bukan hash yang lebih kuat.
+`apps/server/src/auth/password.ts` guna `scrypt` dari `node:crypto`: memori-keras, dalam
+pustaka standard, dan tidak boleh dipatahkan oleh hos menukar imej asasnya. Hash yang tiada
+siapa boleh hitung bukan hash yang lebih kuat. Ini kekal betul untuk standalone juga — ia
+membuang satu kelas kegagalan pemasangan daripada mana-mana mesin, bukan hanya hos itu.
 
 `argon2` kekal dalam `optionalDependencies` semata-mata untuk **membaca** hash lama. Ia
 diimport secara lazy, kegagalan dimaafkan, dan setiap log masuk yang berjaya menulis semula
-hash itu kepada scrypt. Hash Argon2 pada hos yang tidak boleh memuatkannya perlukan reset
-kata laluan — pangkalan data produksi kosong pada pemasangan pertama, jadi tiada.
+hash itu kepada scrypt.
 
 Regresi: `node node_modules/tsx/dist/cli.mjs scripts/test-password.mts` (tiada pelayan atau
 pangkalan data diperlukan).
@@ -189,35 +243,25 @@ kehilangan data.
 `prisma generate` berjalan pada setiap bina kerana klien mesti sepadan dengan skema. Itu
 tidak menyentuh pangkalan data.
 
-```bash
-cd ~/attendance.malaysiadev.com/apps/server
-export DATABASE_URL="$(grep '^DATABASE_URL=' ../../.env | cut -d= -f2- | tr -d '\"')"
-npx prisma generate
-```
+### `db push` tidak digunakan selepas pemasangan pertama
 
-**Konfigurasi Prisma tidak membaca `.env` akar**, jadi `DATABASE_URL` ditetapkan secara
-manual atau ia gagal dengan `PrismaConfigEnvError`.
+`prisma db push` mendamaikan seluruh skema dan akan **membuang lajur** yang tidak lagi dalam
+skema tanpa bertanya. Pada pembangunan itu boleh diterima. Pada pangkalan data yang memegang
+kehadiran sebenar, ia bukan.
 
-### `db push` tidak digunakan pada produksi
+Pengecualian: **pemasangan pertama pada pangkalan data kosong.** Tiada apa untuk dihilangkan,
+jadi `npx prisma db push` betul di situ. Peraturan ini untuk setiap kali selepas itu.
 
-`prisma db push` mendamaikan seluruh skema dan akan **membuang lajur** yang tidak lagi
-dalam skema tanpa bertanya. Pada pembangunan itu boleh diterima. Pada pangkalan data yang
-memegang kehadiran sebenar, ia bukan.
-
-Perubahan skema produksi ditulis sebagai SQL aditif, dijalankan secara eksplisit, dan
+Perubahan skema selepas itu ditulis sebagai SQL aditif, dijalankan secara eksplisit, dan
 diuji pada salinan dahulu:
 
-Pengecualian: **pemasangan pertama pada pangkalan data kosong.** Tiada apa untuk
-dihilangkan, jadi `npx prisma db push` betul di situ. Peraturan di atas adalah untuk
-setiap kali selepas itu.
-
 ```bash
-mysqldump -u malaysiadev_attendance -p malaysiadev_attendance > ~/attendance-data/backups/pre-migration-$(date +%F).sql
-mysql -u malaysiadev_attendance -p malaysiadev_attendance < migration.sql
+mysqldump -u attendance -p attendance > /var/lib/attendance/backups/pre-migration-$(date +%F).sql
+mysql -u attendance -p attendance < migration.sql
 ```
 
-Backup dahulu, setiap kali. Migrasi yang separuh dijalankan pada pangkalan data tanpa
-salinan ialah keadaan yang tiada jalan keluar.
+Backup dahulu, setiap kali. Migrasi yang separuh dijalankan pada pangkalan data tanpa salinan
+ialah keadaan yang tiada jalan keluar.
 
 ## Yang perlu wujud sebelum boot pertama
 
@@ -225,28 +269,39 @@ salinan ialah keadaan yang tiada jalan keluar.
 boot dan bukan pada permintaan pertama yang menyentuh medan yang hilang.
 
 - `ENCRYPTION_KEY` — 32 bait hex. **Tidak boleh diputar di tempatnya:** ia menyahsulit kata
-  laluan peranti, rahsia TOTP dan PIN pintu yang tersimpan. Menukarnya menjadikan
-  setiap satu daripadanya tidak boleh dibaca.
+  laluan peranti, rahsia TOTP dan PIN pintu yang tersimpan. Menukarnya menjadikan setiap satu
+  daripadanya tidak boleh dibaca.
 - `SESSION_SECRET` — minimum 32 aksara.
 - `INGEST_PASSWORD` — 8–16 aksara, had firmware.
 - `WEB_DIST_DIR` — laluan mutlak ke `apps/web/dist`.
-- `RUN_WORKERS` — `false` pada cPanel, dengan cron dipasang.
+- `HOST` — alamat LAN yang terminal boleh capai.
 
-Hasilkan yang baharu pada pelayan. Menggunakan semula nilai pembangunan bermakna sesiapa
-yang pernah melihat repo pembangunan boleh menandatangani sesi produksi.
+Hasilkan rahsia yang baharu pada mesin itu. Menggunakan semula nilai pembangunan bermakna
+sesiapa yang pernah melihat repo pembangunan boleh menandatangani sesi produksi.
 
-## Reverse proxy
+## Had kadar
 
-`HOST=127.0.0.1` pada produksi. Proxy menamatkan TLS di hadapannya; mengikat `0.0.0.0`
-pada hos awam mendedahkan API tanpa TLS.
-
-Dua laluan yang tidak boleh melalui pengehad kadar biasa, kerana terminal dan agent
-bercakap lebih kerap daripada manusia:
+Dua laluan tidak melalui pengehad kadar biasa, kerana terminal bercakap lebih kerap daripada
+manusia:
 
 - `/hik/events` — ingest terminal
 - `/api/health` — probe
 
+## Apa yang percubaan hos terurus tinggalkan
+
+Dicuba pada cPanel dengan Passenger dan ditinggalkan, kerana hos awam **tidak boleh
+menghubungi `192.168.1.250`**. Ia akan menjalankan web dan API dengan sempurna sambil
+merekod sifar kehadiran, dan tiada tetapan yang membetulkannya — hanya agent, yang belum ada.
+
+Empat perkara dari percubaan itu kekal kerana ia memperbaiki kod tanpa mengira hos:
+
+- **scrypt** menggantikan Argon2id (di atas).
+- **`allowScripts`** dalam repo (di atas). Sekatan npm ini global, bukan cPanel.
+- **`prisma generate` dalam `build:prod`** (di atas). Bug klon bersih, bukan bug hos.
+- **`bootstrap.ts`** dan `server.js` di akar. `loadDotEnvIfNeeded()` bermakna entri berfungsi
+  tanpa `--env-file`, yang systemd pun faedahi. `server.js` tidak digunakan dalam standalone
+  tetapi dibiarkan: ia satu laluan boot yang stabil, dan ia berfungsi.
+
 ## Yang belum siap
 
-Binari agent. Sehingga ia ada, hanya standalone boleh diedarkan, dan `CONNECTOR_MODE=agent`
-pada `.env` produksi tidak lebih daripada lalai untuk terminal yang ditambah kemudian.
+Binari agent. Sehingga ia ada, hanya standalone boleh diedarkan.
