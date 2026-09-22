@@ -5,21 +5,11 @@ import { decryptSecret, encryptSecret, hashSessionToken, newSessionToken } from 
 import { db } from '../db.js';
 import { loadEnv } from '../env.js';
 import { forbidden, unauthorized } from '../http.js';
+import { logger } from '../logger.js';
 import { securityPolicy } from '../security/policy.js';
+import { hashPassword, needsRehash, verifyPassword } from './password.js';
 
-/**
- * Argon2id parameters.
- *
- * Deliberately above the library defaults: this hash guards the ability to
- * rewrite payroll data for thousands of people, and logins are infrequent
- * enough that ~100ms of work per attempt is not a throughput concern.
- */
-const ARGON2_OPTIONS = {
-  type: argon2.argon2id,
-  memoryCost: 19_456,
-  timeCost: 2,
-  parallelism: 1,
-} as const;
+export { hashPassword, verifyPassword } from './password.js';
 
 // The lockout threshold and duration were constants here. They now come from
 // `securityPolicy()`, which defaults to the same 5 attempts and 15 minutes, so an
@@ -50,19 +40,6 @@ export interface AuthenticatedUser {
    * person that the person themselves set.
    */
   locale: string | null;
-}
-
-export async function hashPassword(plaintext: string): Promise<string> {
-  return argon2.hash(plaintext, ARGON2_OPTIONS);
-}
-
-export async function verifyPassword(hash: string, plaintext: string): Promise<boolean> {
-  try {
-    return await argon2.verify(hash, plaintext);
-  } catch {
-    // A malformed stored hash must read as "wrong password", never as success.
-    return false;
-  }
 }
 
 export interface LoginResult {
@@ -115,6 +92,27 @@ export async function login(input: {
       reason: 'Kata laluan salah',
     });
     throw genericFailure;
+  }
+
+  /*
+   * Upgrade the stored hash while the plaintext is in hand.
+   *
+   * A hash cannot be converted without the password, and the password exists for exactly
+   * this moment. Doing it here is what lets the hashing function change without forcing a
+   * reset on every account — the old hashes disappear as people log in.
+   *
+   * Failure is swallowed deliberately. The login already succeeded, and refusing it
+   * because a housekeeping write failed would turn a working credential into a lockout.
+   */
+  if (needsRehash(account.passwordHash)) {
+    try {
+      await prisma.userAccount.update({
+        where: { id: account.id },
+        data: { passwordHash: await hashPassword(input.password) },
+      });
+    } catch (error) {
+      logger().warn({ err: error, accountId: account.id }, 'Could not upgrade a password hash');
+    }
   }
 
   const env = loadEnv();

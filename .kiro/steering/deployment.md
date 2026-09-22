@@ -126,8 +126,56 @@ baharu tanpa itu.
 `npm ci` dan bukan `npm install`: ia memasang tepat apa yang `package-lock.json` namakan.
 `npm install` boleh menaikkan versi transitif pada pelayan yang tiada siapa uji.
 
-`argon2` ialah modul natif, tetapi ia menghantar prebuild `linux-x64`, jadi ia tidak perlu
-dikompil pada hos yang tiada alat bina.
+### Skrip pemasangan mesti diluluskan dalam repo
+
+npm 11.19+ **menyekat skrip pemasangan dependensi secara lalai**. Kelulusan hidup dalam medan
+`allowScripts` pada `package.json` **akar**, dan ia dijejak:
+
+```json
+"allowScripts": {
+  "prisma@7.10.0": true,
+  "@prisma/engines@7.10.0": true,
+  "argon2": false
+}
+```
+
+Tanpa dua yang pertama, `@prisma/engines` tidak meletakkan binari enjinnya dan Prisma gagal
+pada masa jalan dengan ralat yang tidak menyebut skrip pemasangan sama sekali.
+
+**Entri disematkan pada versi**, jadi menaikkan Prisma bermakna menyunting medan ini juga.
+Itu disengajakan: postinstall Prisma memuat turun binari dari rangkaian, dan versi yang
+diluluskan patut versi yang seseorang telah semak. `npm ci` memberi amaran apabila entri
+tidak sepadan, dan `npm run build:prod` selepasnya gagal dengan kuat kerana `prisma generate`
+tidak menemui enjin — jadi terlupa tidak berakhir senyap.
+
+**Jangan luluskannya secara manual pada pelayan.** `npm install-scripts approve` menulis ke
+`package.json`, yang menjadikan pokok kerja kotor; `git checkout -- package.json` seterusnya
+membuang kelulusan itu dan pengedaran berikutnya memerlukannya semula. Itu sudah berlaku.
+
+**`argon2` ditolak dengan sengaja** (`false`, bukan tiada entri). Entri `false` bertahan
+melalui `approve --all`, jadi penolakan itu tidak boleh hilang secara tidak sengaja.
+
+### Kenapa kata laluan guna scrypt dan bukan Argon2id
+
+Hos ini membawa **glibc 2.28**. Prebuild `linux-x64` yang `argon2` hantar memerlukan
+**glibc 2.34**, jadi `require('argon2')` gagal dengan `ERR_DLOPEN_FAILED` dan setiap log
+masuk menjadi mustahil. Mengkompil dari sumber perlukan toolchain yang hos ini tiada, dan
+perlu diulang pada setiap `npm ci`.
+
+Dokumen ini pernah menyatakan sebaliknya — bahawa prebuild itu bermakna tiada kompilasi
+diperlukan. Prebuild yang ada bukan prebuild yang boleh dimuatkan.
+
+`apps/server/src/auth/password.ts` sekarang guna `scrypt` dari `node:crypto`: memori-keras,
+dalam pustaka standard, dan tidak boleh dipatahkan oleh hos menukar imej asasnya. Hash yang
+tiada siapa boleh hitung bukan hash yang lebih kuat.
+
+`argon2` kekal dalam `optionalDependencies` semata-mata untuk **membaca** hash lama. Ia
+diimport secara lazy, kegagalan dimaafkan, dan setiap log masuk yang berjaya menulis semula
+hash itu kepada scrypt. Hash Argon2 pada hos yang tidak boleh memuatkannya perlukan reset
+kata laluan — pangkalan data produksi kosong pada pemasangan pertama, jadi tiada.
+
+Regresi: `node node_modules/tsx/dist/cli.mjs scripts/test-password.mts` (tiada pelayan atau
+pangkalan data diperlukan).
 
 ## Bila migrasi diperlukan
 

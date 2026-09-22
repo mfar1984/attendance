@@ -10,6 +10,11 @@
   "engines": {
     "node": ">=22"
   },
+  "allowScripts": {
+    "prisma@7.10.0": true,
+    "@prisma/engines@7.10.0": true,
+    "argon2": false
+  },
   "scripts": {
     "build": "tsc --build",
     "clean": "tsc --build --clean",
