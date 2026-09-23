@@ -314,6 +314,161 @@ try {
   const unseen = state.report(999_999);
   check('a terminal never observed is unknown, not offline', unseen.status === 'unknown');
 
+  // -------------------------------------------------------------------------
+  section('the cloud queues for an agent terminal instead of dialling it');
+
+  const { driverFor, releaseAllClients } = await import('../apps/server/src/devices/registry.js');
+  const { AgentProxyDriver } = await import('../apps/server/src/devices/drivers/agent-proxy.js');
+  const { DriverOperation, supports, unavailableReason } = await import(
+    '@attendance/terminal-drivers'
+  );
+
+  const agentDeviceRow = await db().device.findUniqueOrThrow({ where: { id: device.id } });
+  const proxy = driverFor(agentDeviceRow);
+
+  check('an agent terminal gets the proxy driver', proxy instanceof AgentProxyDriver);
+  check('writes are declared queued rather than inline', proxy.capabilities.writeModel === 'queued');
+  check(
+    'the terminal is declared device-initiated',
+    proxy.capabilities.reachability === 'deviceInitiated',
+  );
+  check(
+    'the reconcile worker is told not to pull it',
+    !supports(proxy.capabilities, DriverOperation.pullEvents),
+  );
+  check(
+    'opening a door is refused with a reason a screen can show',
+    (unavailableReason(proxy.capabilities, DriverOperation.openDoor) ?? '').includes('connector'),
+  );
+
+  let readRefused = false;
+  try {
+    await proxy.identity.read();
+  } catch {
+    readRefused = true;
+  }
+  check('a live read is refused rather than blocking', readRefused);
+
+  /*
+   * The operation the whole command path exists for. Before the proxy this threw a network error,
+   * because the cloud tried to open a socket to a private address — and the screen reported it as
+   * a device fault.
+   */
+  const jpeg = Buffer.from('ffd8ffe000104a46494600010100000100010000ffd9', 'hex');
+  const ack = await proxy.biometrics.enrolFace('UJIAN-E2E', jpeg);
+  check('enrolling a face is accepted', ack.confirmed === false);
+  check('and returns the queue row it was recorded as', !ack.confirmed && ack.commandId.length > 0);
+
+  const queued = await db().deviceCommand.findFirstOrThrow({
+    where: { deviceId: device.id, kind: 'face.enroll' },
+  });
+  check('the command is queued against this terminal', queued.deviceId === device.id);
+  check('it is keyed on the person so a newer photo supersedes it', queued.subject === 'UJIAN-E2E');
+  check('it starts pending', queued.status === 'pending');
+
+  const queuedArgs = JSON.parse(queued.payload) as { employeeNo: string; jpegBase64: string };
+  check('the payload names the person', queuedArgs.employeeNo === 'UJIAN-E2E');
+  check(
+    'the photograph survived the round trip',
+    Buffer.from(queuedArgs.jpegBase64, 'base64').equals(jpeg),
+  );
+
+  await proxy.biometrics.enrolFace('UJIAN-E2E', jpeg);
+  const stillOne = await db().deviceCommand.count({
+    where: { deviceId: device.id, kind: 'face.enroll', status: 'pending' },
+  });
+  check('a second upload supersedes rather than queues twice', stillOne === 1);
+
+  // -------------------------------------------------------------------------
+  section('the connector collects the command');
+
+  const { Executor } = await import('../apps/agent/src/executor.js');
+  const executor = new Executor(cloud, roster);
+
+  /*
+   * Pointed at a closed loopback port so the attempt fails immediately with a connection refused
+   * rather than waiting out a fifteen-second timeout against an address nobody answers.
+   */
+  await db().device.update({
+    where: { id: device.id },
+    data: { host: '127.0.0.1', port: 9, useHttps: false },
+  });
+  const refreshed = await cloud.heartbeat({
+    version: '0.1.0',
+    lanHost: '192.168.99.10',
+    lanPort: 18080,
+    spooled: 0,
+    devices: [],
+  });
+  if (refreshed.ok) roster.replace(refreshed.value.devices);
+
+  await executor.runOnce();
+
+  /*
+   * The subtle half of this design. A terminal that did not answer is almost always one being
+   * restarted, so the command must be left unacknowledged for the cloud's sweep to offer again —
+   * acknowledging it as failed would discard an enrolment over a momentary blip.
+   */
+  check('an unreachable terminal defers the command', executor.stats.deferred >= 1);
+  check('and nothing is counted as failed', executor.stats.failed === 0);
+
+  /*
+   * Looked up by state rather than by the id captured earlier.
+   *
+   * The second upload superseded the first, so `queued` is now `failed` carrying "replaced by a
+   * newer command" — which is correct, and is exactly the row an assertion on the original id
+   * would have caught by mistake.
+   */
+  const superseded = await db().deviceCommand.findUniqueOrThrow({ where: { id: queued.id } });
+  check('the superseded upload is marked failed', superseded.status === 'failed');
+  check(
+    'and says it was replaced rather than that it broke',
+    (superseded.result ?? '').includes('Digantikan'),
+  );
+
+  const deferred = await db().deviceCommand.findFirstOrThrow({
+    where: { deviceId: device.id, kind: 'face.enroll', status: 'sent' },
+  });
+  check(
+    'the collected command stays sent so the stale sweep can re-offer it',
+    deferred.completedAt === null,
+  );
+  check('it counted one attempt', deferred.attempts === 1);
+
+  // -------------------------------------------------------------------------
+  section('a command this build cannot run is failed, not retried forever');
+
+  const unknown = await db().deviceCommand.create({
+    data: {
+      deviceId: device.id,
+      kind: 'option.set',
+      payload: JSON.stringify({ apa: 'pun' }),
+    },
+  });
+
+  await executor.runOnce();
+
+  const afterUnknown = await db().deviceCommand.findUniqueOrThrow({ where: { id: unknown.id } });
+  check('an unrecognised command is marked failed', afterUnknown.status === 'failed');
+  check(
+    'and the reason tells the operator to update the connector',
+    (afterUnknown.result ?? '').includes('Kemas kini connector'),
+  );
+
+  const malformed = await db().deviceCommand.create({
+    data: {
+      deviceId: device.id,
+      kind: 'face.remove',
+      subject: 'X',
+      payload: 'bukan json',
+    },
+  });
+  await executor.runOnce();
+  const afterMalformed = await db().deviceCommand.findUniqueOrThrow({ where: { id: malformed.id } });
+  check('a payload that will not parse is failed', afterMalformed.status === 'failed');
+
+  await releaseAllClients();
+
   spool.close();
   await roster.closeAll();
 } finally {

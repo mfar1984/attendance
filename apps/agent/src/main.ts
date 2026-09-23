@@ -3,6 +3,7 @@ import type { AgentHeartbeat } from '@attendance/shared';
 import { clockIsTrusted, localDriftSeconds, noteCloudTime } from './clock.js';
 import { Cloud } from './cloud.js';
 import { assertSecureCloud, loadConfig } from './config.js';
+import { Executor } from './executor.js';
 import { Forwarder } from './forwarder.js';
 import { createListener } from './listener.js';
 import { logger } from './logging.js';
@@ -65,6 +66,7 @@ if (!cloud.enrolled) {
 
 const puller = new Puller(config, roster, spool, state);
 const forwarder = new Forwarder(config, cloud, spool);
+const executor = new Executor(cloud, roster);
 const { app, stats } = createListener(config, roster, spool, state);
 
 /**
@@ -173,6 +175,12 @@ const timers = [
   every(config.HEARTBEAT_SECONDS, 'heartbeat', heartbeat),
   every(config.PULL_SECONDS, 'pull', () => puller.runOnce()),
   every(5, 'forward', () => forwarder.drain()),
+  /*
+   * Enrolments feel exactly as slow as this interval. It is the gap between somebody uploading a
+   * photograph on the screen and the terminal accepting it, so it is deliberately the shortest of
+   * the timers that talk to the cloud.
+   */
+  every(config.COMMAND_POLL_SECONDS, 'commands', () => executor.runOnce()),
 ];
 
 /**

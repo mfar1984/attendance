@@ -6,6 +6,7 @@ import { decryptSecret } from '../crypto.js';
 import { conflict } from '../http.js';
 import type { TerminalDriver } from '@attendance/terminal-drivers';
 import { HikvisionDriver } from '@attendance/terminal-drivers';
+import { AgentProxyDriver } from './drivers/agent-proxy.js';
 import { ZktecoTaPushDriver } from './drivers/zkteco/driver.js';
 
 /**
@@ -46,6 +47,18 @@ export function driverFor(device: Device): TerminalDriver {
 }
 
 function build(device: Device): TerminalDriver {
+  /**
+   * A terminal behind an on-site connector is not ours to reach, whatever it speaks.
+   *
+   * Checked before the protocol switch, because the protocol is still ISAPI — it is the same unit
+   * speaking the same language, and only the thing holding the socket has moved. Dispatching on
+   * protocol first would build a Hikvision driver that opens a socket to a private address this
+   * host cannot route, and every write would fail as a device fault.
+   *
+   * The proxy queues instead. The connector collects the work and runs the real driver on the LAN.
+   */
+  if (device.agentId !== null) return new AgentProxyDriver(device);
+
   switch (device.protocol) {
     case DeviceProtocol.isapi:
       return new HikvisionDriver(isapiClient(device));
@@ -113,6 +126,14 @@ function isapiClient(device: Device): HikvisionClient {
  */
 function connectionFingerprint(device: Device): string {
   return [
+    /**
+     * Included so moving a terminal between direct and connector rebuilds the driver.
+     *
+     * Without it, a device reassigned to a connector would keep the cached Hikvision driver and
+     * keep trying to open a socket to an address this host cannot route — and reassigning it back
+     * would keep the proxy, queueing commands nobody will ever collect.
+     */
+    device.agentId,
     device.protocol,
     device.host,
     device.port,

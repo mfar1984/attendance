@@ -244,9 +244,79 @@ export interface AgentCommandItem {
   deviceId: number;
   /** Neutral intent: `person.upsert`, `face.enroll`, `reboot`, and so on. */
   kind: string;
-  /** Protocol-shaped body. The agent hands it to the driver without interpreting it. */
+  /**
+   * Arguments as JSON, validated against the schemas below.
+   *
+   * For a terminal behind a connector this is neutral — the connector holds the real driver and
+   * performs the operation itself. That is different from a ZKTeco TA Push unit, where the same
+   * column carries a protocol command string the terminal executes directly, because there the
+   * terminal is the thing collecting the work. One column, two readers, and `kind` plus the
+   * device's protocol is what says which.
+   */
   payload: string;
 }
+
+// ---------------------------------------------------------------------------
+// Command arguments, for a terminal reached through a connector.
+// ---------------------------------------------------------------------------
+
+/**
+ * What the cloud asks a connector to do, per command kind.
+ *
+ * Neutral rather than protocol-shaped, and that is the whole point of routing through a
+ * connector: the agent holds the same `TerminalDriver` the server would have used directly, so
+ * what travels is the intent and its arguments. A protocol string would tie this to one vendor
+ * and put the mapping in two places.
+ *
+ * Every schema is strict. An argument the cloud added and the connector does not understand has
+ * to fail loudly and be reported as a failed command, not be dropped so the operation appears to
+ * have succeeded — an enrolment silently missing a field is somebody who cannot scan tomorrow.
+ */
+export const agentPersonUpsertArgs = z.strictObject({
+  employeeNo: z.string().min(1).max(32),
+  name: z.string().min(1).max(128),
+  validFrom: z.string().optional(),
+  validTo: z.string().optional(),
+  /**
+   * Door PIN in cleartext. Terminals store it that way and nothing here can change that.
+   *
+   * It reaches the connector over TLS, the same exposure the terminal credential in the roster
+   * already has, and bounded the same way: only for devices assigned to that connector.
+   */
+  pin: z.string().optional(),
+  doorNo: z.number().int().optional(),
+});
+export type AgentPersonUpsertArgs = z.infer<typeof agentPersonUpsertArgs>;
+
+export const agentPersonRemoveArgs = z.strictObject({
+  employeeNos: z.array(z.string().min(1).max(32)).min(1).max(64),
+});
+export type AgentPersonRemoveArgs = z.infer<typeof agentPersonRemoveArgs>;
+
+export const agentFaceEnrolArgs = z.strictObject({
+  employeeNo: z.string().min(1).max(32),
+  /**
+   * The photograph, base64.
+   *
+   * Carried in the command rather than fetched by the connector from a URL. A fetch would need
+   * the connector to hold a second credential for the cloud's avatar route, and it would make the
+   * command meaningless on its own — a queue row that cannot be executed without another call is
+   * a queue row whose failure mode nobody has seen.
+   *
+   * The firmware caps a face at 200 KB, so base64 keeps this comfortably inside the 8 MB body
+   * limit even batched with others.
+   */
+  jpegBase64: z.string().min(1),
+});
+export type AgentFaceEnrolArgs = z.infer<typeof agentFaceEnrolArgs>;
+
+export const agentFaceRemoveArgs = z.strictObject({
+  employeeNo: z.string().min(1).max(32),
+});
+export type AgentFaceRemoveArgs = z.infer<typeof agentFaceRemoveArgs>;
+
+export const agentRebootArgs = z.strictObject({});
+export type AgentRebootArgs = z.infer<typeof agentRebootArgs>;
 
 export interface AgentEnrolReply {
   agentKey: string;
