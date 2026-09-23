@@ -5,6 +5,7 @@ import cookie from '@fastify/cookie';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 
 import { AGENT_PATH, agentRoutes } from './agent/routes.js';
+import { agentAdminRoutes } from './devices/agent-admin.js';
 import { alertRoutes } from './routes/alerts.js';
 import { authRoutes } from './auth/routes.js';
 import { registerAuthHooks } from './auth/plugin.js';
@@ -167,6 +168,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Same reasoning again, one topology further out: a connector authenticates with its own
   // credential, is scoped to its own terminals, and must never be handed a session.
   await app.register(agentRoutes);
+  // The operator side of the same feature, and an ordinary session route: whoever may add a
+  // terminal may add the machine that reaches it.
+  await app.register(agentAdminRoutes);
   await app.register(settingsRoutes);
   await app.register(backupRoutes);
   await app.register(maintenanceRoutes);

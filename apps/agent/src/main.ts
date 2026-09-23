@@ -5,6 +5,7 @@ import { Cloud } from './cloud.js';
 import { assertSecureCloud, loadConfig } from './config.js';
 import { Executor } from './executor.js';
 import { Forwarder } from './forwarder.js';
+import { resolveLanHost } from './lan.js';
 import { createListener } from './listener.js';
 import { logger } from './logging.js';
 import { Puller } from './puller.js';
@@ -78,9 +79,18 @@ const { app, stats } = createListener(config, roster, spool, state);
 async function heartbeat(): Promise<void> {
   const devices = roster.all().map((entry) => state.report(entry.assignment.deviceId));
 
+  /*
+   * Resolved on every beat rather than once at boot.
+   *
+   * A DHCP lease moves, and then the address on the devices screen is a confident lie while the
+   * terminals push somewhere nobody answers. Detecting it here does not repoint the terminals — it
+   * makes the mismatch visible instead of silent. An explicit `LAN_HOST` still wins.
+   */
+  const lanHost = await resolveLanHost(config.LAN_HOST ?? null, config.CLOUD_URL);
+
   const payload: AgentHeartbeat = {
     version: config.version,
-    lanHost: config.advertisedHost,
+    lanHost,
     lanPort: config.LISTEN_PORT,
     spooled: spool.count(),
     devices,

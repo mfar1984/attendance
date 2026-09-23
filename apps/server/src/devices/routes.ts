@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import {
+  AgentStatus,
   DEVICE_LIMITS,
   DeviceProtocol,
   DeviceVendor,
@@ -49,6 +50,14 @@ const deviceInputSchema = z.object({
    */
   username: z.string().trim().min(1).max(64).optional(),
   password: z.string().min(1).optional(),
+  /**
+   * Which on-site connector reaches this terminal. Null means this server reaches it itself.
+   *
+   * Nullable rather than absent-means-direct, because on a PATCH those are different instructions:
+   * an absent key leaves the assignment alone, and `null` moves the terminal back to being reached
+   * from here. Without the distinction there would be no way to undo an assignment.
+   */
+  agentId: z.number().int().positive().nullable().optional(),
   locationId: z.number().int().positive().optional(),
   doorNo: z.coerce.number().int().min(1).default(1),
   /**
@@ -90,6 +99,32 @@ function resolveProtocol(vendor: DeviceVendor, protocol: string | undefined): De
  * indistinguishable from hardware that broke, and that is the alert nobody can afford to learn
  * to ignore.
  */
+/**
+ * Refuses an assignment to a connector that cannot serve the terminal.
+ *
+ * A revoked connector holds no credential, so it will never collect a command or post an event. A
+ * terminal pointed at one is stranded in the worst way available: the reconcile worker stops
+ * touching it the moment it is assigned, so nothing marks it offline and nothing explains the
+ * silence. Better to refuse the assignment while somebody is looking at the form.
+ *
+ * A *pending* connector is allowed. Creating the connector, assigning terminals, then installing is
+ * the normal order — refusing it would force the operator to do the three steps in the one sequence
+ * that happens to suit the database.
+ */
+async function assertAgentAssignable(agentId: number | null | undefined): Promise<void> {
+  if (agentId === null || agentId === undefined) return;
+
+  const agent = await db().deviceAgent.findUnique({ where: { id: agentId } });
+  if (!agent) throw badRequest('Connector tidak dijumpai.', 'agentId');
+
+  if (agent.status === AgentStatus.revoked) {
+    throw conflict(
+      `Connector "${agent.name}" sudah dibatalkan, jadi ia tidak akan mengutip apa-apa. ` +
+        'Daftarkannya semula atau pilih connector lain.',
+    );
+  }
+}
+
 function assertCredentialsMatchProtocol(
   protocol: DeviceProtocol,
   credentials: { username?: string | undefined; password?: string | undefined },
@@ -117,6 +152,18 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         orderBy: { name: 'asc' },
         include: {
           location: { select: { id: true, name: true } },
+          /**
+           * The connector's own state, carried on every terminal it serves.
+           *
+           * Needed because a terminal behind a connector that has never enrolled is not a broken
+           * terminal, and `status` alone cannot say so: the reconcile worker stops touching the row
+           * the moment it is assigned, so whatever `status` and `lastError` held at that moment are
+           * frozen there. Without the connector's state beside it, the screen shows a stale network
+           * error as though the unit were at fault.
+           */
+          agent: {
+            select: { id: true, name: true, status: true, lastSeenAt: true, lanHost: true, lanPort: true },
+          },
           syncState: true,
           _count: { select: { enrolments: true } },
         },
@@ -144,6 +191,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
 
       const protocol = resolveProtocol(body.vendor, body.protocol);
       assertCredentialsMatchProtocol(protocol, body);
+      await assertAgentAssignable(body.agentId);
 
       const device = await db().device.create({
         data: {
@@ -164,6 +212,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
           username: body.username ?? null,
           passwordEncrypted:
             body.password === undefined ? null : encryptSecret(body.password),
+          agentId: body.agentId ?? null,
           doorNo: body.doorNo,
           locationId: body.locationId ?? null,
           active: body.active,
@@ -247,6 +296,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         { passwordAlreadyStored: existing.passwordEncrypted !== null },
       );
 
+      await assertAgentAssignable(body.agentId);
+
       const device = await db().device.update({
         where: { id },
         data: {
@@ -260,6 +311,12 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
             ? { passwordEncrypted: encryptSecret(body.password) }
             : {}),
           ...(body.doorNo !== undefined ? { doorNo: body.doorNo } : {}),
+          /**
+           * Absent leaves the assignment alone; `null` moves the terminal back to being reached from
+           * here. Both spellings are needed, which is why the field is nullable rather than
+           * relying on absence to mean direct.
+           */
+          ...(body.agentId !== undefined ? { agentId: body.agentId } : {}),
           ...(body.locationId !== undefined ? { locationId: body.locationId } : {}),
           ...(body.active !== undefined ? { active: body.active } : {}),
         },

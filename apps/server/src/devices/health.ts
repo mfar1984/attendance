@@ -12,13 +12,20 @@ export type { DeviceWarning } from '@attendance/terminal-drivers';
 
 export interface DeviceHealth {
   deviceId: number;
-  status: 'online' | 'offline' | 'degraded';
+  status: 'online' | 'offline' | 'degraded' | 'unknown';
   clockDriftSeconds: number | null;
   clockMode: string | null;
   faceCapacity: number | null;
   enrolled: number | null;
   warnings: DeviceWarning[];
   error?: string;
+  /**
+   * True when this terminal is reached by an on-site connector, so nothing here probed it.
+   *
+   * The screen needs to tell that apart from a failed probe. Both leave the health row without
+   * measurements, and only one of them means something is wrong.
+   */
+  viaAgent?: boolean;
 }
 
 /**
@@ -37,6 +44,36 @@ export async function checkDevice(device: Device): Promise<DeviceHealth> {
   const env = loadEnv();
   const prisma = db();
   const warnings: DeviceWarning[] = [];
+
+  /**
+   * A terminal behind a connector is not ours to judge, and saying nothing is the only honest
+   * answer available here.
+   *
+   * This returns before the probe rather than letting it run, and the reason is a bug this
+   * function had the moment the proxy driver existed: every read is declared unsupported on that
+   * driver, so `can(...)` skipped all of them, `vendorWarnings()` returned nothing, and the
+   * function fell through to `warnings.length > 0 ? 'degraded' : 'online'` — writing **online**
+   * with a fresh `lastSeenAt` for a terminal nothing had contacted. Before the connector was even
+   * installed. A unit reporting healthy while recording nothing is the failure this whole system
+   * exists to prevent, and it would have been introduced by the feature meant to fix it.
+   *
+   * Nothing is written. `status`, `lastSeenAt`, `clockDriftS` and `lastError` on an agent terminal
+   * belong to the connector's heartbeat, and a second writer would fight it. `capabilities` is
+   * skipped too: the proxy's capability list describes the proxy, so storing it would tell the
+   * editor this terminal cannot read its own clock, which is not true of the terminal.
+   */
+  if (device.agentId !== null) {
+    return {
+      deviceId: device.id,
+      status: 'unknown',
+      viaAgent: true,
+      clockDriftSeconds: null,
+      clockMode: null,
+      faceCapacity: null,
+      enrolled: null,
+      warnings: [],
+    };
+  }
 
   try {
     const driver = driverFor(device);
