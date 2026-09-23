@@ -6266,4 +6266,12 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
     'That connector immediately loses the ability to deliver attendance. This server will not dial the terminals at that site itself, so the site stops recording until the connector is reinstalled.',
   'agent.revoke.submit': 'Yes, withdraw it',
   'agent.revoked': 'The credential for “{name}” was withdrawn.',
+
+  // The device editor, when the terminal is reached through a connector rather than dialled.
+  'device.editor.viaAgent.read':
+    'This terminal is served by the “{agent}” connector. A connector collects commands and does not answer reads, so the terminal’s own settings cannot be shown here. Status, clock drift, firmware and serial number come from the connector’s reports — see its columns on the device list.',
+  'device.editor.viaAgent.write':
+    'Writing these settings is not available through a connector either. Connector v1 carries person records, faces and restarts only; anything else has to be changed at the terminal itself.',
+  'device.editor.viaAgent.disabled':
+    'Not available through a connector — change it at the terminal itself.',
 };

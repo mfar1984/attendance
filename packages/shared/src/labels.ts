@@ -4704,6 +4704,24 @@ export const LABELS = {
     'Kehadiran yang sudah direkod tidak hilang. Peristiwa disimpan pada terminal terhadap nombor siri yang menaik, dan tarikan berkala mengambil semula apa-apa yang push terlepas semasa ia mati.',
   'device.editor.reboot.confirm.submit': 'Ya, restart sekarang',
 
+  /**
+   * Why a terminal behind a connector shows no live readings.
+   *
+   * One note, and deliberately not an error. The editor used to fire each tab's read anyway, get
+   * a 409 back, and render it through `Feedback` — so a healthy site read as six red strips, one
+   * per tab, all saying the same structural thing. Nothing had failed, and red on six tabs sends
+   * somebody looking for a hardware fault.
+   *
+   * It names where the values actually are, because the operator came here to see them.
+   */
+  'device.editor.viaAgent.read':
+    'Terminal ini dilayan oleh connector "{agent}". Connector mengutip arahan dan tidak menjawab bacaan, jadi tetapan terminal tidak boleh dipaparkan di sini. Status, hanyutan jam, firmware dan nombor siri datang dari laporan connector — lihat lajurnya pada Senarai Peranti.',
+  'device.editor.viaAgent.write':
+    'Menulis tetapan ini juga belum tersedia melalui connector. Connector v1 membawa pendaftaran orang, wajah, dan restart sahaja — yang lain mesti ditukar di terminal itu sendiri.',
+  /** On the control itself, so the reason is read at the moment somebody reaches for it. */
+  'device.editor.viaAgent.disabled':
+    'Tidak tersedia melalui connector — tukar di terminal itu sendiri.',
+
   // -------------------------------------------------------------------------
   // Tetapan › Senarai Peranti › Connector
   //

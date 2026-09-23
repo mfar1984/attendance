@@ -9,6 +9,7 @@ import {
   Plug,
   Power,
   Radio,
+  Satellite,
   Save,
   ScanFace,
   Search,
@@ -62,7 +63,7 @@ import { T, TEnum, useLabels } from '../lib/translation';
  *
  * The split that shapes every tab: the first one saves to this database, and the rest
  * read and write the terminal live over ISAPI. Mixing them would give one Save button
- * where half the fields go to MySQL and half go to a door lock — and when the terminal is
+ * where half the fields go to MySQL and half go to a door lock ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â and when the terminal is
  * unreachable, half the form would work and half would not, with nothing saying which.
  *
  * Terminal settings are deliberately not mirrored into the database. A cached copy is a
@@ -158,7 +159,7 @@ export function DeviceEditorPage(): ReactNode {
                 device.serialNumber === null ? null : `#${device.serialNumber}`,
               ]
                 .filter((part): part is string => part !== null)
-                .join(' · ')}
+                .join(' Ãƒâ€šÃ‚Â· ')}
             </p>
           </div>
         </div>
@@ -238,22 +239,46 @@ export function DeviceEditorPage(): ReactNode {
  * Reads a terminal endpoint, tracking when the answer was obtained.
  *
  * The timestamp is not decoration. Six of these tabs show live device state, and a page
- * left open for twenty minutes looks identical to one just loaded — the same reason the
+ * left open for twenty minutes looks identical to one just loaded ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the same reason the
  * record tables carry `generatedAt` in their footer.
  */
-function useTerminalRead<T>(path: string): {
+function useTerminalRead<T>(
+  path: string,
+  options: {
+    /**
+     * Do not attempt the read at all.
+     *
+     * Set for a terminal behind a connector, where the answer is known in advance: the connector
+     * collects commands and does not serve reads, so the request would return 409 every time. The
+     * page used to fire it anyway and render the refusal through `Feedback`, which put a red error
+     * strip on six tabs ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â one per read ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â for a single structural fact about the topology. Nothing
+     * had failed, and a screen that reports a healthy site as six errors is a screen that sends
+     * somebody looking for a hardware fault.
+     *
+     * Skipping keeps `error` null so each tab can say the one useful thing instead.
+     */
+    skip?: boolean;
+  } = {},
+): {
   data: T | null;
   error: string | null;
   loading: boolean;
   readAt: Date | null;
   reload: () => Promise<void>;
 } {
+  const skip = options.skip ?? false;
+
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!skip);
   const [readAt, setReadAt] = useState<Date | null>(null);
 
   const reload = useCallback(async () => {
+    if (skip) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
       setData(await api.get<T>(path));
@@ -266,13 +291,45 @@ function useTerminalRead<T>(path: string): {
     } finally {
       setLoading(false);
     }
-  }, [path]);
+  }, [path, skip]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
   return { data, error, loading, readAt, reload };
+}
+
+/**
+ * Why this tab is empty, and where the answer actually lives.
+ *
+ * One note instead of a red error strip. The distinction the screen has to carry is that nothing
+ * is broken: a connector terminal is reached by commands it collects, so live reads have no
+ * mechanism, and the values an operator came here for are on the device list ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â reported by the
+ * connector on every heartbeat.
+ *
+ * Deliberately not `tone="danger"`. Red is for a unit at fault, and using it for a permanent
+ * property of the topology teaches operators to ignore red on this screen.
+ */
+function ConnectorManagedNote({
+  device,
+  writable = false,
+}: {
+  device: DeviceRecord;
+  /** True where the tab also offers a write this connector cannot carry. */
+  writable?: boolean;
+}): ReactNode {
+  return (
+    <PanelNote tone="warn" icon={<Satellite className="size-3.5" aria-hidden />}>
+      <T k="device.editor.viaAgent.read" vars={{ agent: device.agent?.name ?? '' }} />
+      {writable && (
+        <>
+          {' '}
+          <T k="device.editor.viaAgent.write" />
+        </>
+      )}
+    </PanelNote>
+  );
 }
 
 /**
@@ -288,6 +345,7 @@ function LiveSection({
   readAt,
   loading,
   onReload,
+  unavailable,
 }: {
   titleKey: LabelKey;
   subtitleKey: LabelKey;
@@ -295,7 +353,17 @@ function LiveSection({
   readAt: Date | null;
   loading: boolean;
   onReload: () => void;
+  /**
+   * No read is possible here, so neither the timestamp nor the refresh means anything.
+   *
+   * Without this the header read `Sedang membaca…` forever on a connector terminal — `readAt`
+   * never gets set because no request is made — beside a refresh button that did nothing when
+   * pressed. Two controls describing activity that was not happening, on six tabs.
+   */
+  unavailable?: boolean;
 }): ReactNode {
+  const { t } = useLabels();
+
   return (
     <PanelSection
       icon={icon}
@@ -303,17 +371,24 @@ function LiveSection({
       subtitle={<T k={subtitleKey} />}
       action={
         <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-500">
-            {readAt === null ? (
-              <T k="device.editor.live.reading" />
-            ) : (
-              <T
-                k="device.editor.live.readAt"
-                vars={{ time: readAt.toLocaleTimeString('ms-MY') }}
-              />
-            )}
-          </span>
-          <Button variant="ghost" onClick={onReload} disabled={loading}>
+          {!unavailable && (
+            <span className="text-xs text-slate-500">
+              {readAt === null ? (
+                <T k="device.editor.live.reading" />
+              ) : (
+                <T
+                  k="device.editor.live.readAt"
+                  vars={{ time: readAt.toLocaleTimeString('ms-MY') }}
+                />
+              )}
+            </span>
+          )}
+          <Button
+            variant="ghost"
+            onClick={onReload}
+            disabled={loading || unavailable === true}
+            {...(unavailable === true ? { title: t('device.editor.viaAgent.disabled') } : {})}
+          >
             <Activity className={loading ? 'size-4 animate-pulse' : 'size-4'} aria-hidden />
             <T k="device.editor.live.reload" />
           </Button>
@@ -338,7 +413,7 @@ function Unsupported({ children }: { children?: ReactNode }): ReactNode {
  * On every tab that writes, not just the one. A disabled control with no explanation is
  * the same trap as a search box that filters nothing: it teaches the operator that the
  * screen is broken rather than that they lack a grant. The action is named because the
- * grant is per-action, so "ask for permission" is not actionable on its own — somebody has
+ * grant is per-action, so "ask for permission" is not actionable on its own ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â somebody has
  * to know which box to tick.
  */
 function ReadOnlyNote({ actionKey }: { actionKey: LabelKey }): ReactNode {
@@ -359,7 +434,7 @@ function ReadOnlyNote({ actionKey }: { actionKey: LabelKey }): ReactNode {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Connection. The only tab that writes to this database.
+// Tab 1 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Connection. The only tab that writes to this database.
 // ---------------------------------------------------------------------------
 
 function ConnectionTab({
@@ -382,7 +457,7 @@ function ConnectionTab({
    * Empty string rather than null, because this is a controlled input.
    *
    * A protocol with no stored credential stores null, and the fields are hidden below rather
-   * than shown empty — so this value is never read on those terminals.
+   * than shown empty ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â so this value is never read on those terminals.
    */
   const [username, setUsername] = useState(device.username ?? '');
   const [password, setPassword] = useState('');
@@ -423,7 +498,7 @@ function ConnectionTab({
           verifyTls,
           /*
             Credentials omitted entirely on a protocol that has none, so an edit cannot write
-            an empty username onto a callback terminal — which the server would then refuse as
+            an empty username onto a callback terminal ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â which the server would then refuse as
             a protocol that requires one, on a form where no such field was shown.
           */
           ...(needsCredentials
@@ -445,7 +520,7 @@ function ConnectionTab({
 
       /*
         Four whole messages rather than one assembled from a clause. A deactivated
-        terminal is not probed at all, so there is no health to report — and "saved" with
+        terminal is not probed at all, so there is no health to report ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â and "saved" with
         no warning count is a different sentence from "saved, but unreachable".
       */
       const health = result.health;
@@ -583,7 +658,7 @@ function ConnectionTab({
           The credentials card exists only for a protocol that authenticates with them.
 
           Replaced rather than disabled on the others. A greyed-out password field reads as a
-          control somebody lacks permission for, which sends them looking for the permission —
+          control somebody lacks permission for, which sends them looking for the permission ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â
           when in fact the protocol has no password to store. The card that takes its place
           says what identifies the unit instead.
         */}
@@ -617,7 +692,7 @@ function ConnectionTab({
                 disabled={!editable}
                 autoComplete="new-password"
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="••••••••"
+                placeholder="ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢"
               />
             </SettingRow>
           </SettingsGroup>
@@ -627,7 +702,7 @@ function ConnectionTab({
             icon={<ShieldCheck className="size-3.5" aria-hidden />}
             action={
               <span className="font-mono text-[11px] text-slate-500">
-                {device.serialNumber ?? '—'}
+                {device.serialNumber ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}
               </span>
             }
           >
@@ -635,7 +710,7 @@ function ConnectionTab({
               label={<T k="device.editor.field.serialIdentity" />}
               hint={<T k="device.editor.field.serialIdentity.hint" />}
             >
-              <StaticControl mono value={device.serialNumber ?? '—'} />
+              <StaticControl mono value={device.serialNumber ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'} />
             </SettingRow>
 
             {device.serialNumber === null && (
@@ -718,17 +793,21 @@ function ConnectionTab({
 }
 
 // ---------------------------------------------------------------------------
-// Tab 2 — Identity. Read only.
+// Tab 2 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Identity. Read only.
 // ---------------------------------------------------------------------------
 
 function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
+  /** A connector collects commands and does not serve reads, so none is attempted. */
+  const viaAgent = device.agentId !== null;
+
   const { data, error, loading, readAt, reload } = useTerminalRead<TerminalIdentity>(
     `/api/devices/${String(device.id)}/terminal/identity`,
+    { skip: viaAgent },
   );
 
   /**
    * A serial that disagrees with the stored one means this address is answering for a
-   * different box than the one holding these enrolments — a swapped unit, or two records
+   * different box than the one holding these enrolments ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â a swapped unit, or two records
    * pointing at one terminal. Worth stating loudly: every mapping on the record belongs
    * to the serial we first saw.
    */
@@ -760,10 +839,13 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
+        unavailable={viaAgent}
       />
 
       <SettingsStack>
         <Feedback error={error} />
+
+        {viaAgent && <ConnectorManagedNote device={device} />}
 
         {swapped && (
           <PanelNote tone="danger" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
@@ -782,17 +864,17 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
           icon={<Settings2 className="size-3.5" aria-hidden />}
           action={
             <span className="font-mono text-[11px] text-slate-500">
-              {data?.info.firmware ?? '—'}
+              {data?.info.firmware ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}
             </span>
           }
         >
           <SettingRow label={<T k="device.editor.identity.model" />}>
             <ControlGrid columns={2}>
               <ControlCell caption={<T k="device.editor.identity.model.caption" />}>
-                <StaticControl value={data?.info.model ?? '—'} mono />
+                <StaticControl value={data?.info.model ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'} mono />
               </ControlCell>
               <ControlCell caption={<T k="device.editor.identity.deviceName" />}>
-                <StaticControl value={data?.info.name ?? '—'} />
+                <StaticControl value={data?.info.name ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'} />
               </ControlCell>
             </ControlGrid>
           </SettingRow>
@@ -800,16 +882,16 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
           <SettingRow label={<T k="device.editor.identity.firmware" />}>
             <ControlGrid columns={2}>
               <ControlCell caption={<T k="device.editor.identity.firmware.caption" />}>
-                <StaticControl value={data?.info.firmware ?? '—'} mono />
+                <StaticControl value={data?.info.firmware ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'} mono />
               </ControlCell>
               <ControlCell caption={<T k="device.editor.identity.mac" />}>
                 {/*
                   The firmware release date used to sit here. It was a Hikvision-only field, so
-                  the cell would be empty on every other vendor — and the MAC address is both
+                  the cell would be empty on every other vendor ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â and the MAC address is both
                   reported by all of them and the more useful thing to see next to a serial
                   number when identifying which box is at an address.
                 */}
-                <StaticControl value={data?.info.macAddress ?? '—'} mono />
+                <StaticControl value={data?.info.macAddress ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'} mono />
               </ControlCell>
             </ControlGrid>
           </SettingRow>
@@ -821,13 +903,13 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
             <ControlGrid columns={2}>
               <ControlCell caption={<T k="device.editor.identity.serial.live" />}>
                 <StaticControl
-                  value={data?.info.serialNumber ?? '—'}
+                  value={data?.info.serialNumber ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}
                   mono
                   tone={swapped ? 'danger' : 'neutral'}
                 />
               </ControlCell>
               <ControlCell caption={<T k="device.editor.identity.mac" />}>
-                <StaticControl value={data?.info.macAddress ?? '—'} mono />
+                <StaticControl value={data?.info.macAddress ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'} mono />
               </ControlCell>
             </ControlGrid>
           </SettingRow>
@@ -854,7 +936,7 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
           >
             <ControlGrid columns={4}>
               <ControlCell caption={<T k="device.editor.identity.users.caption" />}>
-                <StaticControl value={String(data?.counts.people ?? '—')} mono />
+                <StaticControl value={String(data?.counts.people ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â')} mono />
               </ControlCell>
               {/*
                 An em dash where a protocol does not break its counts down by credential, which
@@ -862,13 +944,13 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
                 unit has a face enrolled.
               */}
               <ControlCell caption={<T k="device.editor.identity.withFace" />}>
-                <StaticControl value={String(data?.counts.withFace ?? '—')} mono />
+                <StaticControl value={String(data?.counts.withFace ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â')} mono />
               </ControlCell>
               <ControlCell caption={<T k="device.editor.identity.withFingerprint" />}>
-                <StaticControl value={String(data?.counts.withFingerprint ?? '—')} mono />
+                <StaticControl value={String(data?.counts.withFingerprint ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â')} mono />
               </ControlCell>
               <ControlCell caption={<T k="device.editor.identity.withCard" />}>
-                <StaticControl value={String(data?.counts.withCard ?? '—')} mono />
+                <StaticControl value={String(data?.counts.withCard ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â')} mono />
               </ControlCell>
             </ControlGrid>
           </SettingRow>
@@ -901,7 +983,7 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
                   <StaticControl
                     value={
                       data === null
-                        ? '—'
+                        ? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'
                         : data.libraries
                             .map((library) =>
                               library.name === null ? library.id : `${library.id}:${library.name}`,
@@ -912,7 +994,7 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
                   />
                 </ControlCell>
                 <ControlCell caption={<T k="device.editor.identity.capacity" />}>
-                  <StaticControl value={String(data?.capacity?.faces ?? '—')} mono />
+                  <StaticControl value={String(data?.capacity?.faces ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â')} mono />
                 </ControlCell>
               </ControlGrid>
             </SettingRow>
@@ -924,16 +1006,21 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 3 — Clock
+// Tab 3 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Clock
 // ---------------------------------------------------------------------------
 
 function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
+  /** A connector collects commands and does not serve reads, so none is attempted. */
+  const viaAgent = device.agentId !== null;
+
   const { t } = useLabels();
   const { can } = useAuth();
-  const allowed = can('settings.devices', 'clock');
+  const permitted = can('settings.devices', 'clock');
+  const allowed = permitted && !viaAgent;
 
   const { data, error, loading, readAt, reload } = useTerminalRead<TerminalClock>(
     `/api/devices/${String(device.id)}/terminal/clock`,
+    { skip: viaAgent },
   );
 
   const [ntpHost, setNtpHost] = useState('');
@@ -948,7 +1035,7 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
    * Prefilled from what the terminal already holds.
    *
    * The old screen offered an empty box, so an operator could not tell whether NTP was
-   * already pointed somewhere sensible or still at the factory placeholder — and an empty
+   * already pointed somewhere sensible or still at the factory placeholder ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â and an empty
    * box beside a working configuration invites overwriting it.
    */
   useEffect(() => {
@@ -1021,12 +1108,15 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
+        unavailable={viaAgent}
       />
 
       <SettingsStack>
         <Feedback error={error ?? writeError} notice={notice} />
 
-        {!allowed && <ReadOnlyNote actionKey="perm.action.clock" />}
+        {viaAgent && <ConnectorManagedNote device={device} writable />}
+
+        {!permitted && <ReadOnlyNote actionKey="perm.action.clock" />}
 
         <PanelNote
           tone={drifting ? 'warn' : 'info'}
@@ -1046,7 +1136,7 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
                   : 'text-[11px] font-semibold tracking-wide text-emerald-700 uppercase'
               }
             >
-              {data?.timeMode ?? '—'}
+              {data?.timeMode ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}
             </span>
           }
         >
@@ -1061,7 +1151,7 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
                   tone={drifting ? 'warn' : 'success'}
                   value={
                     data === null
-                      ? '—'
+                      ? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'
                       : `${data.driftSeconds > 0 ? '+' : ''}${String(data.driftSeconds)}s`
                   }
                 />
@@ -1069,13 +1159,13 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
               <ControlCell caption={<T k="device.editor.clock.deviceTime" />}>
                 <StaticControl
                   mono
-                  value={data === null ? '—' : formatDateTime(data.deviceTime)}
+                  value={data === null ? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â' : formatDateTime(data.deviceTime)}
                 />
               </ControlCell>
               <ControlCell caption={<T k="device.editor.clock.serverTime" />}>
                 <StaticControl
                   mono
-                  value={data === null ? '—' : formatDateTime(data.serverTime)}
+                  value={data === null ? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â' : formatDateTime(data.serverTime)}
                 />
               </ControlCell>
             </ControlGrid>
@@ -1094,9 +1184,9 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
                     key={slot.id}
                     mono
                     tone={slot.ipAddress === '192.0.0.64' ? 'warn' : 'neutral'}
-                    value={`#${slot.id} · ${slot.ipAddress ?? slot.hostName ?? '—'}:${String(
+                    value={`#${slot.id} Ãƒâ€šÃ‚Â· ${slot.ipAddress ?? slot.hostName ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}:${String(
                       slot.portNo,
-                    )} · ${String(slot.synchronizeInterval)} min`}
+                    )} Ãƒâ€šÃ‚Â· ${String(slot.synchronizeInterval)} min`}
                   />
                 ))}
               </div>
@@ -1169,7 +1259,7 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
                 />
               </ControlCell>
               <ControlCell caption={<T k="device.editor.clock.orgTimeZone" />}>
-                <StaticControl value={data?.orgTimeZone ?? '—'} mono />
+                <StaticControl value={data?.orgTimeZone ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'} mono />
               </ControlCell>
             </ControlGrid>
           </SettingRow>
@@ -1213,16 +1303,21 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 4 — Attendance mode
+// Tab 4 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Attendance mode
 // ---------------------------------------------------------------------------
 
 function AttendanceTab({ device }: { device: DeviceRecord }): ReactNode {
+  /** A connector collects commands and does not serve reads, so none is attempted. */
+  const viaAgent = device.agentId !== null;
+
   const { t } = useLabels();
   const { can } = useAuth();
-  const allowed = can('settings.devices', 'terminal');
+  const permitted = can('settings.devices', 'terminal');
+  const allowed = permitted && !viaAgent;
 
   const { data, error, loading, readAt, reload } = useTerminalRead<AttendanceModeState>(
     `/api/devices/${String(device.id)}/terminal/attendance`,
+    { skip: viaAgent },
   );
 
   const [mode, setMode] = useState<string>('');
@@ -1284,19 +1379,22 @@ function AttendanceTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
+        unavailable={viaAgent}
       />
 
       <SettingsStack>
         <Feedback error={error ?? writeError} notice={notice} />
 
-        {!allowed && <ReadOnlyNote actionKey="perm.action.terminalConfig" />}
+        {viaAgent && <ConnectorManagedNote device={device} writable />}
+
+        {!permitted && <ReadOnlyNote actionKey="perm.action.terminalConfig" />}
 
         <SettingsGroup
           title={<T k="device.editor.attendance.group.mode" />}
           icon={<ClipboardList className="size-3.5" aria-hidden />}
           action={
             <span className="font-mono text-[11px] tracking-wide text-slate-500 uppercase">
-              {data?.mode ?? '—'}
+              {data?.mode ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}
             </span>
           }
         >
@@ -1316,7 +1414,7 @@ function AttendanceTab({ device }: { device: DeviceRecord }): ReactNode {
 
           {/*
             Read and shown, never written. The firmware treats these as part of the mode's
-            own definition and nothing in this application consumes them — a control that
+            own definition and nothing in this application consumes them ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â a control that
             writes a setting nothing reads is a control that appears to work and does
             nothing, which is worse than no control.
           */}
@@ -1328,14 +1426,14 @@ function AttendanceTab({ device }: { device: DeviceRecord }): ReactNode {
               <ControlCell caption={<T k="device.editor.attendance.statusTime" />}>
                 <StaticControl
                   mono
-                  value={data === null ? '—' : `${String(data.attendanceStatusTime)}s`}
+                  value={data === null ? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â' : `${String(data.attendanceStatusTime)}s`}
                 />
               </ControlCell>
               <ControlCell caption={<T k="device.editor.attendance.reqStatus" />}>
                 <StaticControl
                   value={
                     data === null ? (
-                      '—'
+                      'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'
                     ) : (
                       <T k={data.reqAttendanceStatus ? 'app.status.active' : 'app.status.inactive'} />
                     )
@@ -1365,16 +1463,21 @@ function AttendanceTab({ device }: { device: DeviceRecord }): ReactNode {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 5 — Door and authentication
+// Tab 5 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Door and authentication
 // ---------------------------------------------------------------------------
 
 function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
+  /** A connector collects commands and does not serve reads, so none is attempted. */
+  const viaAgent = device.agentId !== null;
+
   const { t } = useLabels();
   const { can } = useAuth();
-  const allowed = can('settings.devices', 'terminal');
+  const permitted = can('settings.devices', 'terminal');
+  const allowed = permitted && !viaAgent;
 
   const { data, error, loading, readAt, reload } = useTerminalRead<TerminalDoor>(
     `/api/devices/${String(device.id)}/terminal/door`,
+    { skip: viaAgent },
   );
 
   const [verifyMode, setVerifyMode] = useState('');
@@ -1425,7 +1528,7 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
    * Authentication modes.
    *
    * The terminal holds a value for `defaultVerifyMode` but its capability document does
-   * not enumerate the accepted set — confirmed by probing V4.38.0. So the list is the
+   * not enumerate the accepted set ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â confirmed by probing V4.38.0. So the list is the
    * documented one, marked on screen as unverified, plus whatever the unit currently
    * holds so the present setting is always selectable. A firmware that does publish an
    * option list overrides all of it, which is why the device's answer is checked first.
@@ -1567,12 +1670,15 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
+        unavailable={viaAgent}
       />
 
       <SettingsStack>
         <Feedback error={error ?? writeError} notice={notice} />
 
-        {!allowed && <ReadOnlyNote actionKey="perm.action.terminalConfig" />}
+        {viaAgent && <ConnectorManagedNote device={device} writable />}
+
+        {!permitted && <ReadOnlyNote actionKey="perm.action.terminalConfig" />}
 
         <SettingsGroup
           title={<T k="device.editor.door.group.verify" />}
@@ -1580,7 +1686,7 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
           subtitle={<T k="device.editor.door.group.verify.subtitle" />}
           action={
             <span className="font-mono text-[11px] text-slate-500">
-              {data?.reader?.verifyMode ?? '—'}
+              {data?.reader?.verifyMode ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}
             </span>
           }
         >
@@ -1617,7 +1723,7 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
                   mono
                   value={
                     data === null || data.reader === null || data.reader.functions.length === 0
-                      ? '—'
+                      ? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'
                       : data.reader.functions.join(' + ')
                   }
                 />
@@ -1667,7 +1773,7 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
         {/*
           Anti-spoofing, its own group rather than a row among the thresholds.
           The probe found it switched off on the test unit, which means a photograph is
-          not being screened out — that is a security state, not a tuning knob.
+          not being screened out ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â that is a security state, not a tuning knob.
         */}
         {data?.reader != null && (
           <SettingsGroup
@@ -1758,10 +1864,10 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
           <SettingRow label={<T k="device.editor.door.remoteDetail" />}>
             <ControlGrid columns={2}>
               <ControlCell caption={<T k="device.editor.door.channel" />}>
-                <StaticControl value={String(data?.acs?.checkChannelType ?? '—')} mono />
+                <StaticControl value={String(data?.acs?.checkChannelType ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â')} mono />
               </ControlCell>
               <ControlCell caption={<T k="device.editor.door.timeout" />}>
-                <StaticControl value={String(data?.acs?.remoteCheckTimeout ?? '—')} mono />
+                <StaticControl value={String(data?.acs?.remoteCheckTimeout ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â')} mono />
               </ControlCell>
             </ControlGrid>
           </SettingRow>
@@ -1861,7 +1967,7 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
                     door reporting the opposite of what it is doing.
                   */}
                   <ControlCell caption={<T k="device.editor.door.exitButton" />}>
-                    <StaticControl mono value={data?.door?.exitButtonRestState ?? '—'} />
+                    <StaticControl mono value={data?.door?.exitButtonRestState ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'} />
                   </ControlCell>
                 </ControlGrid>
               </SettingRow>
@@ -1996,16 +2102,21 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 6 — Push slots
+// Tab 6 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Push slots
 // ---------------------------------------------------------------------------
 
 function PushTab({ device }: { device: DeviceRecord }): ReactNode {
+  /** A connector collects commands and does not serve reads, so none is attempted. */
+  const viaAgent = device.agentId !== null;
+
   const { t } = useLabels();
   const { can } = useAuth();
-  const allowed = can('settings.devices', 'sync');
+  const permitted = can('settings.devices', 'sync');
+  const allowed = permitted && !viaAgent;
 
   const { data, error, loading, readAt, reload } = useTerminalRead<PushHost[]>(
     `/api/devices/${String(device.id)}/push`,
+    { skip: viaAgent },
   );
 
   const [host, setHost] = useState('');
@@ -2079,12 +2190,15 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
+        unavailable={viaAgent}
       />
 
       <SettingsStack>
         <Feedback error={error ?? writeError} notice={notice} />
 
-        {!allowed && <ReadOnlyNote actionKey="perm.action.sync.push" />}
+        {viaAgent && <ConnectorManagedNote device={device} writable />}
+
+        {!permitted && <ReadOnlyNote actionKey="perm.action.sync.push" />}
 
         {slots.map((entry) => (
           <SettingsGroup
@@ -2115,7 +2229,7 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
                       <StaticControl mono value={entry.host.url} />
                     </ControlCell>
                     <ControlCell caption={<T k="device.editor.push.format" />}>
-                      <StaticControl mono value={entry.host.format ?? '—'} />
+                      <StaticControl mono value={entry.host.format ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'} />
                     </ControlCell>
                   </ControlGrid>
                 </SettingRow>
@@ -2133,14 +2247,14 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
                       />
                     </ControlCell>
                     <ControlCell caption={<T k="device.editor.push.auth.user" />}>
-                      <StaticControl mono value={entry.host.authUser ?? '—'} />
+                      <StaticControl mono value={entry.host.authUser ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'} />
                     </ControlCell>
                     <ControlCell caption={<T k="device.editor.push.heartbeat" />}>
                       <StaticControl
                         mono
                         value={
                           entry.host.heartbeatSeconds === null
-                            ? '—'
+                            ? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'
                             : `${String(entry.host.heartbeatSeconds)}s`
                         }
                       />
@@ -2242,16 +2356,21 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 7 — Diagnostics
+// Tab 7 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Diagnostics
 // ---------------------------------------------------------------------------
 
 function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
+  /** A connector collects commands and does not serve reads, so none is attempted. */
+  const viaAgent = device.agentId !== null;
+
   const { t } = useLabels();
   const { can } = useAuth();
-  const allowed = can('settings.devices', 'terminal');
-
+  const permitted = can('settings.devices', 'terminal');
+  // Reboot is the one terminal write a connector does carry, so this tab keeps its control.
+  const allowed = permitted;
   const { data, error, loading, readAt, reload } = useTerminalRead<TerminalDiagnostics>(
     `/api/devices/${String(device.id)}/terminal/diagnostics`,
+    { skip: viaAgent },
   );
 
   const [confirmReboot, setConfirmReboot] = useState(false);
@@ -2287,10 +2406,13 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
+        unavailable={viaAgent}
       />
 
       <SettingsStack>
         <Feedback error={error ?? writeError} notice={notice} />
+
+        {viaAgent && <ConnectorManagedNote device={device} />}
 
         <SettingsGroup
           title={<T k="device.editor.diag.group.cursor" />}
@@ -2298,10 +2420,10 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
           action={
             <span className="font-mono text-[11px] text-slate-500">
               {/*
-                A bare em dash, not `#—`. A protocol with no pull has no cursor at all, and a
+                A bare em dash, not `#ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â`. A protocol with no pull has no cursor at all, and a
                 hash in front of nothing reads as a number that failed to load.
               */}
-              {data?.cursor.lastSerialNo == null ? '—' : `#${data.cursor.lastSerialNo}`}
+              {data?.cursor.lastSerialNo == null ? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â' : `#${data.cursor.lastSerialNo}`}
             </span>
           }
         >
@@ -2311,13 +2433,13 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
           >
             <ControlGrid columns={4}>
               <ControlCell caption={<T k="device.editor.diag.lastSerial" />}>
-                <StaticControl mono value={data?.cursor.lastSerialNo ?? '—'} />
+                <StaticControl mono value={data?.cursor.lastSerialNo ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'} />
               </ControlCell>
               <ControlCell caption={<T k="device.editor.diag.lastSync" />}>
                 <StaticControl
                   mono
                   value={
-                    data?.cursor.lastSyncAt == null ? '—' : formatDateTime(data.cursor.lastSyncAt)
+                    data?.cursor.lastSyncAt == null ? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â' : formatDateTime(data.cursor.lastSyncAt)
                   }
                 />
               </ControlCell>
@@ -2325,7 +2447,7 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
                 <StaticControl
                   mono
                   value={
-                    data?.cursor.lastPushAt == null ? '—' : formatDateTime(data.cursor.lastPushAt)
+                    data?.cursor.lastPushAt == null ? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â' : formatDateTime(data.cursor.lastPushAt)
                   }
                 />
               </ControlCell>
@@ -2357,7 +2479,7 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
 
         {/*
           The whole AcsCfg object. The health check reads this and keeps one flag out of
-          it, so every other field the firmware reports has been invisible — which is the
+          it, so every other field the firmware reports has been invisible ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â which is the
           state that makes a firmware change impossible to diagnose without a site visit.
         */}
         <SettingsGroup
@@ -2404,7 +2526,7 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
             </span>
           }
         >
-          {!allowed && <ReadOnlyNote actionKey="perm.action.terminalConfig" />}
+          {!permitted && <ReadOnlyNote actionKey="perm.action.terminalConfig" />}
 
           <SettingRow
             label={<T k="device.editor.reboot.action" />}
@@ -2438,7 +2560,7 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
             {/*
               The reassuring half, stated as plainly as the warning. The question somebody
               actually has before pressing this is whether attendance is lost, and the
-              answer is no — so it belongs here rather than in a comment nobody reads.
+              answer is no ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â so it belongs here rather than in a comment nobody reads.
             */}
             <PanelNote tone="info">
               <T k="device.editor.reboot.confirm.safe" />
@@ -2524,7 +2646,7 @@ const STATUS_TONE: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> 
  * carries no `opt` attribute for it, so there is nothing to enumerate from. This is the
  * documented set, narrowed to the credentials this terminal family actually has. It is
  * marked as unverified on screen, and a value the unit refuses fails loudly rather than
- * appearing to save — which is the honest way to offer a list that might be wrong.
+ * appearing to save ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â which is the honest way to offer a list that might be wrong.
  */
 const DOCUMENTED_VERIFY_MODES = [
   'face',
@@ -2551,7 +2673,7 @@ const OBSERVED_LIVENESS_LEVELS = ['general', 'enhancive', 'professional'];
  * Wording for the authentication modes we have words for.
  *
  * Partial on purpose. A mode absent from this map still renders, using the device's own
- * token — worse to read but truthful. Hiding it would be this screen overriding the
+ * token ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â worse to read but truthful. Hiding it would be this screen overriding the
  * hardware about what it supports.
  */
 const VERIFY_MODE_LABELS: Record<string, LabelKey | undefined> = {
@@ -2621,6 +2743,22 @@ interface DeviceRecord {
   faceCapacity: number;
   active: boolean;
   enrolled: number;
+  /**
+   * Which on-site connector reaches this terminal. Null means this server reaches it itself.
+   *
+   * Carried at the record level rather than read per tab, and that matters here: on a connector
+   * terminal the live reads are refused, so a tab that learned this from its own read would learn
+   * it from the failure ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â and render six red error strips to say one structural fact.
+   */
+  agentId: number | null;
+  agent: {
+    id: number;
+    name: string;
+    status: string;
+    lastSeenAt: string | null;
+    lanHost: string | null;
+    lanPort: number | null;
+  } | null;
 }
 
 interface DeviceHealth {
@@ -2635,7 +2773,7 @@ interface TerminalIdentity {
    * Vendor-neutral names, mirroring `TerminalIdentity` on the server.
    *
    * Every field nullable because a protocol may not report it. These were Hikvision's own
-   * spellings — `deviceName`, `firmwareVersion`, `bindFaceUserNumber`, `FDID` — and a screen
+   * spellings ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â `deviceName`, `firmwareVersion`, `bindFaceUserNumber`, `FDID` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â and a screen
    * bound to those is a screen that shows blanks for every other vendor.
    */
   info: {
@@ -2661,7 +2799,7 @@ interface TerminalClock {
   deviceTime: string;
   serverTime: string;
   manualClock: boolean;
-  /** `ntp`, `manual` or `unknown` — normalised by the driver, not the firmware's spelling. */
+  /** `ntp`, `manual` or `unknown` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â normalised by the driver, not the firmware's spelling. */
   timeMode: string;
   /** The terminal's own zone string, which on Hikvision inverts the sign. */
   timeZone: string | null;
@@ -2708,12 +2846,12 @@ interface TerminalDoor {
    * Hikvision `AcsCfg`, and null on any other protocol.
    *
    * Null means the whole card is omitted rather than rendered with switches that read as off.
-   * These fields belong to one vendor — remote verification, and which of a person's details
-   * show on screen during a scan — so there is nothing for another driver to report here.
+   * These fields belong to one vendor ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â remote verification, and which of a person's details
+   * show on screen during a scan ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â so there is nothing for another driver to report here.
    *
    * `unknown` on each field rather than `boolean | null` because the terminal answers them as
    * real booleans over JSON but the set varies by firmware, and null means "this unit does not
-   * have it" — which the controls check before offering a switch.
+   * have it" ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â which the controls check before offering a switch.
    */
   acs: {
     remoteCheckDoorEnabled: unknown;
