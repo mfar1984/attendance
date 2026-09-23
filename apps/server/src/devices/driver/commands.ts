@@ -135,6 +135,47 @@ export async function takePending(
   return rows;
 }
 
+/**
+ * Hands the next batch of work to an on-site connector asking on behalf of its terminals.
+ *
+ * One query across the agent's devices rather than `takePending` fifteen times. An agent polls
+ * on a timer whether or not anybody scanned, so the per-poll cost is paid continuously by every
+ * site — and fifteen round trips to answer "nothing waiting" is the shape that makes somebody
+ * lengthen the poll interval and then wonder why enrolments feel slow.
+ *
+ * `sent` here means handed to the *agent*, not to the terminal. That is the correct boundary:
+ * the agent is what must now report an outcome, and it is the thing that knows whether the unit
+ * accepted the command.
+ */
+export async function takePendingForDevices(
+  deviceIds: number[],
+  limit: number,
+): Promise<Array<{ id: bigint; deviceId: number; kind: string; payload: string }>> {
+  if (deviceIds.length === 0) return [];
+
+  const prisma = db();
+
+  const rows = await prisma.deviceCommand.findMany({
+    where: { deviceId: { in: deviceIds }, status: CommandStatus.pending },
+    orderBy: { createdAt: 'asc' },
+    take: limit,
+    select: { id: true, deviceId: true, kind: true, payload: true },
+  });
+
+  if (rows.length === 0) return [];
+
+  await prisma.deviceCommand.updateMany({
+    where: { id: { in: rows.map((row) => row.id) } },
+    data: {
+      status: CommandStatus.sent,
+      lastSentAt: new Date(),
+      attempts: { increment: 1 },
+    },
+  });
+
+  return rows;
+}
+
 /** Records what the terminal said about a command it collected. */
 export async function recordOutcome(
   commandId: bigint,

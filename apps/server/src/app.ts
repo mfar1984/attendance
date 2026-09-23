@@ -4,6 +4,7 @@ import rateLimit from '@fastify/rate-limit';
 import cookie from '@fastify/cookie';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 
+import { AGENT_PATH, agentRoutes } from './agent/routes.js';
 import { alertRoutes } from './routes/alerts.js';
 import { authRoutes } from './auth/routes.js';
 import { registerAuthHooks } from './auth/plugin.js';
@@ -48,6 +49,12 @@ import { settingsRoutes } from './routes/settings.js';
 import { streamRoutes } from './routes/stream.js';
 import { staffRoutes } from './staff/routes.js';
 
+/**
+ * Liveness probe. Named rather than inlined so the rate limiter and the route cannot disagree
+ * about the path — which is how the exemption came to be documented but absent.
+ */
+const HEALTH_PATH = '/api/health';
+
 export async function buildApp(): Promise<FastifyInstance> {
   const env = loadEnv();
 
@@ -91,8 +98,21 @@ export async function buildApp(): Promise<FastifyInstance> {
     // A callback terminal is heavier still: it polls for queued work on a timer whether or not
     // anybody scans, so three sites of them would burn the global allowance on liveness traffic
     // alone and the limiter would start refusing real attendance.
+    //
+    // A connector is the same argument one level up: it heartbeats and asks for commands on a
+    // timer for a whole site, so fifteen terminals' worth of liveness arrives as one caller's
+    // traffic. It carries its own credential and is scoped to its own devices, which is the
+    // control here — the limiter was never what stopped an unauthorised site.
+    //
+    // `/api/health` is exempt because a monitoring probe hitting it every few seconds would
+    // otherwise spend the shared per-address allowance that real requests need. This was
+    // documented as already true and was not; the deployment steering described this line
+    // rather than the line that existed.
     allowList: (request) =>
-      request.url.startsWith(INGEST_PATH) || request.url.startsWith(ICLOCK_PATH),
+      request.url.startsWith(INGEST_PATH) ||
+      request.url.startsWith(ICLOCK_PATH) ||
+      request.url.startsWith(AGENT_PATH) ||
+      request.url.startsWith(HEALTH_PATH),
   });
 
   registerAuthHooks(app);
@@ -112,7 +132,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     return sendError(reply, error);
   });
 
-  app.get('/api/health', async () => ({
+  app.get(HEALTH_PATH, async () => ({
     ok: true,
     mode: env.CONNECTOR_MODE,
     time: new Date().toISOString(),
@@ -144,6 +164,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Its own guard rather than the session hooks: these are reached with a token, by
   // callers who have no session and must never be handed one.
   await app.register(publicApiRoutes);
+  // Same reasoning again, one topology further out: a connector authenticates with its own
+  // credential, is scoped to its own terminals, and must never be handed a session.
+  await app.register(agentRoutes);
   await app.register(settingsRoutes);
   await app.register(backupRoutes);
   await app.register(maintenanceRoutes);
@@ -198,7 +221,10 @@ export async function buildApp(): Promise<FastifyInstance> {
       if (
         request.url.startsWith('/api') ||
         request.url.startsWith(INGEST_PATH) ||
-        request.url.startsWith(ICLOCK_PATH)
+        request.url.startsWith(ICLOCK_PATH) ||
+        // Without this, a connector that called a path with a typo would receive the web
+        // bundle with a 200, and `response.ok` on its side would read that as success.
+        request.url.startsWith(AGENT_PATH)
       ) {
         return reply.status(404).send({ error: 'Not found' });
       }

@@ -57,6 +57,26 @@ export {
 } from './enums.js';
 
 export {
+  AGENT_EVENT_BATCH_MAX,
+  agentCommandOutcomeSchema,
+  agentDeviceReportSchema,
+  agentEnrolSchema,
+  agentEventBatchSchema,
+  agentHeartbeatSchema,
+  terminalEventWireSchema,
+  type AgentCommandItem,
+  type AgentCommandOutcome,
+  type AgentDeviceAssignment,
+  type AgentDeviceReport,
+  type AgentEnrol,
+  type AgentEnrolReply,
+  type AgentEventBatch,
+  type AgentHeartbeat,
+  type AgentHeartbeatReply,
+  type TerminalEventWire,
+} from './schemas/agent.js';
+
+export {
   doorPinSchema,
   employeeNoSchema,
   staffInputSchema,

@@ -2,6 +2,7 @@ import { DeviceLockedError } from '@attendance/hik-isapi';
 import type { Device } from '@prisma/client';
 
 import { db } from '../db.js';
+import { requeueStale } from '../devices/driver/commands.js';
 import { DriverOperation, supports } from '../devices/driver/index.js';
 import { driverFor } from '../devices/registry.js';
 import { loadEnv } from '../env.js';
@@ -61,6 +62,24 @@ export async function syncDevice(device: Device): Promise<SyncResult> {
     duplicates: 0,
     punches: 0,
   };
+
+  /**
+   * A terminal behind an on-site connector is not ours to pull.
+   *
+   * The agent performs the reconcile pull on the LAN and posts what it finds, so reaching for
+   * the unit from here is both wrong and guaranteed to fail: `device.host` is a private address
+   * this host cannot route.
+   *
+   * Returned as a clean no-op, for the same reason a push-only protocol is. Letting it throw
+   * would mark a healthy terminal `offline` with a network error, add it to the backoff map,
+   * and settle into fifteen-minute retries — and nothing in that output would distinguish
+   * "unreachable because it is behind an agent" from "unreachable because it is dead". A whole
+   * agent site would read as fifteen failed terminals.
+   *
+   * The flag is deliberately not touched: setting and clearing `syncing` for a pass that was
+   * never going to happen is churn on a row the devices screen reads.
+   */
+  if (device.agentId !== null) return base;
 
   /**
    * A second pass while one is already running would double-write and fight over the cursor.
@@ -228,6 +247,24 @@ const backoff = new Map<number, { skipUntil: number; consecutiveFailures: number
 
 const MAX_BACKOFF_MS = 15 * 60_000;
 
+/**
+ * How long a collected command may go unacknowledged before it is offered again.
+ *
+ * Five minutes is well above any healthy round trip — an agent polls every few seconds and a
+ * callback terminal every minute or so — and short enough that a connector restarted in the
+ * middle of a roster push does not leave those people un-enrolled for the rest of the day.
+ */
+const STALE_COMMAND_MS = 5 * 60_000;
+
+/**
+ * Takes allowed before a command is abandoned as failed.
+ *
+ * A command collected four times without a single acknowledgement is not going to succeed on
+ * the fifth, and leaving it pending means the queue never drains — so a genuinely new command
+ * queues behind a dead one indefinitely.
+ */
+const MAX_COMMAND_ATTEMPTS = 4;
+
 function shouldSkip(deviceId: number): boolean {
   const state = backoff.get(deviceId);
   return state !== undefined && Date.now() < state.skipUntil;
@@ -257,6 +294,17 @@ export function startSyncWorker(): void {
 
   const run = async (): Promise<void> => {
     try {
+      /**
+       * Re-offer commands that were collected and never reported on.
+       *
+       * This had no caller at all until the agent needed it, which meant a command a terminal
+       * took and silently dropped stayed `sent` forever: never retried, never failed, and
+       * blocking nothing — so a face enrolment simply never happened and the queue looked
+       * healthy. The window and ceiling live here rather than in configuration because the
+       * right values follow from the poll cadence, not from operator preference.
+       */
+      await requeueStale(STALE_COMMAND_MS, MAX_COMMAND_ATTEMPTS);
+
       const devices = await db().device.findMany({ where: { active: true } });
       let stored = 0;
 
