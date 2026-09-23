@@ -82,4 +82,11 @@ export const agentsApi = {
   create: (name: string) => api.post<IssuedAgentToken>('/api/agents', { name }),
   reissue: (id: number) => api.post<IssuedAgentToken>(`/api/agents/${String(id)}/reissue`),
   revoke: (id: number) => api.post<{ ok: true }>(`/api/agents/${String(id)}/revoke`),
+  /**
+   * Refused while terminals are attached, and while the connector is still active.
+   *
+   * The second is the two-step rule: revoke is the decision, this is the cleanup. Deleting a
+   * live connector would turn a working site into 401s with nothing naming the cause.
+   */
+  remove: (id: number) => api.delete<{ ok: true }>(`/api/agents/${String(id)}`),
 };

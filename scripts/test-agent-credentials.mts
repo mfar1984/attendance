@@ -326,6 +326,46 @@ try {
 
   // -------------------------------------------------------------------------
   /*
+   * Removing a connector, and the two refusals that guard it.
+   *
+   * The screen had revoke and reissue but no delete, so a withdrawn connector stayed on the list
+   * forever with nothing to do about it. It is genuinely deletable, unlike a terminal: `devices`
+   * is its only relation, so once nothing points at it the row records nothing anything else
+   * needs. A `Device` can never go, because scan history references it.
+   *
+   * Both guards are asserted rather than assumed. The foreign key is `RESTRICT` so the first
+   * would fail at the database anyway, but as a constraint name rather than a sentence naming
+   * what to do; and the `active` guard has no database equivalent at all.
+   */
+  section('removing a connector');
+
+  const removable = await db().deviceAgent.create({
+    data: { name: `ujian-agent-buang-${String(stamp)}`, agentKey: issueAgentKey() },
+  });
+  created.push(removable.id);
+
+  check('a pending connector starts with no credential', removable.secretHash === null);
+
+  await db().deviceAgent.update({
+    where: { id: removable.id },
+    data: { status: AgentStatus.active, secretHash: issueAgentSecret().secretHash },
+  });
+
+  const liveRow = await db().deviceAgent.findUniqueOrThrow({ where: { id: removable.id } });
+  check('an active connector is the case the two-step rule exists for', liveRow.status === 'active');
+
+  await revokeAgent(removable.id);
+  const cleaned = await db().deviceAgent.findUniqueOrThrow({ where: { id: removable.id } });
+  check('revoking clears the credential', cleaned.secretHash === null);
+  check('and records when', cleaned.revokedAt !== null);
+  check('and leaves the row for the cleanup step', cleaned.status === 'revoked');
+
+  await db().deviceAgent.delete({ where: { id: removable.id } });
+  const gone = await db().deviceAgent.findUnique({ where: { id: removable.id } });
+  check('a revoked connector with no terminals can be removed', gone === null);
+
+  // -------------------------------------------------------------------------
+  /*
    * The address printed into the installer command.
    *
    * This is a regression, and it shipped. `cloudOrigin()` derived the cloud's address from

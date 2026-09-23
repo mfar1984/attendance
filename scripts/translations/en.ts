@@ -6237,6 +6237,11 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
   'agent.row.revoke': 'Withdraw the connector credential',
   'agent.row.revokeBlocked':
     'Cannot withdraw: {count} terminals are still assigned. Move them to another connector or to LAN mode first.',
+  'agent.row.delete': 'Remove connector',
+  'agent.row.deleteBlocked.devices':
+    'Cannot remove: {count} terminals are still assigned. Move them to another connector or to LAN mode first.',
+  'agent.row.deleteBlocked.active':
+    'Withdraw the credential first. A connector that is still active means a machine on site is contacting this server.',
 
   'agent.pending.note':
     'A connector that has not enrolled means the installer was never run at that site. Terminals assigned to it will report nothing until it enrols — that is not a broken terminal.',
@@ -6266,6 +6271,13 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
     'That connector immediately loses the ability to deliver attendance. This server will not dial the terminals at that site itself, so the site stops recording until the connector is reinstalled.',
   'agent.revoke.submit': 'Yes, withdraw it',
   'agent.revoked': 'The credential for “{name}” was withdrawn.',
+
+  'agent.delete.title': 'Remove this connector?',
+  'agent.delete.description':
+    'This row holds no history — a connector is transport, and no attendance references it. What is lost is its name and when it was last seen. To install that site again, create a new connector.',
+  'agent.delete.submit': 'Yes, remove it',
+  'agent.deleted': 'Connector “{name}” was removed.',
+  'agent.error.delete': 'Could not remove the connector',
 
   // The device editor, when the terminal is reached through a connector rather than dialled.
   'device.editor.viaAgent.read':

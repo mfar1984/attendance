@@ -6,6 +6,7 @@ import { requirePermission } from '../auth/plugin.js';
 import { db, jsonSafe } from '../db.js';
 import { loadEnv } from '../env.js';
 import { conflict, notFound, parseBody } from '../http.js';
+import { logger } from '../logger.js';
 import {
   ENROL_TOKEN_TTL_MS,
   issueAgentKey,
@@ -192,6 +193,65 @@ export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
       }
 
       await revokeAgent(agent.id);
+      return { ok: true };
+    },
+  );
+
+  /**
+   * Removes a connector's record entirely.
+   *
+   * Unlike a terminal, this row can genuinely go. A `Device` cannot be deleted because scan
+   * history references it, and removing one would orphan the evidence behind every punch it
+   * recorded. A connector holds no history at all — it is transport, and `devices` is its only
+   * relation — so once nothing points at it, deleting loses nothing.
+   *
+   * ## Two steps, not one
+   *
+   * An `active` connector is refused. There is a machine out there heartbeating on a credential
+   * this row is the only record of, and deleting it turns that site into 401s with nothing on any
+   * screen naming the cause. Revoking first is the visible decision, and it leaves `revokedAt`
+   * behind; this is the cleanup afterwards. Same reason a leave type with history is deactivated
+   * rather than deleted.
+   *
+   * `pending` is deletable directly, because the ceremony would protect nothing: that row has no
+   * credential and no site depending on it. It is how somebody undoes a mistyped name.
+   */
+  app.delete(
+    '/api/agents/:id',
+    { preHandler: requirePermission('settings.devices', 'edit') },
+    async (request) => {
+      const agent = await requireAgent(idParam(request.params));
+
+      /**
+       * Checked here even though the foreign key is `RESTRICT`.
+       *
+       * The constraint would refuse this anyway, but as a driver error naming a constraint rather
+       * than a sentence naming what to do about it. The count is what makes the message
+       * actionable.
+       */
+      const assigned = await db().device.count({ where: { agentId: agent.id } });
+      if (assigned > 0) {
+        throw conflict(
+          `${String(assigned)} terminal masih ditugaskan kepada "${agent.name}". Pindahkan ` +
+            'terminal itu ke connector lain atau ke mod LAN dahulu.',
+        );
+      }
+
+      if (agent.status === AgentStatus.active) {
+        throw conflict(
+          `"${agent.name}" masih aktif, jadi ada mesin di tapak yang sedang menghubungi pelayan ` +
+            'ini dengan kredensialnya. Tarik kredensial itu dahulu — kalau tidak, tapak itu mula ' +
+            'ditolak dengan 401 dan tiada apa pada mana-mana skrin menyebut sebabnya.',
+        );
+      }
+
+      await db().deviceAgent.delete({ where: { id: agent.id } });
+
+      logger().info(
+        { agentId: agent.id, agentKey: agent.agentKey, name: agent.name },
+        'Removed a connector',
+      );
+
       return { ok: true };
     },
   );

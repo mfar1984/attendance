@@ -4775,6 +4775,17 @@ export const LABELS = {
   'agent.row.revoke': 'Tarik kredensial connector',
   'agent.row.revokeBlocked':
     'Tidak boleh ditarik: {count} terminal masih ditugaskan. Pindahkan ke connector lain atau ke mod LAN dahulu.',
+  'agent.row.delete': 'Buang connector',
+  /**
+   * Two reasons, not one, because they call for different actions.
+   *
+   * Terminals attached means move them; still active means withdraw the credential first. A
+   * single "cannot be deleted" would leave the operator guessing which of the two applies.
+   */
+  'agent.row.deleteBlocked.devices':
+    'Tidak boleh dibuang: {count} terminal masih ditugaskan. Pindahkan ke connector lain atau ke mod LAN dahulu.',
+  'agent.row.deleteBlocked.active':
+    'Tarik kredensial dahulu. Connector yang masih aktif bermakna ada mesin di tapak yang sedang menghubungi pelayan ini.',
 
   /**
    * The distinction this screen exists to make.
@@ -4824,6 +4835,20 @@ export const LABELS = {
     'Connector itu berhenti dapat menghantar kehadiran serta-merta. Pelayan ini tidak akan menghubungi terminal di tapak itu sendiri, jadi tapak itu berhenti merekod sampai connector dipasang semula.',
   'agent.revoke.submit': 'Ya, tarik kredensial',
   'agent.revoked': 'Kredensial "{name}" ditarik.',
+
+  'agent.delete.title': 'Buang connector?',
+  /**
+   * States what is lost, and it is little — which is the useful thing to say.
+   *
+   * A terminal cannot be deleted because scan history references it. A connector holds no
+   * history: it is transport, and once no terminal points at it the row records nothing that
+   * anything else needs. Saying so stops somebody keeping dead rows out of caution.
+   */
+  'agent.delete.description':
+    'Baris ini tidak memegang sejarah — connector ialah pengangkut, dan tiada kehadiran merujuk kepadanya. Yang hilang ialah namanya dan bila ia terakhir dilihat. Untuk memasang tapak itu semula, cipta connector baharu.',
+  'agent.delete.submit': 'Ya, buang',
+  'agent.deleted': 'Connector "{name}" dibuang.',
+  'agent.error.delete': 'Gagal membuang connector',
 
   // -------------------------------------------------------------------------
   // Tetapan › Integrasi › Token API

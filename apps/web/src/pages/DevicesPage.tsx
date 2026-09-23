@@ -11,6 +11,7 @@ import {
   Satellite,
   Server,
   ShieldOff,
+  Trash2,
   TriangleAlert,
 } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
@@ -1463,6 +1464,7 @@ function ConnectorPanel(): ReactNode {
     null,
   );
   const [revoking, setRevoking] = useState<AgentRow | null>(null);
+  const [removing, setRemoving] = useState<AgentRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1501,6 +1503,19 @@ function ConnectorPanel(): ReactNode {
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('agent.error.revoke'));
+    }
+  }
+
+  async function remove(row: AgentRow): Promise<void> {
+    setError(null);
+    setNotice(null);
+    try {
+      await agentsApi.remove(row.id);
+      setRemoving(null);
+      setNotice(t('agent.deleted', { name: row.name }));
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('agent.error.delete'));
     }
   }
 
@@ -1648,9 +1663,27 @@ function ConnectorPanel(): ReactNode {
                       ? t('agent.row.revokeBlocked', { count: row.devices })
                       : t('agent.row.revoke')
                   }
-                  tone="danger"
+                  tone="warn"
                   disabled={row.devices > 0 || row.status === 'revoked'}
                   onClick={() => setRevoking(row)}
+                />
+                {/*
+                  The cleanup after revoking, and the reason it is blocked is named rather than
+                  left to a 409. Two distinct reasons because they call for different actions:
+                  terminals attached means move them, still active means withdraw first.
+                */}
+                <RowAction
+                  icon={<Trash2 className="size-4" aria-hidden />}
+                  label={
+                    row.devices > 0
+                      ? t('agent.row.deleteBlocked.devices', { count: row.devices })
+                      : row.status === 'active'
+                        ? t('agent.row.deleteBlocked.active')
+                        : t('agent.row.delete')
+                  }
+                  tone="danger"
+                  disabled={row.devices > 0 || row.status === 'active'}
+                  onClick={() => setRemoving(row)}
                 />
               </RowActions>
             </td>
@@ -1722,6 +1755,27 @@ function ConnectorPanel(): ReactNode {
                 void revoke(revoking);
               }}
               submitLabel={<T k="agent.revoke.submit" />}
+            />
+          </div>
+        </Dialog>
+      )}
+
+      {removing !== null && (
+        <Dialog
+          title={<T k="agent.delete.title" />}
+          titleText={t('agent.delete.title')}
+          description={<T k="agent.delete.description" />}
+          width="md"
+          onClose={() => setRemoving(null)}
+        >
+          <div className="space-y-4">
+            <p className="pb-2 text-sm text-slate-700">{removing.name}</p>
+            <DialogFooter
+              onClose={() => setRemoving(null)}
+              onSubmit={() => {
+                void remove(removing);
+              }}
+              submitLabel={<T k="agent.delete.submit" />}
             />
           </div>
         </Dialog>
