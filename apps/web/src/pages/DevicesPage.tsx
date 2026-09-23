@@ -3,11 +3,13 @@ import {
   Clock,
   Download,
   HeartPulse,
+  KeyRound,
   Pencil,
   Plus,
   RefreshCw,
   Router,
   Satellite,
+  Server,
   ShieldOff,
   TriangleAlert,
 } from 'lucide-react';
@@ -34,7 +36,16 @@ import {
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
+import { RevealSecret } from '../components/RevealSecret';
 import { Badge, Button, Field, StatTile } from '../components/ui';
+import {
+  AGENT_CREDENTIAL_PATH,
+  AGENT_STATUS_LABELS,
+  agentInstallCommand,
+  agentsApi,
+  type AgentRow,
+  type IssuedAgentToken,
+} from '../lib/agents-api';
 import { api } from '../lib/api';
 import { cn } from '../lib/cn';
 import { T, TEnum, useLabels } from '../lib/translation';
@@ -202,12 +213,24 @@ export function DevicesPage(): ReactNode {
             labelText: t('device.tab.health'),
             icon: <HeartPulse className="size-4" aria-hidden />,
           },
+          /*
+           * Connectors sit on the device screen rather than under Integrations, because whoever
+           * may add a terminal is whoever may add the machine that reaches it — which is also why
+           * the routes reuse `settings.devices` instead of inventing a permission no role holds.
+           */
+          {
+            id: 'connector',
+            label: <T k="agent.tab" />,
+            labelText: t('agent.tab'),
+            icon: <Server className="size-4" aria-hidden />,
+          },
         ]}
       />
 
       {tab === 'list' && <ListPanel onChanged={reloadCount} />}
       {tab === 'connection' && <ConnectionPanel />}
       {tab === 'health' && <HealthPanel />}
+      {tab === 'connector' && <ConnectorPanel />}
     </PanelCard>
   );
 }
@@ -1416,5 +1439,366 @@ function HealthPanel(): ReactNode {
         onRefresh={() => void load()}
       />
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Connector
+//
+// The machines that reach terminals this server cannot route to. This tab exists so an
+// enrolment token is issued from a screen rather than from `create-agent.mts` on the host —
+// the CLI put the one credential that matters in a shell command typed by whoever had SSH,
+// which is a different set of people from whoever is allowed to add a terminal.
+// ---------------------------------------------------------------------------
+
+function ConnectorPanel(): ReactNode {
+  const { t } = useLabels();
+  const [rows, setRows] = useState<AgentRow[]>([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [revealed, setRevealed] = useState<{ issued: IssuedAgentToken; reissued: boolean } | null>(
+    null,
+  );
+  const [revoking, setRevoking] = useState<AgentRow | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setRows(await agentsApi.list());
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('agent.error.load'));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function reissue(row: AgentRow): Promise<void> {
+    setError(null);
+    setNotice(null);
+    try {
+      setRevealed({ issued: await agentsApi.reissue(row.id), reissued: true });
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('agent.error.reissue'));
+    }
+  }
+
+  async function revoke(row: AgentRow): Promise<void> {
+    setError(null);
+    setNotice(null);
+    try {
+      await agentsApi.revoke(row.id);
+      setRevoking(null);
+      setNotice(t('agent.revoked', { name: row.name }));
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('agent.error.revoke'));
+    }
+  }
+
+  const needle = search.trim().toLowerCase();
+  const filtered = rows.filter(
+    (row) => needle.length === 0 || row.name.toLowerCase().includes(needle),
+  );
+
+  /*
+   * One note, shown only when it names something to do.
+   *
+   * A connector in `pending` has never enrolled, which means the installer was never run at that
+   * site. Terminals assigned to it report exactly like broken units — offline, nothing arriving —
+   * so without this line somebody drives to a hospital to inspect a terminal that is working.
+   */
+  const pending = rows.filter((row) => row.status === 'pending').length;
+
+  return (
+    <>
+      <PanelSection
+        title={<T k="agent.count" vars={{ count: rows.length }} />}
+        subtitle={<T k="agent.subtitle" />}
+        action={
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="size-4" aria-hidden />
+            <T k="agent.add" />
+          </Button>
+        }
+      />
+
+      <FilterRow
+        search={search}
+        onSearch={setSearch}
+        placeholder={t('agent.search')}
+        dirty={search.length > 0}
+        onReset={() => setSearch('')}
+      />
+
+      {(error !== null || notice !== null) && (
+        <PanelBody className="pb-0">
+          <Feedback error={error} notice={notice} />
+        </PanelBody>
+      )}
+
+      {pending > 0 && (
+        <PanelBody className="pb-0">
+          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+            <T k="agent.pending.note" />
+          </PanelNote>
+        </PanelBody>
+      )}
+
+      {/* One flexing name column and six narrow ones: the shape `framed` exists for. */}
+      <RecordTable
+        framed
+        loading={loading}
+        rowCount={filtered.length}
+        empty={<T k="agent.empty" />}
+        columns={[
+          { header: <T k="agent.column.name" /> },
+          { header: <T k="agent.column.devices" />, width: 'w-24' },
+          { header: <T k="agent.column.queued" />, width: 'w-28' },
+          { header: <T k="agent.column.version" />, width: 'w-24' },
+          { header: <T k="agent.column.address" />, width: 'w-40' },
+          { header: <T k="agent.column.seen" />, width: 'w-32' },
+          { header: <T k="panel.column.status" />, width: 'w-32' },
+          { header: <T k="panel.column.actions" />, width: 'w-24', align: 'right' },
+        ]}
+      >
+        {filtered.map((row) => (
+          <tr
+            key={row.id}
+            className={cn(
+              'border-b border-slate-100 hover:bg-slate-50/70',
+              // Colour before the status column is read.
+              row.status === 'pending' && 'bg-amber-50/40',
+              row.status === 'revoked' && 'bg-rose-50/40',
+            )}
+          >
+            <td className="px-5 py-2.5">
+              <p className="font-medium text-slate-800">{row.name}</p>
+              {/* The public identifier, because it is what the connector's own log lines carry. */}
+              <p className="text-xs text-slate-500">{row.agentKey}</p>
+            </td>
+            <td className="px-2 py-2.5 text-slate-700">{row.devices}</td>
+            <td className="px-2 py-2.5">
+              {/*
+                Queue depth next to terminal count, because those two together are what say
+                whether a connector is doing anything. Terminals with a rising queue is a site
+                collecting nothing; a badge alone cannot tell that from healthy.
+              */}
+              <span className={cn(row.queued > 0 ? 'text-amber-700' : 'text-slate-400')}>
+                {row.queued}
+              </span>
+            </td>
+            <td className="px-2 py-2.5 text-slate-600">{row.version ?? '—'}</td>
+            <td className="px-2 py-2.5">
+              {row.lanHost === null ? (
+                <span className="text-xs text-slate-400">
+                  <T k="agent.row.noAddress" />
+                </span>
+              ) : (
+                <code className="text-xs text-slate-600">
+                  {row.lanHost}
+                  {row.lanPort === null ? '' : `:${String(row.lanPort)}`}
+                </code>
+              )}
+            </td>
+            <td className="px-2 py-2.5 text-xs text-slate-600">
+              {row.lastSeenAt === null ? (
+                <span className="text-slate-400">
+                  <T k="agent.row.neverSeen" />
+                </span>
+              ) : (
+                formatDateTime(row.lastSeenAt)
+              )}
+            </td>
+            <td className="px-2 py-2.5">
+              <Badge
+                tone={
+                  row.status === 'active' ? 'success' : row.status === 'pending' ? 'warning' : 'danger'
+                }
+                className="uppercase"
+              >
+                <TEnum k={AGENT_STATUS_LABELS[row.status]} fallback={row.status} />
+              </Badge>
+            </td>
+            <td className="px-2 py-2.5 pr-4">
+              <RowActions>
+                <RowAction
+                  icon={<KeyRound className="size-4" aria-hidden />}
+                  label={t('agent.row.reissue')}
+                  tone="warn"
+                  onClick={() => void reissue(row)}
+                />
+                {/*
+                  Disabled with the reason in the tooltip rather than live and answering 409.
+                  Revoking with terminals still attached leaves them pointing at a connector that
+                  can no longer deliver, and the cloud will not dial them itself.
+                */}
+                <RowAction
+                  icon={<ShieldOff className="size-4" aria-hidden />}
+                  label={
+                    row.devices > 0
+                      ? t('agent.row.revokeBlocked', { count: row.devices })
+                      : t('agent.row.revoke')
+                  }
+                  tone="danger"
+                  disabled={row.devices > 0 || row.status === 'revoked'}
+                  onClick={() => setRevoking(row)}
+                />
+              </RowActions>
+            </td>
+          </tr>
+        ))}
+      </RecordTable>
+
+      <PanelFooter
+        shown={filtered.length}
+        total={rows.length}
+        page={1}
+        pageSize={Math.max(1, rows.length)}
+        pageSizes={[Math.max(1, rows.length)]}
+        loading={loading}
+        onPage={() => undefined}
+        onPageSize={() => undefined}
+        onRefresh={() => void load()}
+      />
+
+      {creating && (
+        <CreateAgentDialog
+          onClose={() => setCreating(false)}
+          onCreated={(issued) => {
+            setCreating(false);
+            setNotice(t('agent.created', { name: issued.name }));
+            setRevealed({ issued, reissued: false });
+            void load();
+          }}
+        />
+      )}
+
+      {revealed !== null && (
+        <RevealSecret
+          title={t(revealed.reissued ? 'agent.reissue.title' : 'agent.reveal.title')}
+          label={t('agent.reveal.label')}
+          value={agentInstallCommand(revealed.issued)}
+          note={t('agent.reveal.note', { minutes: revealed.issued.ttlMinutes })}
+          hint={
+            <>
+              <T
+                k="agent.reveal.hint"
+                vars={{ path: <code className="text-slate-600">{AGENT_CREDENTIAL_PATH}</code> }}
+              />
+              {revealed.reissued && (
+                <>
+                  {' '}
+                  <T k="agent.reissue.note" />
+                </>
+              )}
+            </>
+          }
+          onClose={() => setRevealed(null)}
+        />
+      )}
+
+      {revoking !== null && (
+        <Dialog
+          title={<T k="agent.revoke.title" />}
+          titleText={t('agent.revoke.title')}
+          description={<T k="agent.revoke.description" />}
+          width="md"
+          onClose={() => setRevoking(null)}
+        >
+          <div className="space-y-4">
+            <p className="pb-2 text-sm text-slate-700">{revoking.name}</p>
+            <DialogFooter
+              onClose={() => setRevoking(null)}
+              onSubmit={() => {
+                void revoke(revoking);
+              }}
+              submitLabel={<T k="agent.revoke.submit" />}
+            />
+          </div>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
+/**
+ * Creates a connector and hands back its enrolment token.
+ *
+ * Name only. A connector has no other configuration: the roster arrives from the cloud on every
+ * heartbeat, and the LAN address is reported by the connector because only it knows which
+ * interface it is reachable on. A form asking for either would be a second copy of the truth.
+ */
+function CreateAgentDialog({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (issued: IssuedAgentToken) => void;
+}): ReactNode {
+  const { t } = useLabels();
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      onCreated(await agentsApi.create(name.trim()));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('agent.error.create'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      title={<T k="agent.dialog.new" />}
+      titleText={t('agent.dialog.new')}
+      description={<T k="agent.dialog.new.description" />}
+      width="lg"
+      onClose={onClose}
+    >
+      <div className="space-y-4">
+        <Feedback error={error} />
+
+        <Field
+          label={<T k="agent.dialog.name" />}
+          hint={<T k="agent.dialog.name.hint" />}
+          value={name}
+          maxLength={120}
+          onChange={(event) => setName(event.target.value)}
+        />
+
+        {/*
+          The caveat sits at the moment of the decision, not under the table.
+          A non-ISAPI terminal assigned to a connector is accepted here and refused by the agent,
+          so the site reads as healthy and records nothing.
+        */}
+        <div className="pb-2">
+          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+            <T k="agent.note.isapiOnly" />
+          </PanelNote>
+        </div>
+
+        <DialogFooter
+          onClose={onClose}
+          onSubmit={() => void submit()}
+          busy={busy}
+          disabled={name.trim().length === 0}
+          submitLabel={<T k="agent.dialog.submit" />}
+        />
+      </div>
+    </Dialog>
   );
 }

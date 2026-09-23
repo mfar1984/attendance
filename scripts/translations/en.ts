@@ -6192,3 +6192,78 @@ export const EN_LABELS_DEVICE_VENDOR_HOLIDAY: Partial<Record<LabelKey, string>> 
   'integration.holiday.type.company': 'Organisation',
   'integration.holiday.allStates': 'All offices',
 };
+
+/**
+ * Batch 11f: on-site connectors.
+ *
+ * `connector` throughout, not `agent`. The Malay source uses the English word already, and
+ * "agent" in an English interface reads as a person — the machine is the thing being named, and
+ * an operator comparing this screen with the installer output has to match the words.
+ *
+ * The three status chips are uppercase in the source and stay uppercase here, like
+ * `device.status.*` beside them.
+ */
+export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
+  'agent.tab': 'Connector',
+  'agent.count': '{count} connectors',
+  'agent.subtitle':
+    'The on-site machines that dial this server. Everything is started by the connector, so a site publishes one outbound firewall rule and no inbound one.',
+  'agent.add': 'Add Connector',
+  'agent.search': 'Search connector names…',
+  'agent.empty':
+    'No connectors yet. Add one for a site this server cannot reach directly.',
+  'agent.error.load': 'Could not load connectors',
+  'agent.error.create': 'Could not create the connector',
+  'agent.error.reissue': 'Could not issue an enrolment token',
+  'agent.error.revoke': 'Could not withdraw the credential',
+
+  'agent.note.isapiOnly':
+    'A connector drives Hikvision ISAPI only. A terminal of another make can be assigned to one here and will be ignored on site, so that site looks healthy while recording nothing.',
+
+  'agent.column.name': 'Site name',
+  'agent.column.devices': 'Terminals',
+  'agent.column.queued': 'Queued',
+  'agent.column.version': 'Build',
+  'agent.column.address': 'LAN address',
+  'agent.column.seen': 'Seen',
+
+  'agent.status.pending': 'NOT ENROLLED',
+  'agent.status.active': 'ACTIVE',
+  'agent.status.revoked': 'REVOKED',
+
+  'agent.row.neverSeen': 'never',
+  'agent.row.noAddress': 'not reported yet',
+  'agent.row.reissue': 'Issue a new enrolment token',
+  'agent.row.revoke': 'Withdraw the connector credential',
+  'agent.row.revokeBlocked':
+    'Cannot withdraw: {count} terminals are still assigned. Move them to another connector or to LAN mode first.',
+
+  'agent.pending.note':
+    'A connector that has not enrolled means the installer was never run at that site. Terminals assigned to it will report nothing until it enrols — that is not a broken terminal.',
+
+  'agent.dialog.new': 'New connector',
+  'agent.dialog.new.description':
+    'Creates a connector and issues its enrolment token. The token is shown once.',
+  'agent.dialog.name': 'Site name',
+  'agent.dialog.name.hint':
+    'Where this machine is installed — a hospital, a clinic, or a block. This name appears in every log line for that site, so two names differing by one character is how a terminal ends up assigned to the wrong place.',
+  'agent.dialog.submit': 'Create & issue token',
+  'agent.created': 'Connector “{name}” created.',
+
+  'agent.reveal.title': 'Connector installation command',
+  'agent.reveal.label': 'Run this as root on the machine at the site',
+  'agent.reveal.note':
+    'This is the only time this token is shown. It is single-use and expires in {minutes} minutes — if you miss it, issue a new one from the list.',
+  'agent.reveal.hint':
+    'The installer exchanges this token for a working credential during enrolment. That credential is written to {path} on the site machine and is never shown here.',
+
+  'agent.reissue.title': 'New enrolment token',
+  'agent.reissue.note':
+    'The connector already running at that site keeps reporting attendance until the new install enrols. Nothing is revoked now.',
+
+  'agent.revoke.title': 'Withdraw the connector credential?',
+  'agent.revoke.description':
+    'That connector immediately loses the ability to deliver attendance. This server will not dial the terminals at that site itself, so the site stops recording until the connector is reinstalled.',
+  'agent.revoke.submit': 'Yes, withdraw it',
+  'agent.revoked': 'The credential for “{name}” was withdrawn.',
+};

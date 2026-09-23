@@ -273,17 +273,23 @@ Bukan skrip, satu baris. Jalankan selepas menyunting `labels.ts` — kunci yang 
 panggilan bermakna label yang tiada siapa akan lihat, dan `tsc` tidak menangkapnya.
 
 ```powershell
-$root = 'f:\Programming\attendance'
-$labels = [System.IO.File]::ReadAllText("$root\packages\shared\src\labels.ts")
-$keys = [regex]::Matches($labels, "(?m)^\s{2}'([^']+)':") | ForEach-Object { $_.Groups[1].Value }
-$srcAll = (Get-ChildItem "$root\apps\web\src", "$root\apps\server\src" -Recurse -Include *.ts,*.tsx |
-  ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
-$keys | Where-Object { $srcAll -notmatch [regex]::Escape("'$_'") -and $srcAll -notmatch [regex]::Escape("`"$_`"") }
+$root='f:\Programming\attendance'; $labels=[System.IO.File]::ReadAllText("$root\packages\shared\src\labels.ts"); $keys=[regex]::Matches($labels,"(?m)^\s{2}'([^']+)':") | ForEach-Object { $_.Groups[1].Value }; $files=Get-ChildItem "$root\apps\web\src","$root\apps\server\src","$root\packages" -Recurse -Include *.ts,*.tsx | Where-Object { $_.Name -ne 'labels.ts' -and $_.FullName -notmatch '\\dist\\' -and $_.FullName -notmatch 'node_modules' }; $srcAll=($files | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"; $orphans=@($keys | Where-Object { $srcAll -notmatch [regex]::Escape("'$_'") -and $srcAll -notmatch [regex]::Escape("`"$_`"") }); "KUNCI=$($keys.Count) YATIM=$($orphans.Count)"; $orphans
 ```
 
 **Semak kedua-dua bentuk petikan.** JSX menulis `k="sms.title"` dengan petikan berganda dan
 kod menulis `t('sms.title')` dengan petikan tunggal; menyemak satu sahaja melaporkan separuh
 registry sebagai orphan.
+
+**Imbas `packages` seluruhnya, bukan `packages\shared\src` sahaja.** Ini sudah menghasilkan
+satu positif palsu. `device.warning.remoteCheck` dilaporkan yatim kerana satu-satunya tempat
+panggilannya ialah `packages/terminal-drivers/src/hikvision/driver.ts` — probe kesihatan
+memulangkannya sebagai `{ key, vars }` — dan driver itu berpindah ke pakejnya sendiri dalam
+`78e1af8` sementara senarai imbasan di sini tidak bergerak. Semakan yang melaporkan yatim palsu
+setiap larian ialah semakan yang orang berhenti membaca.
+
+`labels.ts` sendiri dikecualikan, dan `dist` bersama `node_modules` juga. Tanpa pengecualian
+pertama setiap kunci memadan definisinya sendiri dan jawapannya sentiasa sifar; tanpa yang kedua
+imbasan membaca `.d.ts` yang dijana dan mengambil masa berpuluh kali lebih lama.
 
 ### Yang kekal TIDAK didaftarkan, dan sebabnya
 

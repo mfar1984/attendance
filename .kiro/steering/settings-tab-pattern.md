@@ -250,8 +250,13 @@ akan lihat, dan `tsc` tidak menangkapnya. Rangkai pada **satu baris**; gelung be
 output dalam shell ini:
 
 ```powershell
-$root='f:\Programming\attendance'; $labels=[System.IO.File]::ReadAllText("$root\packages\shared\src\labels.ts"); $keys=[regex]::Matches($labels,"(?m)^\s{2}'([^']+)':") | ForEach-Object { $_.Groups[1].Value }; $files=Get-ChildItem "$root\apps\web\src","$root\apps\server\src","$root\packages\shared\src" -Recurse -Include *.ts,*.tsx | Where-Object { $_.Name -ne 'labels.ts' }; $srcAll=($files | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"; $orphans=@($keys | Where-Object { $srcAll -notmatch [regex]::Escape("'$_'") -and $srcAll -notmatch [regex]::Escape("`"$_`"") }); "KUNCI=$($keys.Count) YATIM=$($orphans.Count)"; $orphans
+$root='f:\Programming\attendance'; $labels=[System.IO.File]::ReadAllText("$root\packages\shared\src\labels.ts"); $keys=[regex]::Matches($labels,"(?m)^\s{2}'([^']+)':") | ForEach-Object { $_.Groups[1].Value }; $files=Get-ChildItem "$root\apps\web\src","$root\apps\server\src","$root\packages" -Recurse -Include *.ts,*.tsx | Where-Object { $_.Name -ne 'labels.ts' -and $_.FullName -notmatch '\\dist\\' -and $_.FullName -notmatch 'node_modules' }; $srcAll=($files | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"; $orphans=@($keys | Where-Object { $srcAll -notmatch [regex]::Escape("'$_'") -and $srcAll -notmatch [regex]::Escape("`"$_`"") }); "KUNCI=$($keys.Count) YATIM=$($orphans.Count)"; $orphans
 ```
+
+**`packages` seluruhnya, bukan `packages\shared\src`.** Versi lama melaporkan
+`device.warning.remoteCheck` sebagai yatim pada setiap larian: satu-satunya tempat panggilannya
+ialah probe kesihatan dalam `packages/terminal-drivers`, yang berpindah ke pakejnya sendiri dalam
+`78e1af8` sementara senarai imbasan tidak bergerak.
 
 **Label yatim bukan sentiasa untuk dibuang.** Dua daripada tiga yang muncul semasa kerja ini membawa
 fakta sebenar yang tempatnya salah, bukan fakta yang tidak diperlukan. Baca setiap satu sebelum

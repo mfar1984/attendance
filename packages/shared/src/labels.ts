@@ -101,6 +101,10 @@ export const LABEL_GROUPS: Record<string, string> = {
   event: 'Kod Peristiwa Terminal',
   scan: 'Scan',
   device: 'Peranti',
+  // Own group rather than `device.*`. A terminal and the machine that reaches one are different
+  // subjects, and whoever translates the connector screen is writing about firewalls and
+  // installers rather than about clocks and face enrolment.
+  agent: 'Connector Tapak',
   dashboard: 'Dashboard',
   settings: 'Tetapan',
 };
@@ -4699,6 +4703,109 @@ export const LABELS = {
   'device.editor.reboot.confirm.safe':
     'Kehadiran yang sudah direkod tidak hilang. Peristiwa disimpan pada terminal terhadap nombor siri yang menaik, dan tarikan berkala mengambil semula apa-apa yang push terlepas semasa ia mati.',
   'device.editor.reboot.confirm.submit': 'Ya, restart sekarang',
+
+  // -------------------------------------------------------------------------
+  // Tetapan › Senarai Peranti › Connector
+  //
+  // The machines that reach terminals this server cannot route to. A separate group from
+  // `device.*` because the subject is different: one is a clock and a face library, the other is
+  // a firewall rule and an installer command.
+  // -------------------------------------------------------------------------
+  'agent.tab': 'Connector',
+  'agent.count': '{count} connector',
+  'agent.subtitle':
+    'Mesin di tapak yang menghubungi pelayan ini. Semuanya dimulakan oleh connector — tapak menerbitkan satu peraturan firewall keluar dan tiada satu pun masuk.',
+  'agent.add': 'Tambah Connector',
+  'agent.search': 'Cari nama connector…',
+  'agent.empty':
+    'Belum ada connector. Tambah satu untuk tapak yang pelayan ini tidak boleh hubungi terus.',
+  'agent.error.load': 'Gagal memuatkan connector',
+  'agent.error.create': 'Gagal mencipta connector',
+  'agent.error.reissue': 'Gagal menjana token pendaftaran',
+  'agent.error.revoke': 'Gagal menarik kredensial',
+
+  /**
+   * Stated on the screen, not only in a steering document.
+   *
+   * A non-ISAPI terminal assigned to a connector is accepted by the cloud and refused by the
+   * agent's `buildDriver`, so the site looks configured and records nothing. That failure is
+   * invisible from here unless the screen says so before somebody assigns one.
+   */
+  'agent.note.isapiOnly':
+    'Connector memandu Hikvision ISAPI sahaja. Terminal jenama lain boleh ditugaskan kepadanya di sini dan akan diabaikan di tapak, jadi tapak itu kelihatan sihat sambil merekod sifar.',
+
+  'agent.column.name': 'Nama tapak',
+  'agent.column.devices': 'Terminal',
+  'agent.column.queued': 'Dalam giliran',
+  'agent.column.version': 'Binaan',
+  'agent.column.address': 'Alamat LAN',
+  'agent.column.seen': 'Dilihat',
+
+  /**
+   * Three states, not a boolean.
+   *
+   * An install nobody finished and a credential somebody withdrew need different actions from
+   * whoever reads this, and neither is the same as working.
+   */
+  'agent.status.pending': 'BELUM DAFTAR',
+  'agent.status.active': 'AKTIF',
+  'agent.status.revoked': 'DIBATALKAN',
+
+  'agent.row.neverSeen': 'belum pernah',
+  'agent.row.noAddress': 'belum dilaporkan',
+  'agent.row.reissue': 'Jana token pendaftaran baharu',
+  'agent.row.revoke': 'Tarik kredensial connector',
+  'agent.row.revokeBlocked':
+    'Tidak boleh ditarik: {count} terminal masih ditugaskan. Pindahkan ke connector lain atau ke mod LAN dahulu.',
+
+  /**
+   * The distinction this screen exists to make.
+   *
+   * A terminal behind a connector that never enrolled is not a broken terminal, but it reports
+   * exactly like one — offline, nothing arriving. Without this line somebody drives to a hospital
+   * to inspect a unit that is working perfectly.
+   */
+  'agent.pending.note':
+    'Connector yang belum mendaftar bermakna pemasang belum pernah dijalankan di tapak itu. Terminal yang ditugaskan kepadanya tidak akan melaporkan apa-apa sampai ia mendaftar — itu bukan terminal rosak.',
+
+  'agent.dialog.new': 'Connector baharu',
+  'agent.dialog.new.description':
+    'Mencipta connector dan mengeluarkan token pendaftarannya. Token itu dipaparkan sekali sahaja.',
+  'agent.dialog.name': 'Nama tapak',
+  'agent.dialog.name.hint':
+    'Tempat mesin ini dipasang — hospital, klinik, atau blok. Nama ini muncul dalam setiap baris log bagi tapak itu, jadi dua nama yang berbeza satu aksara ialah cara terminal ditugaskan ke tapak yang salah.',
+  'agent.dialog.submit': 'Cipta & jana token',
+  'agent.created': 'Connector "{name}" dicipta.',
+
+  'agent.reveal.title': 'Arahan pemasangan connector',
+  'agent.reveal.label': 'Jalankan ini sebagai root pada mesin di tapak',
+  /**
+   * Two facts in one strip, and both change what the reader does next.
+   *
+   * Single-use because it is pasted into a shell command, which puts it in the history of a
+   * machine that may sit in a corridor; expiring because a token found there next week must
+   * already be worthless.
+   */
+  'agent.reveal.note':
+    'Ini satu-satunya kali token ini dipaparkan. Ia sekali guna dan luput dalam {minutes} minit — kalau terlepas, jana yang baharu dari senarai.',
+  'agent.reveal.hint':
+    'Pemasang menukar token ini dengan kredensial kerja semasa pendaftaran. Kredensial itu ditulis ke {path} pada mesin tapak dan tidak pernah dipaparkan di sini.',
+
+  'agent.reissue.title': 'Token pendaftaran baharu',
+  /**
+   * Says what is *not* happening, because that is the part that would stop a site collecting.
+   *
+   * Reissuing does not clear the working credential, so the connector already on site keeps
+   * reporting attendance for however long it takes somebody to drive there.
+   */
+  'agent.reissue.note':
+    'Connector yang sedang berjalan di tapak itu terus melaporkan kehadiran sampai pemasangan baharu mendaftar. Tiada apa dibatalkan sekarang.',
+
+  'agent.revoke.title': 'Tarik kredensial connector?',
+  'agent.revoke.description':
+    'Connector itu berhenti dapat menghantar kehadiran serta-merta. Pelayan ini tidak akan menghubungi terminal di tapak itu sendiri, jadi tapak itu berhenti merekod sampai connector dipasang semula.',
+  'agent.revoke.submit': 'Ya, tarik kredensial',
+  'agent.revoked': 'Kredensial "{name}" ditarik.',
 
   // -------------------------------------------------------------------------
   // Tetapan › Integrasi › Token API
