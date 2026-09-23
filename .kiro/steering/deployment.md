@@ -302,6 +302,96 @@ Empat perkara dari percubaan itu kekal kerana ia memperbaiki kod tanpa mengira h
   tanpa `--env-file`, yang systemd pun faedahi. `server.js` tidak digunakan dalam standalone
   tetapi dibiarkan: ia satu laluan boot yang stabil, dan ia berfungsi.
 
-## Yang belum siap
+## Connector tapak
 
-Binari agent. Sehingga ia ada, hanya standalone boleh diedarkan.
+`apps/agent`. Ia wujud untuk satu sebab: hos cloud tidak boleh route ke
+`192.168.1.250`. Ia juga titik pendedahan rangkaian tunggal bagi tapak itu —
+lima belas terminal di belakang satu connector bermakna satu peraturan firewall
+untuk dirundingkan dan bukan lima belas, dan terminal itu, yang menjalankan
+firmware vendor yang tiada siapa tampung, tidak perlukan laluan ke internet sama
+sekali.
+
+**Semuanya dimulakan oleh agent.** Tiada apa mendengar cloud. Arahan **dikutip**,
+tidak pernah dihantar, jadi hospital menerbitkan satu peraturan keluar dan tiada
+satu pun masuk. Itu soalan pertama yang IT akan tanya dan jawapannya bersih.
+
+| Permintaan kepada IT | |
+|---|---|
+| Keluar | TCP 443 dari IP Pi ke satu nama hos |
+| Masuk | tiada |
+| Dalam LAN | 15 terminal mencapai Pi pada satu port |
+| NTP | tidak perlu — masa datang dari balasan cloud |
+
+### Per-peranti, bukan per-pemasangan
+
+`Device.agentId` null bermakna pelayan mencapai terminal itu sendiri. Satu
+pemasangan memegang kedua-duanya serentak: terminal dalam bangunan yang sama
+direct, klinik di belakang NAT melalui agent. `CONNECTOR_MODE` hanya lalai untuk
+peranti baharu.
+
+Kesan sampingan yang berguna: 15 terminal boleh dibahagi antara dua Pi tanpa satu
+baris kod berubah, yang merupakan jawapan apabila satu connector untuk seluruh
+tapak terlalu banyak untuk hilang serentak.
+
+### Memasang
+
+```powershell
+node --env-file=.env node_modules/tsx/dist/cli.mjs scripts/create-agent.mts "Nama Tapak"
+```
+
+Ia mencetak arahan pemasang lengkap dengan alamat cloud sudah diisi. Pada Pi:
+
+```bash
+curl -fsSL https://<cloud>/install-agent.sh | sudo bash -s -- --cloud https://<cloud> --token hken_...
+```
+
+**Dua kredensial, bukan satu.** Token pendaftaran (`hken_`) sekali guna dan luput
+sejam — ia yang ditampal ke arahan shell, jadi ia masuk ke `~/.bash_history` pada
+mesin yang mungkin duduk di koridor. Kredensial kerja (`hkag_`) dikeluarkan cloud
+semasa pendaftaran dan ditulis ke `/var/lib/attendance-agent/credential` pada
+`0600`. Operator tidak pernah melihatnya.
+
+`--reissue <id>` untuk memasang semula. Ia **tidak** mengosongkan kredensial yang
+ada, jadi tapak itu terus melaporkan kehadiran sementara seseorang memandu ke
+sana.
+
+### Apa yang berfungsi, dan apa yang tidak
+
+**Berfungsi:** push terminal, tarikan rekonsil pada LAN, penghantaran peristiwa
+mentah, tambah/buang pengguna, tambah/buang wajah, reboot.
+
+**Hikvision ISAPI sahaja.** Driver ZKTeco TA Push menulis melalui baris giliran
+cloud yang connector tiada akses, dan rentetan arahannya datang dari transkripsi
+pihak ketiga dan belum pernah disemak terhadap SenseFace sebenar. `roster.ts`
+menolaknya dengan baris log, bukan secara senyap — connector yang mendakwa
+menyokongnya akan menghasilkan tapak yang kelihatan sihat dan merekod sifar.
+
+**Bacaan langsung ditolak.** Status peranti, hanyutan jam dan firmware datang
+dari heartbeat connector. Bacaan tidak boleh dibariskan, jadi alternatifnya ialah
+menahan permintaan pelayar atau mencipta nilai.
+
+**Buka pintu ditolak.** Melepaskan kunci lima belas saat lewat bukan kejayaan
+yang lambat — ia pintu yang terbuka ketika tiada siapa menjangkakannya.
+
+**Skrin belum ada.** Urus agent melalui `create-agent.mts` dan tetapkan
+`devices.agentId` secara langsung sampai borang peranti mendapat pemilihnya.
+
+### Dua perkara yang akan menggigit kalau dilupakan
+
+**Spool ialah keseluruhan kontrak.** Firmware tidak menyimpan baris giliran dan
+tidak pernah mencuba semula, jadi antara connector menjawab 200 kepada satu unit
+dan cloud menerima kelompok itu, Pi ialah satu-satunya tempat peristiwa itu
+wujud. Tulisan berlaku sebelum respons; pemadaman selepas cloud menerima. Guna
+SSD kalau boleh — Pi 5 ada PCIe, dan kad SD ialah cara Pi paling biasa mati.
+
+**Connector tidak pernah menjadi sumber masa.** Pi 5 tiada jam bersandar bateri.
+Ia relay jam cloud dan MENOLAK menetapkan jam terminal sampai ia melihat satu.
+Terminal yang dibiar hanyut ialah masalah dengan amaran pada skrin; terminal yang
+ditetapkan dengan yakin ke hari yang salah bukan.
+
+### Trafik itu HTTP biasa dalam LAN
+
+Kuki sesi dan kredensial ingest menyeberangi LAN tanpa TLS antara terminal dan
+Pi. Letakkan terminal dan Pi pada VLAN sendiri, atau tamatkan TLS di hadapan.
+Perjalanan Pi ke cloud sentiasa HTTPS — `assertSecureCloud()` menolak HTTP awam
+pada boot.
