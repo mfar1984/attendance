@@ -63,7 +63,32 @@ export const terminalEventWireSchema = z.strictObject({
   payload: z.unknown(),
 });
 
+/**
+ * The event after parsing: `at` is a `Date`.
+ *
+ * Structurally compatible with the server's `TerminalEvent`, which is asserted at the route by
+ * assignment so the two cannot drift apart silently.
+ */
 export type TerminalEventWire = z.infer<typeof terminalEventWireSchema>;
+
+/**
+ * The event as it exists **on the wire**: `at` is an ISO string.
+ *
+ * A separate type because the difference is real and has a sharp edge. The connector spools
+ * events to disk as JSON, so anything read back has a string there — while `z.infer` says
+ * `Date`, because that is what the schema produces on the receiving side. Using the output type
+ * for stored rows would typecheck and then throw at the first `.at.getTime()`, in a process
+ * running unattended on a machine in a corridor.
+ *
+ * Spelled out rather than taken from `z.input`, which resolves `at` to `unknown` because
+ * `z.coerce.date()` accepts anything. `unknown` would typecheck a connector that spooled a Date,
+ * a number, or nothing at all into that field — so the one thing this type exists to pin down
+ * would be the one thing it left open.
+ */
+export type TerminalEventPayload = Omit<TerminalEventWire, 'at'> & {
+  /** ISO 8601 with offset. */
+  at: string;
+};
 
 /**
  * Upper bound on one batch.

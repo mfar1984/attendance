@@ -49,6 +49,34 @@ export type * from './types.js';
 export { HikvisionDriver } from './hikvision/driver.js';
 export { hikvisionEventKey, toTerminalEvent } from './hikvision/events.js';
 
+/**
+ * Push body decoding, shared for the same reason the digest check is: both the cloud and the
+ * connector receive these bodies, and a second decoder is a second reading of the same firmware
+ * payload — with no way to tell which one is wrong until a site reports nothing.
+ */
+export {
+  asNumber,
+  asRecord,
+  asString,
+  decodePush,
+  toAcsEvent,
+  type DecodedPush,
+} from './hikvision/push.js';
+
+/**
+ * Digest authentication for the terminal push endpoint.
+ *
+ * Here rather than in the server because both the cloud and the connector run this endpoint: a
+ * direct installation listens for pushes itself, and an agent listens on the LAN. The nonce
+ * counter is what makes a captured Authorization header unusable a second time, and two
+ * implementations of a replay check is one implementation of a replay check.
+ */
+export {
+  digestChallenge,
+  verifyDigest,
+  type DigestVerdict,
+} from './ingest-digest.js';
+
 export {
   deleteFaceCommand,
   deleteUserCommand,

@@ -20,7 +20,7 @@
     "clean": "tsc --build --clean",
     "typecheck": "tsc --build",
     "probe": "tsx scripts/probe.mts",
-    "build:prod": "npm run build && npm run build:prod --workspace @attendance/server && npm run build --workspace @attendance/web",
+    "build:prod": "npm run build && npm run build:prod --workspace @attendance/server && npm run build:prod --workspace @attendance/agent && npm run build --workspace @attendance/web",
     "start": "npm run start --workspace @attendance/server"
   },
   "devDependencies": {

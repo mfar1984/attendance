@@ -73,6 +73,7 @@ export {
   type AgentEventBatch,
   type AgentHeartbeat,
   type AgentHeartbeatReply,
+  type TerminalEventPayload,
   type TerminalEventWire,
 } from './schemas/agent.js';
 

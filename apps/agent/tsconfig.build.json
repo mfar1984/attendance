@@ -1,0 +1,23 @@
+{
+  /*
+   * Production build. Same split as the server and for the same reason: this file emits, the
+   * other is `noEmit` for the typecheck that runs on every save.
+   *
+   * The connector runs compiled JavaScript under systemd on a Raspberry Pi. No `tsx` on the
+   * device: a transpile-on-boot step is a dependency the running service does not need, and it
+   * turns a syntax error in a file nothing has imported yet into a crash at request time
+   * instead of at build time. On a machine in a corridor that distinction matters more than it
+   * does on a server somebody watches.
+   */
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "noEmit": false,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

@@ -80,7 +80,60 @@ export async function storeEvents(
       continue;
     }
 
-    const raw = await prisma.rawEvent.create({
+    /**
+     * There are two unique keys on this table, and only one of them was checked above.
+     *
+     * `(deviceId, eventKey)` is the dedup identity. `(deviceId, serialNo)` is retained for the
+     * Hikvision cursor lookup, and it can collide independently: a terminal that reused a
+     * sequence after a firmware reset, a restored backup, or a driver that derived a different
+     * `eventKey` for an event already stored. A collision there means this device sequence is
+     * already on record, which is a duplicate by another name.
+     *
+     * Caught rather than allowed to propagate, and that distinction is not cosmetic. An
+     * uncaught P2002 became a 500, and a connector classifies 5xx as "try again later" — so the
+     * batch was held and retried forever, the spool stopped draining behind it, and the site
+     * went quiet with a filling disk as the only symptom. Exactly the outcome the retryable /
+     * unacceptable split exists to prevent.
+     */
+    let raw: { id: bigint };
+    try {
+      raw = await createRawEvent(prisma, device, event, arrivedVia);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        outcome.duplicates += 1;
+        logger().warn(
+          { deviceId: device.id, eventKey: event.eventKey, sequence: event.sequence },
+          'Raw event collided on the device sequence, so it is counted as a duplicate',
+        );
+        continue;
+      }
+      throw error;
+    }
+    outcome.stored += 1;
+
+    await derivePunch(device, event, raw.id, outcome);
+  }
+
+  return outcome;
+}
+
+/** Whether a Prisma failure is a unique-constraint violation. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'P2002'
+  );
+}
+
+function createRawEvent(
+  prisma: ReturnType<typeof db>,
+  device: Device,
+  event: TerminalEvent,
+  arrivedVia: 'push' | 'pull',
+): Promise<{ id: bigint }> {
+  return prisma.rawEvent.create({
       data: {
         deviceId: device.id,
         eventKey: event.eventKey,
@@ -103,14 +156,8 @@ export async function storeEvents(
         arrivedVia,
         payload: event.payload as object,
       },
-      select: { id: true },
-    });
-    outcome.stored += 1;
-
-    await derivePunch(device, event, raw.id, outcome);
-  }
-
-  return outcome;
+    select: { id: true },
+  });
 }
 
 /**

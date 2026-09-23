@@ -1,0 +1,28 @@
+{
+  "name": "@attendance/agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "On-site connector: collects terminal events on the LAN and forwards them outbound to the cloud",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=agent.env src/main.ts",
+    "build": "tsc --noEmit",
+    "build:prod": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@attendance/hik-isapi": "0.1.0",
+    "@attendance/shared": "0.1.0",
+    "@attendance/terminal-drivers": "0.1.0",
+    "fastify": "5.12.1",
+    "pino": "10.3.1",
+    "undici": "7.29.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "tsx": "4.23.12",
+    "typescript": "6.0.3"
+  }
+}
