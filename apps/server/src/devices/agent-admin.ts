@@ -1,5 +1,5 @@
 import { AgentStatus } from '@attendance/shared';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
 import { requirePermission } from '../auth/plugin.js';
@@ -134,7 +134,7 @@ export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
         token: token.token,
         expiresAt: token.expiresAt,
         ttlMinutes: Math.round(ENROL_TOKEN_TTL_MS / 60_000),
-        cloudUrl: cloudOrigin(),
+        cloudUrl: cloudOrigin(request),
       });
     },
   );
@@ -161,7 +161,7 @@ export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
         token: token.token,
         expiresAt: token.expiresAt,
         ttlMinutes: Math.round(ENROL_TOKEN_TTL_MS / 60_000),
-        cloudUrl: cloudOrigin(),
+        cloudUrl: cloudOrigin(request),
         /** True when this replaces a credential that is currently working. */
         replacesWorking: agent.secretHash !== null,
       });
@@ -198,22 +198,73 @@ export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
 }
 
 /**
- * The address a connector should be pointed at.
+ * Addresses a connector can never dial, whatever they are configured as.
  *
- * Derived from `INGEST_PUBLIC_URL` rather than asked for, because that value already records where
- * this installation answers, and two places holding the same address is how one of them ends up
- * wrong. Falls back to a placeholder that is obviously incomplete rather than to something that
- * looks plausible and is not.
+ * Loopback, link-local, and the three private ranges. A connector runs on a different machine in
+ * a different building, so any of these is a value that cannot be right rather than one that
+ * might be.
  */
-function cloudOrigin(): string {
-  const configured = loadEnv().INGEST_PUBLIC_URL;
-  if (!configured) return 'https://<alamat-cloud>';
+const UNROUTABLE_HOST =
+  /^(?:localhost|127\.|0\.0\.0\.0$|10\.|192\.168\.|169\.254\.|::1$|172\.(?:1[6-9]|2\d|3[01])\.)/i;
+
+/** The origin the caller reached this server on, honouring a proxy in front. */
+function requestOrigin(request: FastifyRequest): string | undefined {
+  const forwardedHost = request.headers['x-forwarded-host'];
+  const host =
+    (typeof forwardedHost === 'string' ? forwardedHost.split(',')[0]?.trim() : undefined) ??
+    request.headers.host;
+  if (typeof host !== 'string' || host.length === 0) return undefined;
+
+  const forwardedProto = request.headers['x-forwarded-proto'];
+  const proto =
+    (typeof forwardedProto === 'string' ? forwardedProto.split(',')[0]?.trim() : undefined) ??
+    request.protocol;
+
+  return `${proto}://${host}`;
+}
+
+/** Normalises to a bare origin, or refuses. Drops any path, so `.../hik/events` cannot leak in. */
+function routableOrigin(value: string | undefined): string | null {
+  if (value === undefined || value.length === 0) return null;
 
   try {
-    return new URL(configured).origin;
+    const url = new URL(value.includes('://') ? value : `https://${value}`);
+    if (UNROUTABLE_HOST.test(url.hostname)) return null;
+    return url.origin;
   } catch {
-    return 'https://<alamat-cloud>';
+    return null;
   }
+}
+
+/**
+ * The address a connector should be pointed at.
+ *
+ * Taken from the request the operator is making, because that is the one value that cannot be
+ * stale: they are reading this screen on the very address the connector has to reach.
+ * `PUBLIC_URL` overrides it, for an install behind something that rewrites `Host`.
+ *
+ * ## Why `INGEST_PUBLIC_URL` is no longer the source
+ *
+ * It was, and it produced an installer command that could not work. That field has to be an
+ * address the *terminal* can reach — and a terminal behind a connector reaches the connector,
+ * never the cloud — so on a cloud install it holds something local, commonly a loopback address.
+ * The screen then printed `curl -fsSL http://127.0.0.1:8080/install-agent.sh`, which looks
+ * complete, runs, and fails on a machine in another building.
+ *
+ * ## Unroutable values are refused rather than passed through
+ *
+ * That is the whole lesson from the bug. The failure was never a missing value; it was a
+ * plausible-looking wrong one. A placeholder that is obviously incomplete gets questioned, and a
+ * private address does not.
+ */
+export function cloudOrigin(request?: FastifyRequest): string {
+  const configured = routableOrigin(loadEnv().PUBLIC_URL);
+  if (configured !== null) return configured;
+
+  const observed = request === undefined ? null : routableOrigin(requestOrigin(request));
+  if (observed !== null) return observed;
+
+  return 'https://<alamat-cloud>';
 }
 
 async function requireAgent(id: number) {

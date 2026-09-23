@@ -22,28 +22,24 @@ import {
   issueEnrolToken,
   reissueEnrolToken,
 } from '../apps/server/src/devices/agents.js';
-import { loadEnv } from '../apps/server/src/env.js';
+import { cloudOrigin } from '../apps/server/src/devices/agent-admin.js';
 
 const args = process.argv.slice(2);
 
 /**
  * Where the connector will be told to report.
  *
- * Taken from `INGEST_PUBLIC_URL` rather than asked for, because it is already recorded there and
- * two places holding the same address is how one of them ends up wrong. Falls back to a
- * placeholder so the printed command is obviously incomplete rather than quietly pointing at
- * localhost.
+ * Shares `cloudOrigin()` with the connector screen rather than deriving its own, because the two
+ * printed the same command and only one of them was fixed when the source turned out to be wrong.
+ *
+ * This ran from a shell, so there is no request to observe — `PUBLIC_URL` is the only source, and
+ * an absent or unroutable one yields the placeholder. That is deliberate: the previous version
+ * read `INGEST_PUBLIC_URL`, which on a cloud install holds a local address, and printed
+ * `curl -fsSL http://127.0.0.1:8080/install-agent.sh` — a command that looks complete and cannot
+ * work. An obviously incomplete address gets questioned; a loopback one gets pasted.
  */
 function cloudUrl(): string {
-  const env = loadEnv();
-  const configured = env.INGEST_PUBLIC_URL;
-  if (!configured) return 'https://<alamat-cloud>';
-
-  try {
-    return new URL(configured).origin;
-  } catch {
-    return 'https://<alamat-cloud>';
-  }
+  return cloudOrigin();
 }
 
 function printInstaller(token: string): void {

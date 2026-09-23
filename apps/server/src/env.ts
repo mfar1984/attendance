@@ -54,6 +54,20 @@ const schema = z.object({
   INGEST_PASSWORD: z.string().min(8).max(16),
   INGEST_PUBLIC_URL: z.string().optional(),
 
+  /**
+   * This installation's own public address, used when telling a connector where to dial.
+   *
+   * Optional, and normally unnecessary: the connector screen derives it from the request the
+   * operator is making, which cannot be stale. Set it only when something in front rewrites
+   * `Host`, or to pin the value.
+   *
+   * Deliberately NOT `INGEST_PUBLIC_URL`. That one has to be an address a *terminal* can reach,
+   * and a terminal behind a connector reaches the connector rather than the cloud — so on a cloud
+   * install it holds something local, and using it here printed an installer command pointing at
+   * loopback.
+   */
+  PUBLIC_URL: z.string().optional(),
+
   /** Seconds between reconcile pulls. Push is unreliable, so this always runs. */
   SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3600).default(60),
   /** Drift above which a device's data is flagged as untrustworthy. */

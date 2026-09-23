@@ -18,6 +18,7 @@
 import { AgentStatus } from '@attendance/shared';
 
 import { db, disconnectDb } from '../apps/server/src/db.js';
+import { cloudOrigin } from '../apps/server/src/devices/agent-admin.js';
 import {
   agentDevice,
   agentDevices,
@@ -322,6 +323,66 @@ try {
     restricted = true;
   }
   check('an agent with devices attached cannot be deleted', restricted);
+
+  // -------------------------------------------------------------------------
+  /*
+   * The address printed into the installer command.
+   *
+   * This is a regression, and it shipped. `cloudOrigin()` derived the cloud's address from
+   * `INGEST_PUBLIC_URL` — a field that has to name somewhere a *terminal* can reach, and a
+   * terminal behind a connector reaches the connector rather than the cloud. So on a cloud
+   * install it holds something local, and both the screen and `create-agent.mts` printed
+   * `curl -fsSL http://127.0.0.1:8080/install-agent.sh`: a command that looks complete, runs,
+   * and fails on a machine in another building.
+   *
+   * The lesson these checks hold is not "produce a value" but "refuse a wrong one". The failure
+   * was never an absent address; it was a plausible-looking private one, and a placeholder gets
+   * questioned where `127.0.0.1` gets pasted.
+   */
+  section('the address a connector is told to dial');
+
+  const asRequest = (headers: Record<string, string>, protocol = 'https') =>
+    ({ headers, protocol }) as unknown as Parameters<typeof cloudOrigin>[0];
+
+  const PLACEHOLDER = 'https://<alamat-cloud>';
+
+  check(
+    'the origin the operator is browsing is used',
+    cloudOrigin(asRequest({ host: 'attendance.maximumbuilders.my' })) ===
+      'https://attendance.maximumbuilders.my',
+  );
+  check(
+    'a proxy in front is honoured',
+    cloudOrigin(
+      asRequest(
+        { host: 'internal:8080', 'x-forwarded-host': 'kehadiran.example.my', 'x-forwarded-proto': 'https' },
+        'http',
+      ),
+    ) === 'https://kehadiran.example.my',
+  );
+  check(
+    'a non-default port survives',
+    cloudOrigin(asRequest({ host: 'cloud.example.my:8443' })) === 'https://cloud.example.my:8443',
+  );
+
+  // The four the bug turned on. Each one is a value that cannot be right rather than one that
+  // might be, so each has to yield the placeholder instead of being passed through.
+  check('loopback is refused', cloudOrigin(asRequest({ host: '127.0.0.1:8080' }, 'http')) === PLACEHOLDER);
+  check('localhost is refused', cloudOrigin(asRequest({ host: 'localhost:8080' }, 'http')) === PLACEHOLDER);
+  check(
+    'a private LAN address is refused',
+    cloudOrigin(asRequest({ host: '192.168.1.102:8080' }, 'http')) === PLACEHOLDER,
+  );
+  check(
+    'a link-local address is refused',
+    cloudOrigin(asRequest({ host: '169.254.169.254' }, 'http')) === PLACEHOLDER,
+  );
+
+  check('no request and no PUBLIC_URL yields the placeholder', cloudOrigin() === PLACEHOLDER);
+  check(
+    'a missing Host header yields the placeholder',
+    cloudOrigin(asRequest({})) === PLACEHOLDER,
+  );
 } finally {
   // Devices first: the foreign key is RESTRICT, so an attached device blocks the agent delete.
   if (deviceId !== null) {
