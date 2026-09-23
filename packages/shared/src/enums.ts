@@ -84,7 +84,17 @@ export const ExceptionKind = {
 } as const;
 export type ExceptionKind = (typeof ExceptionKind)[keyof typeof ExceptionKind];
 
-/** How the system reaches the terminals. Chosen at install, not per request. */
+/**
+ * Default way of reaching a terminal, for devices added from now on.
+ *
+ * **Not the truth for any particular device.** That lives on `Device.agentId`, where null
+ * means this server reaches the unit itself. One installation routinely holds both at once —
+ * a direct site plus two agent sites — so a single installation-wide answer would be wrong
+ * for most of the terminals it claimed to govern.
+ *
+ * This docblock used to read "chosen at install, not per request", which was true only while
+ * nothing could express the alternative.
+ */
 export const ConnectorMode = {
   /** Server shares a LAN with the terminals and talks to them directly. */
   direct: 'direct',
@@ -92,6 +102,25 @@ export const ConnectorMode = {
   agent: 'agent',
 } as const;
 export type ConnectorMode = (typeof ConnectorMode)[keyof typeof ConnectorMode];
+
+/**
+ * Lifecycle of an on-site connector.
+ *
+ * Three states rather than an `active` boolean, because `pending` and `revoked` are different
+ * absences and call for different actions. `pending` is an installation somebody started and
+ * did not finish — re-running the installer is the fix. `revoked` is a credential deliberately
+ * withdrawn, and re-running the installer will be refused. A screen that shows both as
+ * "inactive" sends whoever reads it to do the wrong one.
+ */
+export const AgentStatus = {
+  /** Row created, enrolment token issued, agent has never checked in. */
+  pending: 'pending',
+  /** Enrolled and holding a working credential. */
+  active: 'active',
+  /** Credential withdrawn. The agent is refused and must be re-enrolled. */
+  revoked: 'revoked',
+} as const;
+export type AgentStatus = (typeof AgentStatus)[keyof typeof AgentStatus];
 
 /**
  * Manufacturer of a physical terminal.

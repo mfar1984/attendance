@@ -21,6 +21,11 @@ storage/
 # Database dumps contain every attendance record and every hashed credential
 backups/
 *.sql
+# Migrations are the exception: DDL only, no rows, and they have to be reviewable
+# and replayable on a second install. `db push` is forbidden on a populated
+# database because it drops columns it no longer sees without asking, so schema
+# changes live here as SQL - and SQL nobody wrote down is SQL nobody can review.
+!apps/server/prisma/migrations/*.sql
 tmp/
 .probe/
 # Session cookie jars from verification scripts

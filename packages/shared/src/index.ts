@@ -36,6 +36,7 @@ export {
 export {
   AccountStatus,
   AccountType,
+  AgentStatus,
   AttendanceStatus,
   AuditAction,
   ConnectorMode,

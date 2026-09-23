@@ -315,6 +315,99 @@ model AppClient {
 // Terminals
 // ---------------------------------------------------------------------------
 
+/// One on-site connector that reaches terminals this installation cannot.
+///
+/// A cloud host cannot route to `192.168.1.250`. The agent runs inside that LAN, receives
+/// what the terminals push, performs the reconcile pull locally, and forwards raw events
+/// outbound over HTTPS. Commands travel the same way in reverse: the agent asks for work
+/// rather than being contacted, so the hospital opens no inbound port.
+///
+/// It is also the single point of network exposure for the site. Fifteen terminals behind one
+/// agent means one firewall rule to negotiate instead of fifteen, and the terminals — running
+/// vendor firmware nobody patches — need no route to the internet at all.
+///
+/// ## What an agent is not
+///
+/// It does not derive punches and it does not resolve identity. Both stay in the cloud, on
+/// the one engine, reading the same `storeEvents` path as a direct site. An agent that
+/// derived attendance would be a second engine, and two engines produce two answers for the
+/// same day — with nobody checking the second one.
+model DeviceAgent {
+  id   Int    @id @default(autoincrement())
+  name String @db.VarChar(120)
+
+  /// Stable public identifier the agent presents on every request.
+  ///
+  /// Separate from the secret so a log line, a heartbeat row or an error can name which site
+  /// is misbehaving without holding anything usable. Same reasoning as `ApiToken.prefix`.
+  agentKey String @unique @db.VarChar(64)
+
+  /// SHA-256 of the long-lived credential, hex.
+  ///
+  /// Not a slow KDF, for the same reason API tokens are not: the value is 192 bits of
+  /// randomness, so a KDF buys nothing against guessing and costs latency on a request that
+  /// arrives every few seconds. It also keeps verification a single indexed lookup.
+  ///
+  /// Null until enrolment is completed, which is what distinguishes a row somebody created on
+  /// screen from an agent that has actually checked in.
+  secretHash   String? @db.Char(64)
+  /// First few characters of the credential, so a leaked value is greppable in a log or repo.
+  secretPrefix String? @db.VarChar(24)
+
+  /// SHA-256 of a single-use enrolment token, hex.
+  ///
+  /// The installer runs unattended and takes its argument from a shell command, which lands in
+  /// shell history and in the installer's own log. So what gets pasted there is deliberately
+  /// short-lived and worth nothing afterwards: it is exchanged once for the real credential
+  /// and then cleared. A long-lived secret handed over the same way would sit in
+  /// `~/.bash_history` on a machine in a corridor.
+  enrolTokenHash String?   @db.Char(64)
+  enrolExpiresAt DateTime?
+  enrolledAt     DateTime?
+
+  /// `pending`, `active`, or `revoked`.
+  ///
+  /// `pending` and `revoked` are not the same absence and must not collapse into one boolean:
+  /// the first is an installation somebody has not finished, the second is a credential
+  /// deliberately withdrawn. A screen that shows both as "inactive" sends somebody to
+  /// re-run an installer that will be refused.
+  status    String    @default("pending") @db.VarChar(16)
+  revokedAt DateTime?
+
+  /// Build the agent reports on each heartbeat, so a site running old code is visible before
+  /// somebody spends an afternoon on a bug that was fixed.
+  version String? @db.VarChar(32)
+
+  /// Last heartbeat, and the public address it arrived from.
+  ///
+  /// This is the agent's own liveness, deliberately distinct from `Device.lastSeenAt`. Without
+  /// it, a dead site link is indistinguishable from fifteen dead terminals — and those two
+  /// call for completely different actions.
+  lastSeenAt  DateTime?
+  lastAddress String?   @db.VarChar(45)
+
+  /// LAN address the terminals at this site should be pointed at.
+  ///
+  /// Reported by the agent rather than typed by an operator, because only the agent knows
+  /// which address it is actually reachable on from inside that network — it may have several
+  /// interfaces, and a DHCP lease can move it.
+  ///
+  /// The devices screen needs this: for a terminal behind an agent, "point the terminal at
+  /// this server" must show the agent, not the cloud. Showing the cloud address there produces
+  /// a terminal configured to push somewhere it cannot reach, which then looks like a silent
+  /// hardware fault.
+  lanHost String? @db.VarChar(190)
+  lanPort Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  devices Device[]
+
+  @@index([status])
+  @@map("device_agents")
+}
+
 model Device {
   id       Int    @id @default(autoincrement())
   name     String @db.VarChar(120)
@@ -331,6 +424,20 @@ model Device {
   /// manufacturer can have several transports — ZKTeco alone has TA Push/ADMS, AC
   /// Push, BEST and the legacy 4370 protocol.
   protocol String @default("isapi") @db.VarChar(32)
+
+  /// Which on-site connector reaches this terminal. **Null means this server reaches it
+  /// itself** — the existing behaviour, and the default, so adding this column changed
+  /// nothing for any row that already existed.
+  ///
+  /// Per device rather than per installation, and that is the whole point. `CONNECTOR_MODE`
+  /// looks like it answers this and does not: one cloud install can serve a direct site and
+  /// two agent sites at once, so a global switch would be wrong for two thirds of the
+  /// terminals it governed. It survives as the default for newly added devices, nothing more.
+  ///
+  /// It also means fifteen terminals can be split across two agents without a line of code
+  /// changing, which is the answer when one connector for a whole site is too much to lose at
+  /// once.
+  agentId Int?
 
   /// IP or hostname. For callback protocols this is the last/expected address and
   /// not the identity — the serial number is. It remains useful for diagnosis and
@@ -381,6 +488,11 @@ model Device {
   updatedAt DateTime @updatedAt
 
   location   Location?         @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  /// `Restrict`, not `SetNull`. Nulling this would quietly convert the terminal to direct,
+  /// and the cloud would start dialling a private address it cannot route — marking a healthy
+  /// unit offline and backing it off to fifteen-minute retries, with nothing naming the
+  /// deleted agent as the cause. Move or deactivate the devices first.
+  agent      DeviceAgent?      @relation(fields: [agentId], references: [id], onDelete: Restrict)
   syncState  DeviceSyncState?
   rawEvents  RawEvent[]
   punches    Punch[]
@@ -391,6 +503,8 @@ model Device {
   @@index([locationId])
   @@index([status])
   @@index([vendor, protocol])
+  /// Every agent request filters devices by this, so it runs on the hot path.
+  @@index([agentId])
   @@map("devices")
 }
 

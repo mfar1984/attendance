@@ -110,6 +110,16 @@ Empat yang perlu diketahui sebelum memburunya:
 
 ## Persekitaran
 
-Peranti `https://192.168.1.250`, MySQL pangkalan data `hospital`. Zon waktu organisasi
-datang daripada `ORG_TIMEZONE`, bukan daripada jam pelayan. `REQUIRE_ADMIN_2FA=false`
-dalam pembangunan — hidupkan semula untuk produksi.
+Peranti `https://192.168.1.250`. Zon waktu organisasi datang daripada `ORG_TIMEZONE`, bukan
+daripada jam pelayan. `REQUIRE_ADMIN_2FA=false` dalam pembangunan — hidupkan semula untuk
+produksi.
+
+**Nama pangkalan data ialah pilihan pemasangan, bukan fakta sistem.** Mesin pembangunan ini
+guna `hospital`; templat guna `attendance`. Tiada satu pun ditulis keras — ia sentiasa
+diterbitkan dari `DATABASE_URL` melalui `parseDatabaseUrl()`, jadi sambungan dalam `db.ts`
+dan ketiga-tiga penggunaan dalam `routes/backup.ts` (nama fail dump, hujah `mysqldump`, petua
+restore) semuanya mengikutnya.
+
+Dokumen ini pernah menamakan `hospital` seolah-olah ia diperlukan, yang membuatkan seseorang
+bertanya nama mana yang betul. Untuk pemasangan baharu, `attendance` — sistem ini tidak
+khusus hospital, dan nama pangkalan data muncul dalam setiap nama fail backup.
