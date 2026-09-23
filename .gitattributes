@@ -1,0 +1,10 @@
+# Shell scripts must keep LF line endings, on every platform.
+#
+# This is not a style preference. `install-agent.sh` is copied into the web bundle and served, so
+# whatever line endings the working copy has are the line endings that reach the Raspberry Pi. A
+# script checked out with CRLF fails there with `bad interpreter: /usr/bin/env bash^M`, which
+# names the interpreter rather than the cause and is a genuinely hard hour to spend.
+#
+# `core.autocrlf` is true on the development machine, so without this the next checkout would
+# convert the file and the build after it would publish the broken version.
+*.sh text eol=lf
