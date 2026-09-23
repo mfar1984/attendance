@@ -3,7 +3,7 @@ import { DEVICE_LIMITS } from '@attendance/shared';
 import type { Staff } from '@prisma/client';
 
 import { db } from '../db.js';
-import { DriverOperation, supports, unavailableReason } from '../devices/driver/index.js';
+import { DriverOperation, supports, unavailableReason } from '@attendance/terminal-drivers';
 import { driverFor } from '../devices/registry.js';
 import { badRequest, conflict } from '../http.js';
 import { logger } from '../logger.js';

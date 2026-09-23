@@ -9,7 +9,7 @@ import {
 import type { Device } from '@prisma/client';
 
 import { db } from '../db.js';
-import type { TerminalEvent } from '../devices/driver/events.js';
+import type { TerminalEvent } from '@attendance/terminal-drivers';
 import { loadEnv } from '../env.js';
 import { liveBus } from '../events/bus.js';
 import { recordUnmapped, resolveStaffId } from '../identity/resolve.js';

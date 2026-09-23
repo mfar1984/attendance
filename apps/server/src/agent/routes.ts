@@ -24,7 +24,7 @@ import {
   recordOutcome,
   takePendingForDevices,
 } from '../devices/driver/commands.js';
-import type { TerminalEvent } from '../devices/driver/events.js';
+import type { TerminalEvent } from '@attendance/terminal-drivers';
 import { badRequest, notFound, parseBody, unauthorized } from '../http.js';
 import { storeEvents } from '../ingest/store.js';
 import { logger } from '../logger.js';

@@ -7,7 +7,7 @@ import {
 } from '@attendance/shared';
 
 import { db } from '../db.js';
-import type { TerminalPerson } from '../devices/driver/types.js';
+import type { TerminalPerson } from '@attendance/terminal-drivers';
 import { driverFor } from '../devices/registry.js';
 import { conflict, notFound } from '../http.js';
 import { logger } from '../logger.js';

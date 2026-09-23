@@ -13,7 +13,7 @@ import {
   type DeviceProtocol as DeviceProtocolType,
 } from '@attendance/shared';
 
-import type { TerminalEvent } from '../../driver/events.js';
+import type { TerminalEvent } from '../events.js';
 
 /**
  * Turns a Hikvision ACS event into the neutral shape.

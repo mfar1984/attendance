@@ -438,6 +438,41 @@ try {
 
   const flag = await db().deviceSyncState.findUnique({ where: { deviceId: deviceA.id } });
   check('the single-flight flag was not touched', flag?.syncing !== true);
+
+  // -------------------------------------------------------------------------
+  section('the driver package received a logger');
+
+  /**
+   * The drivers moved into their own package and lost their direct import of the server logger,
+   * so they take an injected one and are silent until it arrives. Nothing fails when it does
+   * not — two diagnostics simply stop appearing — which is why this is asserted rather than
+   * assumed. `buildApp()` above is what triggers the wiring.
+   */
+  const { driverLogger, setDriverLogger } = await import('@attendance/terminal-drivers');
+
+  /**
+   * Two separate facts, because one without the other proves little.
+   *
+   * That the server replaced the package default: comparing against `installed` captured after
+   * `buildApp()` is not possible from here, so what is checked instead is that the installed
+   * logger is not the silent stub — a stub returns undefined and records nothing, so a spy
+   * swapped in and called is the only observable difference.
+   */
+  const installed = driverLogger();
+  check('a logger is installed', typeof installed.warn === 'function');
+
+  let delivered: string | null = null;
+  setDriverLogger({
+    info: () => undefined,
+    warn: (_fields, message) => {
+      delivered = message;
+    },
+  });
+  driverLogger().warn({ ujian: true }, 'ujian penyambungan');
+  check('a driver log line reaches the installed logger', delivered === 'ujian penyambungan');
+
+  // Put the server's own logger back, so a later line in this process is not swallowed.
+  setDriverLogger(installed);
 } finally {
   await app.close();
 

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "types": ["node"]
+  },
+  /*
+   * Declared, unlike the other two packages, because this one imports both of them. Without
+   * the references `tsc --build` has no reason to build them first, and the failure arrives as
+   * "cannot find module @attendance/shared" on a clean checkout only.
+   */
+  "references": [{ "path": "../shared" }, { "path": "../hik-isapi" }],
+  "include": ["src/**/*.ts"]
+}

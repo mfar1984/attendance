@@ -13,7 +13,7 @@ import {
   type PullResult,
   type TerminalDriver,
   type WriteAck,
-} from '../../driver/index.js';
+} from '@attendance/terminal-drivers';
 import type {
   AttendanceModeSetting,
   CallbackConfig,
@@ -31,14 +31,14 @@ import type {
   TerminalCounts,
   TerminalIdentity,
   TerminalPerson,
-} from '../../driver/types.js';
+} from '@attendance/terminal-drivers';
 import {
   deleteFaceCommand,
   deleteUserCommand,
   faceCommand,
   REBOOT_COMMAND,
   userInfoCommand,
-} from './protocol.js';
+} from '@attendance/terminal-drivers';
 
 /**
  * SenseFace 3A capacities, from the datasheet.

@@ -5,7 +5,7 @@ import {
 } from '@attendance/hik-isapi';
 import { DeviceProtocol } from '@attendance/shared';
 
-import { logger } from '../../../logger.js';
+import { driverLogger } from '../logging.js';
 import {
   APPLIED,
   DriverOperation,
@@ -14,7 +14,7 @@ import {
   type PullResult,
   type TerminalDriver,
   type WriteAck,
-} from '../../driver/index.js';
+} from '../contract.js';
 import type {
   AttendanceModeSetting,
   CallbackConfig,
@@ -32,7 +32,7 @@ import type {
   TerminalCounts,
   TerminalIdentity,
   TerminalPerson,
-} from '../../driver/types.js';
+} from '../types.js';
 import { hikvisionEventKey, toTerminalEvent } from './events.js';
 
 /**
@@ -237,7 +237,7 @@ export class HikvisionDriver implements TerminalDriver {
       const events = acsEvents.flatMap((event) => {
         const mapped = toTerminalEvent(event);
         if (mapped) return [mapped];
-        logger().warn(
+        driverLogger().warn(
           { serialNo: event.serialNo, time: event.time, eventKey: hikvisionEventKey(event.serialNo) },
           'Skipping a pulled event with an unparseable timestamp',
         );
@@ -385,7 +385,7 @@ export class HikvisionDriver implements TerminalDriver {
       try {
         await this.client.system.reboot();
       } catch (error) {
-        logger().info(
+        driverLogger().info(
           { err: error instanceof Error ? error.message : String(error) },
           'Terminal dropped the connection while rebooting, which is expected',
         );

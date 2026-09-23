@@ -1,0 +1,26 @@
+{
+  "name": "@attendance/terminal-drivers",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vendor-neutral terminal driver contract and adapters, shared by the server and the connector agent",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@attendance/hik-isapi": "0.1.0",
+    "@attendance/shared": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3"
+  }
+}

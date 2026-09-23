@@ -4,11 +4,11 @@ import type { Device } from '@prisma/client';
 import { db } from '../db.js';
 import { loadEnv } from '../env.js';
 import { logger } from '../logger.js';
-import { DriverOperation, supports } from './driver/index.js';
-import type { DeviceWarning } from './driver/types.js';
+import { DriverOperation, supports } from '@attendance/terminal-drivers';
+import type { DeviceWarning } from '@attendance/terminal-drivers';
 import { driverFor } from './registry.js';
 
-export type { DeviceWarning } from './driver/types.js';
+export type { DeviceWarning } from '@attendance/terminal-drivers';
 
 export interface DeviceHealth {
   deviceId: number;

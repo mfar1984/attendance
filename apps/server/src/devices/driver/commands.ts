@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 
 import { db } from '../../db.js';
 import { logger } from '../../logger.js';
-import { queued, type WriteAck } from './capabilities.js';
+import { queued, type WriteAck } from '@attendance/terminal-drivers';
 
 /**
  * Durable queue for terminals that collect their own work.

@@ -8,7 +8,7 @@ import { requirePermission } from '../auth/plugin.js';
 import { db, jsonSafe } from '../db.js';
 import { loadEnv } from '../env.js';
 import { conflict, notFound, parseBody, unauthorized } from '../http.js';
-import { DriverOperation, supports } from './driver/index.js';
+import { DriverOperation, supports } from '@attendance/terminal-drivers';
 import { clientFor, driverFor, releaseClient } from './registry.js';
 
 /**

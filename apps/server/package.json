@@ -19,6 +19,7 @@
   "dependencies": {
     "@attendance/hik-isapi": "0.1.0",
     "@attendance/shared": "0.1.0",
+    "@attendance/terminal-drivers": "0.1.0",
     "@fastify/cookie": "11.1.2",
     "@fastify/helmet": "13.1.1",
     "@fastify/multipart": "9.2.1",

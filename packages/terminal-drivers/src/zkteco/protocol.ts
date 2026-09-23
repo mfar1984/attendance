@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { DeviceProtocol, PunchDirection, RawEventKind, VerifyMethod } from '@attendance/shared';
 
-import type { TerminalEvent } from '../../driver/events.js';
+import type { TerminalEvent } from '../events.js';
 
 /**
  * ZKTeco TA Push (ADMS) wire format.

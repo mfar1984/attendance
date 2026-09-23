@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { requireAuth } from '../auth/plugin.js';
 import { db } from '../db.js';
-import { toTerminalEvent } from '../devices/drivers/hikvision/events.js';
+import { toTerminalEvent } from '@attendance/terminal-drivers';
 import { loadEnv } from '../env.js';
 import { logger } from '../logger.js';
 import { digestChallenge, verifyDigest } from './digest-server.js';

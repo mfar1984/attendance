@@ -1,3 +1,4 @@
+import { setDriverLogger } from '@attendance/terminal-drivers';
 import { pino, type Logger, type LoggerOptions } from 'pino';
 
 import { loadEnv } from './env.js';
@@ -45,6 +46,29 @@ let instance: Logger | null = null;
 
 /** Logger for work outside a request, such as the sync worker and the seed. */
 export function logger(): Logger {
-  instance ??= pino(loggerOptions());
+  if (instance) return instance;
+
+  instance = pino(loggerOptions());
+
+  /**
+   * Hand the same logger to the driver package.
+   *
+   * The drivers moved out of this application so the connector agent could run them, which cost
+   * them their direct import of this file. They now take an injected logger and are silent until
+   * one arrives.
+   *
+   * This is the hook rather than an entry point, and deliberately: there are three entries
+   * already — the server, the cron one-shot, and test scripts that build the app or call
+   * `syncDevice` directly — and a fourth will be added by somebody who has no reason to know
+   * that a driver needs wiring. Three call sites that must agree is three that can drift, and
+   * the symptom of drift here is diagnostics quietly missing rather than anything failing.
+   *
+   * Redaction still applies: it is configured on this instance, not at the call site.
+   */
+  setDriverLogger({
+    info: (fields, message) => instance?.info(fields, message),
+    warn: (fields, message) => instance?.warn(fields, message),
+  });
+
   return instance;
 }

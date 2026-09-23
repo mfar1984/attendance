@@ -3,7 +3,7 @@ import type { Device } from '@prisma/client';
 
 import { db } from '../db.js';
 import { requeueStale } from '../devices/driver/commands.js';
-import { DriverOperation, supports } from '../devices/driver/index.js';
+import { DriverOperation, supports } from '@attendance/terminal-drivers';
 import { driverFor } from '../devices/registry.js';
 import { loadEnv } from '../env.js';
 import { storeEvents } from '../ingest/store.js';

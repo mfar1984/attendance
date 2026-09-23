@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import { db } from '../db.js';
 import { recordOutcome, takePending } from '../devices/driver/commands.js';
-import { decodeAttlogLine } from '../devices/drivers/zkteco/protocol.js';
+import { decodeAttlogLine } from '@attendance/terminal-drivers';
 import { orgOffsetMinutes } from '../devices/drivers/zkteco/driver.js';
 import { logger } from '../logger.js';
 import { storeEvents } from './store.js';

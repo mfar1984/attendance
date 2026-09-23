@@ -4,8 +4,8 @@ import type { Device } from '@prisma/client';
 
 import { decryptSecret } from '../crypto.js';
 import { conflict } from '../http.js';
-import type { TerminalDriver } from './driver/index.js';
-import { HikvisionDriver } from './drivers/hikvision/driver.js';
+import type { TerminalDriver } from '@attendance/terminal-drivers';
+import { HikvisionDriver } from '@attendance/terminal-drivers';
 import { ZktecoTaPushDriver } from './drivers/zkteco/driver.js';
 
 /**
