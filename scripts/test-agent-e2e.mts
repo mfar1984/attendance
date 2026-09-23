@@ -188,6 +188,65 @@ try {
   check('the cloud recorded the heartbeat', agentAfter.lastSeenAt !== null);
 
   // -------------------------------------------------------------------------
+  /*
+   * A terminal whose stored password cannot be decrypted must not take the site down.
+   *
+   * This is a regression, and it reached production. `rosterFor` decrypted inside a `.map()`, so
+   * one device saved under a different `ENCRYPTION_KEY` — a database copied between installations
+   * — threw on every heartbeat and answered 500. The site lost its liveness stamp, the roster for
+   * every *other* terminal, and the cloud clock the connector refuses to set terminal time
+   * without: one misconfigured row read as a completely dead site, and the response named
+   * neither the device nor the reason.
+   */
+  section('an unreadable terminal credential is contained');
+
+  const unreadable = await db().device.create({
+    data: {
+      name: `ujian-e2e-rosak-${String(stamp)}`,
+      host: '192.168.99.251',
+      agentId: agentRow.id,
+      username: 'admin',
+      // Well-formed `v1:` envelope, valid base64url, wrong key material.
+      passwordEncrypted: 'v1:AAAAAAAAAAAAAAAA:BBBBBBBBBBBBBBBBBBBBBB:CCCCCCCC',
+    },
+  });
+  devices.push(unreadable.id);
+
+  const degraded = await cloud.heartbeat({
+    version: '0.1.0',
+    lanHost: '192.168.99.10',
+    lanPort: 18080,
+    spooled: 0,
+    devices: [],
+  });
+  check('the heartbeat still succeeds', degraded.ok);
+
+  if (degraded.ok) {
+    const served = degraded.value.devices.map((entry) => entry.deviceId);
+    check('the terminal with an unreadable password is withheld', !served.includes(unreadable.id));
+    check('the healthy terminal at the same site is still served', served.includes(device.id));
+    check(
+      'and still carries its real credential',
+      degraded.value.devices.find((entry) => entry.deviceId === device.id)?.password ===
+        'kata-laluan-terminal',
+    );
+    check('the cloud clock is still returned', noteCloudTime(degraded.value.now));
+  }
+
+  const withheld = await db().device.findUniqueOrThrow({ where: { id: unreadable.id } });
+  check(
+    'the devices screen is told what to do about it',
+    (withheld.lastError ?? '').includes('ENCRYPTION_KEY') && withheld.lastErrorAt !== null,
+  );
+  check('the withheld terminal is marked offline', withheld.status === 'offline');
+
+  const healthy = await db().device.findUniqueOrThrow({ where: { id: device.id } });
+  check('the healthy terminal is not marked with an error', healthy.lastError === null);
+
+  // Removed again so the sections that follow drive the roster they expect.
+  await db().device.delete({ where: { id: unreadable.id } });
+
+  // -------------------------------------------------------------------------
   section('spool and forward');
 
   const { Spool } = await import('../apps/agent/src/spool.js');

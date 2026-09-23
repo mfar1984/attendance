@@ -8,6 +8,7 @@ import {
   type AgentEnrolReply,
   type AgentHeartbeatReply,
 } from '@attendance/shared';
+import type { Device } from '@prisma/client';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import { db } from '../db.js';
@@ -329,12 +330,64 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
 }
 
 /**
+ * What the operator has to do, written where they will actually see it.
+ *
+ * Stored on the device row rather than only logged, because the log is on the cloud host and
+ * the person who can fix this is looking at the devices screen. The remedy is named: the
+ * ciphertext is unrecoverable, so the password has to be entered again.
+ */
+const UNREADABLE_CREDENTIAL =
+  'Kata laluan tersimpan untuk terminal ini tidak dapat dinyahsulit dengan ENCRYPTION_KEY ' +
+  'pemasangan ini. Buka peranti ini dan masukkan semula kata laluannya.';
+
+/**
+ * Withholds one terminal from the roster and records why.
+ *
+ * `decryptSecret` throws when the stored ciphertext was written under a different
+ * `ENCRYPTION_KEY` — a database copied between installations, or a key regenerated after the
+ * device was saved. The value cannot be recovered, so this terminal is unserviceable until
+ * somebody re-enters its password, and there is nothing to be gained by offering it.
+ *
+ * Handing the agent `null` instead was rejected: for a direct protocol that reads as "no
+ * password", so the connector would authenticate with nothing, fail, and retry — walking the
+ * unit into the firmware's 30-minute lockout on a credential that was never going to work.
+ */
+async function withholdUnreadable(device: Device, error: unknown): Promise<void> {
+  logger().error(
+    { deviceId: device.id, device: device.name, err: error },
+    'Device password could not be decrypted; withheld from the connector roster',
+  );
+
+  // Written once, not on every beat. This repeats every sixty seconds until the password is
+  // re-entered, and rewriting the row each time would keep moving `lastErrorAt` forward and
+  // bury when it actually started.
+  if (device.lastError === UNREADABLE_CREDENTIAL) return;
+
+  await db()
+    .device.update({
+      where: { id: device.id },
+      data: { status: 'offline', lastError: UNREADABLE_CREDENTIAL, lastErrorAt: new Date() },
+    })
+    // A diagnostic that could not be stored must not fail the heartbeat the site depends on.
+    .catch(() => undefined);
+}
+
+/**
  * Terminals an agent serves, with what it needs to reach each one.
  *
  * Includes the decrypted device password. That is unavoidable — an agent cannot perform a
  * reconcile pull or push a face without authenticating to the unit — and it is bounded by the
  * roster only ever holding devices assigned to this agent, so one site cannot obtain another's
  * door credentials.
+ *
+ * ## One bad row must not take the site down
+ *
+ * Decryption is per device and failures are contained, because this function's result is
+ * carried by the heartbeat: an exception escaping here answered 500 to the whole request, so a
+ * single unreadable password cost the site its liveness stamp, its roster for every *other*
+ * terminal, and the cloud clock the connector refuses to set terminal time without. One
+ * misconfigured device read as a completely dead site, and the response said nothing about
+ * which device or why.
  */
 async function rosterFor(agentId: number): Promise<AgentDeviceAssignment[]> {
   const devices = await agentDevices(agentId);
@@ -345,10 +398,26 @@ async function rosterFor(agentId: number): Promise<AgentDeviceAssignment[]> {
   });
   const cursorFor = new Map(cursors.map((row) => [row.deviceId, row]));
 
-  return devices.map((device) => {
+  const roster: AgentDeviceAssignment[] = [];
+
+  for (const device of devices) {
+    /**
+     * Null stays null rather than becoming an empty string.
+     *
+     * A callback protocol genuinely has no stored password, and an empty one would reach the
+     * wire, fail authentication, and count towards the firmware's lockout threshold.
+     */
+    let password: string | null;
+    try {
+      password = device.passwordEncrypted === null ? null : decryptSecret(device.passwordEncrypted);
+    } catch (error) {
+      await withholdUnreadable(device, error);
+      continue;
+    }
+
     const cursor = cursorFor.get(device.id);
 
-    return {
+    roster.push({
       deviceId: device.id,
       name: device.name,
       vendor: device.vendor,
@@ -358,13 +427,7 @@ async function rosterFor(agentId: number): Promise<AgentDeviceAssignment[]> {
       useHttps: device.useHttps,
       verifyTls: device.verifyTls,
       username: device.username,
-      /**
-       * Null stays null rather than becoming an empty string.
-       *
-       * A callback protocol genuinely has no stored password, and an empty one would reach the
-       * wire, fail authentication, and count towards the firmware's lockout threshold.
-       */
-      password: device.passwordEncrypted === null ? null : decryptSecret(device.passwordEncrypted),
+      password,
       serialNumber: device.serialNumber,
       firmware: device.firmware,
       doorNo: device.doorNo,
@@ -372,6 +435,8 @@ async function rosterFor(agentId: number): Promise<AgentDeviceAssignment[]> {
         sequence: cursor ? Number(cursor.lastSerialNo) : null,
         since: cursor?.lastSyncAt?.toISOString() ?? null,
       },
-    };
-  });
+    });
+  }
+
+  return roster;
 }
