@@ -103,6 +103,16 @@ export interface AgentIdentity {
   id: number;
   agentKey: string;
   name: string;
+  /**
+   * What the cloud currently believes about this connector's build and LAN address.
+   *
+   * Carried on the identity because the row has already been read to verify the credential, so a
+   * route that only wants to know whether a reported value *changed* can find out for free. The
+   * alternative was a second `findUnique` on the hot path of every heartbeat.
+   */
+  version: string | null;
+  lanHost: string | null;
+  lanPort: number | null;
 }
 
 export type AgentRejection =
@@ -170,10 +180,17 @@ export async function verifyAgentSecret(
    * is failing for its own reasons, and a screen that called that agent dead would send
    * somebody to a site where everything is working.
    *
-   * Fire-and-forget: this is for visibility, and failing the request an agent is waiting on
-   * because a liveness stamp could not be written would be the wrong trade.
+   * Awaited, but unable to fail the request.
+   *
+   * It was `void` with a swallowed rejection, which read as the cautious choice and was the
+   * opposite. The request goes on to do database work regardless, so detaching this bought no
+   * latency — it only meant an unordered write racing whatever the route did next to the same
+   * `device_agents` row, and on a heartbeat the route wrote this very column. Awaiting makes the
+   * ordering deterministic and the two statements sequential; the `catch` keeps the original
+   * intent, which is that a site waiting on an answer must not be refused because a visibility
+   * stamp could not be stored.
    */
-  void db()
+  await db()
     .deviceAgent.update({
       where: { id: agent.id },
       data: {
@@ -185,7 +202,14 @@ export async function verifyAgentSecret(
 
   return {
     ok: true,
-    identity: { id: agent.id, agentKey: agent.agentKey, name: agent.name },
+    identity: {
+      id: agent.id,
+      agentKey: agent.agentKey,
+      name: agent.name,
+      version: agent.version,
+      lanHost: agent.lanHost,
+      lanPort: agent.lanPort,
+    },
   };
 }
 

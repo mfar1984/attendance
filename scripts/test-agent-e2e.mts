@@ -187,6 +187,38 @@ try {
   check('the cloud recorded the connector version', agentAfter.version === '0.1.0');
   check('the cloud recorded the heartbeat', agentAfter.lastSeenAt !== null);
 
+  /*
+   * Liveness must advance on every beat, and a moved DHCP lease must still be recorded.
+   *
+   * These two guard a change that is invisible from the response. The heartbeat route used to
+   * write `lastSeenAt` itself while `verifyAgentSecret` wrote it again unawaited, so two UPDATEs
+   * raced for this row on every beat and the detached one could land last. The route now writes
+   * only fields that actually changed — nothing at all on a normal beat — which puts the whole
+   * weight of agent liveness on the stamp in `verifyAgentSecret`. If that stamp is ever detached
+   * again, or the conditional update stops noticing a change, one of these fails.
+   */
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+
+  const moved = await cloud.heartbeat({
+    version: '0.1.1',
+    lanHost: '192.168.99.11',
+    lanPort: 18081,
+    spooled: 0,
+    devices: [],
+  });
+  check('a second heartbeat is accepted', moved.ok);
+
+  const agentMoved = await db().deviceAgent.findUniqueOrThrow({ where: { id: agentRow.id } });
+  check(
+    'liveness advances on every beat, not only the first',
+    agentMoved.lastSeenAt !== null &&
+      agentAfter.lastSeenAt !== null &&
+      agentMoved.lastSeenAt.getTime() > agentAfter.lastSeenAt.getTime(),
+  );
+  check('a moved LAN address is recorded', agentMoved.lanHost === '192.168.99.11');
+  check('a moved listener port is recorded', agentMoved.lanPort === 18081);
+  check('an upgraded connector build is recorded', agentMoved.version === '0.1.1');
+
   // -------------------------------------------------------------------------
   /*
    * A terminal whose stored password cannot be decrypted must not take the site down.

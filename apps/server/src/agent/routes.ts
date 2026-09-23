@@ -8,7 +8,7 @@ import {
   type AgentEnrolReply,
   type AgentHeartbeatReply,
 } from '@attendance/shared';
-import type { Device } from '@prisma/client';
+import type { Device, Prisma } from '@prisma/client';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import { db } from '../db.js';
@@ -173,16 +173,28 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       const body = parseBody(agentHeartbeatSchema, request.body);
       const prisma = db();
 
-      await prisma.deviceAgent.update({
-        where: { id: agent.id },
-        data: {
-          version: body.version,
-          lanHost: body.lanHost,
-          lanPort: body.lanPort,
-          lastSeenAt: new Date(),
-          lastAddress: clientAddress(request).slice(0, 45),
-        },
-      });
+      /**
+       * Only what actually changed, and nothing at all on a normal beat.
+       *
+       * `lastSeenAt` and `lastAddress` are deliberately absent: `verifyAgentSecret` stamped them
+       * moments ago in this same request, for every authenticated agent call rather than only this
+       * one. Writing them again here meant two UPDATEs racing for the same `device_agents` row on
+       * every heartbeat, with the fire-and-forget stamp free to land *after* this statement and
+       * overwrite it — a genuine lost update, and two row locks for one request.
+       *
+       * What remains — build and LAN address — changes when a connector is upgraded or its DHCP
+       * lease moves, and not otherwise. So the steady state is now zero writes from this route,
+       * and the one write left is the liveness stamp that every other agent route also performs.
+       */
+      const changed: Prisma.DeviceAgentUpdateInput = {
+        ...(body.version === agent.version ? {} : { version: body.version }),
+        ...(body.lanHost === agent.lanHost ? {} : { lanHost: body.lanHost }),
+        ...(body.lanPort === agent.lanPort ? {} : { lanPort: body.lanPort }),
+      };
+
+      if (Object.keys(changed).length > 0) {
+        await prisma.deviceAgent.update({ where: { id: agent.id }, data: changed });
+      }
 
       /**
        * Device status comes from the agent because the cloud cannot measure it.
