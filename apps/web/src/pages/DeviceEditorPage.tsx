@@ -1,4 +1,4 @@
-import { usesStoredCredentials, type LabelKey } from '@attendance/shared';
+import { DeviceProtocol, usesStoredCredentials, type LabelKey } from '@attendance/shared';
 import {
   Activity,
   ArrowLeft,
@@ -44,6 +44,7 @@ import {
   SettingsStack,
 } from '../components/RecordPanel';
 import { Badge, Button } from '../components/ui';
+import { AGENT_STATUS_LABELS, agentsApi, type AgentRow } from '../lib/agents-api';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import {
@@ -469,9 +470,26 @@ function ConnectionTab({
     device.locationId === null ? '' : String(device.locationId),
   );
   const [locations, setLocations] = useState<Array<{ id: number; name: string }>>([]);
+  /**
+   * Empty string means direct, matching `Device.agentId` being null.
+   *
+   * Which is the existing behaviour and the default, so the absence of a choice here has to mean
+   * the same thing it means in the database rather than a third state the form invented.
+   */
+  const [agentId, setAgentId] = useState(device.agentId === null ? '' : String(device.agentId));
+  const [agents, setAgents] = useState<AgentRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  /**
+   * Only ISAPI can be served by a connector, and the form has to say so rather than accept it.
+   *
+   * `buildDriver` on the agent refuses anything else with a log line, so a ZKTeco terminal
+   * assigned here would be accepted by the cloud and ignored at the site — a site that reads as
+   * configured and records nothing, which is the failure this whole system exists to prevent.
+   */
+  const agentCapable = device.protocol === DeviceProtocol.isapi;
 
   useEffect(() => {
     void lookupsApi
@@ -479,6 +497,21 @@ function ConnectionTab({
       .then((data) => setLocations(data.locations))
       .catch(() => undefined);
   }, []);
+
+  /*
+   * Revoked connectors are offered too, but only when already selected.
+   *
+   * Hiding one that a terminal is currently assigned to would make the form silently reassign the
+   * device to direct on the next save — and the cloud would start dialling a private address it
+   * cannot route.
+   */
+  useEffect(() => {
+    if (!agentCapable) return;
+    void agentsApi
+      .list()
+      .then(setAgents)
+      .catch(() => undefined);
+  }, [agentCapable]);
 
   async function submit(): Promise<void> {
     setBusy(true);
@@ -512,6 +545,13 @@ function ConnectionTab({
           doorNo: Number(doorNo),
           active,
           locationId: locationId === '' ? null : Number(locationId),
+          /*
+            Sent explicitly as null for direct rather than omitted, because the server treats an
+            absent `agentId` as "leave it alone" — which is what makes an assignment undoable.
+            Omitted entirely on a protocol no connector can drive, so the field cannot be set on a
+            terminal where the control was never shown.
+          */
+          ...(agentCapable ? { agentId: agentId === '' ? null : Number(agentId) } : {}),
         },
       );
 
@@ -651,6 +691,50 @@ function ConnectionTab({
                 />
               </ControlCell>
             </ControlGrid>
+          </SettingRow>
+
+          {/*
+            Who reaches this terminal. Placed in the address card because that is the question it
+            answers — not in placement, which is about where the unit hangs on a wall.
+
+            Per device rather than per installation, which is the whole point: one cloud install
+            serves a direct site and two connector sites at once, so a global switch would be
+            wrong for two thirds of the terminals it governed. Fifteen units can also be split
+            across two connectors without a line of code changing, which is the answer when one
+            connector for a whole site is too much to lose at once.
+          */}
+          <SettingRow
+            label={<T k="device.editor.field.agent" />}
+            hint={
+              agentCapable ? (
+                <T k="device.editor.field.agent.hint" />
+              ) : (
+                <T k="device.editor.field.agent.isapiOnly" />
+              )
+            }
+          >
+            {agentCapable ? (
+              <SelectControl
+                label={t('device.editor.field.agent')}
+                value={agentId}
+                disabled={!editable}
+                onChange={(event) => setAgentId(event.target.value)}
+              >
+                {/* Not a `FacetSelect`: empty is a real choice here, not the absence of a filter. */}
+                <option value="">{t('device.editor.field.agent.direct')}</option>
+                {agents.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.status === 'active'
+                      ? row.name
+                      : `${row.name} — ${t(AGENT_STATUS_LABELS[row.status] ?? 'agent.status.pending')}`}
+                  </option>
+                ))}
+              </SelectControl>
+            ) : (
+              <Unsupported>
+                <T k="device.editor.field.agent.direct" />
+              </Unsupported>
+            )}
           </SettingRow>
         </SettingsGroup>
 

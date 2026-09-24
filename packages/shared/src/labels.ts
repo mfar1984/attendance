@@ -4722,6 +4722,27 @@ export const LABELS = {
   'device.editor.viaAgent.disabled':
     'Tidak tersedia melalui connector — tukar di terminal itu sendiri.',
 
+  /**
+   * Who reaches this terminal, chosen per device.
+   *
+   * `CONNECTOR_MODE` looks like it answers this and does not: one installation serves a direct
+   * site and several connector sites at once, so a global switch would be wrong for most of the
+   * terminals it governed. It survives only as the default for newly added devices.
+   */
+  'device.editor.field.agent': 'Dicapai melalui',
+  'device.editor.field.agent.direct': 'Pelayan ini terus (LAN)',
+  'device.editor.field.agent.hint':
+    'Pilih connector untuk terminal yang pelayan ini tidak boleh hubungi terus. Bacaan langsung berhenti berfungsi selepas itu — status dan jam datang dari laporan connector — dan tulisan dibariskan dan bukan serta-merta.',
+  /**
+   * Said on the form rather than discovered at the site.
+   *
+   * The agent's `buildDriver` refuses a non-ISAPI terminal with a log line nobody at the cloud
+   * reads, so assigning one here would be accepted and then ignored: a site that looks configured
+   * and records nothing.
+   */
+  'device.editor.field.agent.isapiOnly':
+    'Connector memandu Hikvision ISAPI sahaja, jadi terminal ini mesti dicapai terus oleh pelayan.',
+
   // -------------------------------------------------------------------------
   // Tetapan › Senarai Peranti › Connector
   //

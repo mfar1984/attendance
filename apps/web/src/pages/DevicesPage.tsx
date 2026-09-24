@@ -58,6 +58,7 @@ import {
   lookupsApi,
 } from '../lib/operations-api';
 import {
+  DeviceProtocol,
   DeviceVendor,
   VENDOR_PROTOCOLS,
   defaultProtocolFor,
@@ -665,6 +666,9 @@ function DeviceDialog({
   const [password, setPassword] = useState('');
   const [locationId, setLocationId] = useState('');
   const [locations, setLocations] = useState<Array<{ id: number; name: string }>>([]);
+  /** Empty means direct, matching `Device.agentId` being null — the default and the existing behaviour. */
+  const [agentId, setAgentId] = useState('');
+  const [agents, setAgents] = useState<AgentRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -677,12 +681,34 @@ function DeviceDialog({
    */
   const needsCredentials = usesStoredCredentials(protocol);
 
+  /**
+   * Only ISAPI can be served by a connector, so the choice is withdrawn rather than refused later.
+   *
+   * The agent's `buildDriver` skips anything else with a log line nobody at the cloud reads, which
+   * would leave a site looking configured and recording nothing.
+   */
+  const agentCapable = protocol === DeviceProtocol.isapi;
+
   useEffect(() => {
     void lookupsApi
       .load()
       .then((data) => setLocations(data.locations))
       .catch(() => undefined);
+    void agentsApi
+      .list()
+      .then(setAgents)
+      .catch(() => undefined);
   }, []);
+
+  /*
+   * Cleared when the protocol changes away from ISAPI.
+   *
+   * Otherwise switching vendor after picking a connector would submit an assignment the agent
+   * cannot drive, from a control that is no longer on screen to explain it.
+   */
+  useEffect(() => {
+    if (!agentCapable) setAgentId('');
+  }, [agentCapable]);
 
   async function submit(): Promise<void> {
     setBusy(true);
@@ -699,6 +725,9 @@ function DeviceDialog({
         // rather than an empty string that would reach the wire and fail authentication.
         ...(needsCredentials ? { username: username.trim(), password } : {}),
         locationId: locationId === '' ? null : Number(locationId),
+        // Omitted when direct, so a new row takes the server's own default rather than being told
+        // null by a form that had nothing to say about it.
+        ...(agentCapable && agentId !== '' ? { agentId: Number(agentId) } : {}),
       });
 
       /*
@@ -861,6 +890,37 @@ function DeviceDialog({
             ))}
           </select>
         </div>
+
+        {/*
+          Who reaches this terminal. Offered only for ISAPI, because that is the only protocol a
+          connector can drive — and a control that accepts a choice nothing will honour is worse
+          than no control.
+        */}
+        {agentCapable && (
+          <div className="space-y-1.5">
+            <label htmlFor="device-agent" className="block text-sm font-medium text-slate-700">
+              <T k="device.editor.field.agent" />
+            </label>
+            <select
+              id="device-agent"
+              value={agentId}
+              onChange={(event) => setAgentId(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+            >
+              <option value="">{t('device.editor.field.agent.direct')}</option>
+              {agents.map((row) => (
+                <option key={row.id} value={String(row.id)}>
+                  {row.status === 'active'
+                    ? row.name
+                    : `${row.name} — ${t(AGENT_STATUS_LABELS[row.status] ?? 'agent.status.pending')}`}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-500">
+              <T k="device.editor.field.agent.hint" />
+            </p>
+          </div>
+        )}
 
         {needsCredentials && (
           <PanelNote>

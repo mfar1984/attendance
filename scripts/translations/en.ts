@@ -6286,4 +6286,12 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
     'Writing these settings is not available through a connector either. Connector v1 carries person records, faces and restarts only; anything else has to be changed at the terminal itself.',
   'device.editor.viaAgent.disabled':
     'Not available through a connector — change it at the terminal itself.',
+
+  // Who reaches this terminal, chosen per device rather than per installation.
+  'device.editor.field.agent': 'Reached through',
+  'device.editor.field.agent.direct': 'This server directly (LAN)',
+  'device.editor.field.agent.hint':
+    'Choose a connector for a terminal this server cannot reach directly. Live reads stop working after that — status and clock come from the connector’s reports — and writes are queued rather than immediate.',
+  'device.editor.field.agent.isapiOnly':
+    'A connector drives Hikvision ISAPI only, so this terminal has to be reached directly by the server.',
 };
