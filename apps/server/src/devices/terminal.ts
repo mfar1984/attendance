@@ -10,6 +10,7 @@ import { loadEnv } from '../env.js';
 import { conflict, notFound, parseBody, unauthorized } from '../http.js';
 import { DriverOperation, supports } from '@attendance/terminal-drivers';
 import { clientFor, driverFor, releaseClient } from './registry.js';
+import { snapshotsFor } from './snapshots.js';
 
 /**
  * Live terminal configuration.
@@ -42,6 +43,37 @@ export async function deviceTerminalRoutes(app: FastifyInstance): Promise<void> 
    * live: the point of the tab is to answer "is the unit at this address the one we think
    * it is", and a stored copy cannot answer that after somebody swaps the hardware.
    */
+  /**
+   * When each of this terminal's settings was last read, and why the newest attempt failed.
+   *
+   * One call at page level rather than a field bolted onto all six read responses. The screen
+   * needs the same answer on every tab — how old is this — and threading it through each handler
+   * would put the same three lines in six places for one fact about the device.
+   *
+   * Empty for a direct terminal, and that is correct rather than missing: those are read live on
+   * every request, so there is no "as of" to show. A timestamp beside a live reading would invite
+   * the question of which one is stale.
+   */
+  app.get(
+    '/api/devices/:id/snapshots',
+    { preHandler: requirePermission('settings.devices', 'view') },
+    async (request) => {
+      const device = await requireDevice(idParam(request.params));
+      if (device.agentId === null) return {};
+
+      const held = await snapshotsFor(device.id);
+
+      return Object.fromEntries(
+        [...held.entries()].map(([kind, snapshot]) => [
+          kind,
+          // Deliberately not the payload. The driver already serves that through the read
+          // endpoints; repeating it here would give the screen two copies to disagree about.
+          { readAt: snapshot.readAt, error: snapshot.error, errorAt: snapshot.errorAt },
+        ]),
+      );
+    },
+  );
+
   app.get(
     '/api/devices/:id/terminal/identity',
     { preHandler: requirePermission('settings.devices', 'view') },

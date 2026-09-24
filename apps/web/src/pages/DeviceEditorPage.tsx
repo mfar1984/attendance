@@ -243,43 +243,34 @@ export function DeviceEditorPage(): ReactNode {
  * left open for twenty minutes looks identical to one just loaded — the same reason the
  * record tables carry `generatedAt` in their footer.
  */
-function useTerminalRead<T>(
-  path: string,
-  options: {
-    /**
-     * Do not attempt the read at all.
-     *
-     * Set for a terminal behind a connector, where the answer is known in advance: the connector
-     * collects commands and does not serve reads, so the request would return 409 every time. The
-     * page used to fire it anyway and render the refusal through `Feedback`, which put a red error
-     * strip on six tabs — one per read — for a single structural fact about the topology. Nothing
-     * had failed, and a screen that reports a healthy site as six errors is a screen that sends
-     * somebody looking for a hardware fault.
-     *
-     * Skipping keeps `error` null so each tab can say the one useful thing instead.
-     */
-    skip?: boolean;
-  } = {},
-): {
+/**
+ * Reads one terminal document.
+ *
+ * ## It is attempted for a connector terminal too, and that changed twice
+ *
+ * Originally it was fired blindly, refused with a 409, and the refusal rendered through
+ * `Feedback` — so a working connector site showed a red error strip on six tabs, one per read, for
+ * a single structural fact. It was then skipped entirely, which removed the red but left the tabs
+ * empty and the operator with nothing.
+ *
+ * Neither was right, because neither had anywhere for the values to come from. Now the connector
+ * sweeps its terminals and reports, and `AgentProxyDriver` answers from the newest report — so the
+ * read succeeds and carries real data. What it cannot carry is freshness, which is why the page
+ * loads snapshot timestamps separately and every tab shows when the values were taken.
+ */
+function useTerminalRead<T>(path: string): {
   data: T | null;
   error: string | null;
   loading: boolean;
   readAt: Date | null;
   reload: () => Promise<void>;
 } {
-  const skip = options.skip ?? false;
-
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(!skip);
+  const [loading, setLoading] = useState(true);
   const [readAt, setReadAt] = useState<Date | null>(null);
 
   const reload = useCallback(async () => {
-    if (skip) {
-      setLoading(false);
-      return;
-    }
-
     setLoading(true);
     try {
       setData(await api.get<T>(path));
@@ -292,13 +283,34 @@ function useTerminalRead<T>(
     } finally {
       setLoading(false);
     }
-  }, [path, skip]);
+  }, [path]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
   return { data, error, loading, readAt, reload };
+}
+
+/**
+ * When each of this terminal's settings was last read from the unit.
+ *
+ * Empty for a direct terminal, where every read is live and a timestamp would only invite the
+ * question of which value is stale. For a connector terminal it is the thing that keeps the screen
+ * honest: the values are real, and they are as old as this says.
+ */
+function useSnapshotAges(deviceId: number, viaAgent: boolean): Record<string, SnapshotAge> {
+  const [ages, setAges] = useState<Record<string, SnapshotAge>>({});
+
+  useEffect(() => {
+    if (!viaAgent) return;
+    void api
+      .get<Record<string, SnapshotAge>>(`/api/devices/${String(deviceId)}/snapshots`)
+      .then(setAges)
+      .catch(() => undefined);
+  }, [deviceId, viaAgent]);
+
+  return ages;
 }
 
 /**
@@ -315,21 +327,44 @@ function useTerminalRead<T>(
 function ConnectorManagedNote({
   device,
   writable = false,
+  age,
 }: {
   device: DeviceRecord;
-  /** True where the tab also offers a write this connector cannot carry. */
+  /** True where the tab also offers a write, so the queueing delay is worth stating. */
   writable?: boolean;
+  /** This tab's snapshot, so a failed refresh can be named beside the values it did not replace. */
+  age?: SnapshotAge | undefined;
 }): ReactNode {
+  const stale = age?.error ?? null;
+
   return (
-    <PanelNote tone="warn" icon={<Satellite className="size-3.5" aria-hidden />}>
-      <T k="device.editor.viaAgent.read" vars={{ agent: device.agent?.name ?? '' }} />
-      {writable && (
-        <>
-          {' '}
-          <T k="device.editor.viaAgent.write" />
-        </>
+    <>
+      <PanelNote tone="info" icon={<Satellite className="size-3.5" aria-hidden />}>
+        <T k="device.editor.viaAgent.read" vars={{ agent: device.agent?.name ?? '' }} />
+        {writable && (
+          <>
+            {' '}
+            <T k="device.editor.viaAgent.write" />
+          </>
+        )}
+      </PanelNote>
+
+      {/*
+        Its own strip, and amber where the first is neutral.
+        Values arriving from a connector is how this screen works; values that have stopped
+        arriving is a fault, and collapsing the two into one note would hide the second inside
+        an explanation somebody has already learned to skip.
+      */}
+      {stale !== null && (
+        <PanelNote
+          tone="warn"
+          className="mt-2"
+          icon={<TriangleAlert className="size-3.5" aria-hidden />}
+        >
+          <T k="device.editor.viaAgent.stale" vars={{ reason: stale }} />
+        </PanelNote>
       )}
-    </PanelNote>
+    </>
   );
 }
 
@@ -346,7 +381,7 @@ function LiveSection({
   readAt,
   loading,
   onReload,
-  unavailable,
+  snapshotAt,
 }: {
   titleKey: LabelKey;
   subtitleKey: LabelKey;
@@ -355,16 +390,16 @@ function LiveSection({
   loading: boolean;
   onReload: () => void;
   /**
-   * No read is possible here, so neither the timestamp nor the refresh means anything.
+   * When the **terminal** was read, for a unit behind a connector.
    *
-   * Without this the header read `Sedang membaca…` forever on a connector terminal — `readAt`
-   * never gets set because no request is made — beside a refresh button that did nothing when
-   * pressed. Two controls describing activity that was not happening, on six tabs.
+   * Overrides `readAt`, which is when this browser fetched — and for a connector terminal those
+   * are different by however long ago the connector last swept. Showing the fetch time would
+   * present a ten-minute-old setting as current, which is the one thing worse than showing
+   * nothing: somebody changes the verification mode at the keypad and this screen stays
+   * confidently wrong with a fresh-looking timestamp beside it.
    */
-  unavailable?: boolean;
+  snapshotAt?: string | null;
 }): ReactNode {
-  const { t } = useLabels();
-
   return (
     <PanelSection
       icon={icon}
@@ -372,24 +407,23 @@ function LiveSection({
       subtitle={<T k={subtitleKey} />}
       action={
         <div className="flex items-center gap-3">
-          {!unavailable && (
-            <span className="text-xs text-slate-500">
-              {readAt === null ? (
-                <T k="device.editor.live.reading" />
-              ) : (
-                <T
-                  k="device.editor.live.readAt"
-                  vars={{ time: readAt.toLocaleTimeString('ms-MY') }}
-                />
-              )}
-            </span>
-          )}
-          <Button
-            variant="ghost"
-            onClick={onReload}
-            disabled={loading || unavailable === true}
-            {...(unavailable === true ? { title: t('device.editor.viaAgent.disabled') } : {})}
-          >
+          <span className="text-xs text-slate-500">
+            {snapshotAt !== undefined && snapshotAt !== null ? (
+              /* Named differently from a live reading, because it is not one. */
+              <T
+                k="device.editor.live.snapshotAt"
+                vars={{ time: new Date(snapshotAt).toLocaleString('ms-MY') }}
+              />
+            ) : readAt === null ? (
+              <T k="device.editor.live.reading" />
+            ) : (
+              <T
+                k="device.editor.live.readAt"
+                vars={{ time: readAt.toLocaleTimeString('ms-MY') }}
+              />
+            )}
+          </span>
+          <Button variant="ghost" onClick={onReload} disabled={loading}>
             <Activity className={loading ? 'size-4 animate-pulse' : 'size-4'} aria-hidden />
             <T k="device.editor.live.reload" />
           </Button>
@@ -883,10 +917,11 @@ function ConnectionTab({
 function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
   /** A connector collects commands and does not serve reads, so none is attempted. */
   const viaAgent = device.agentId !== null;
+  /** Empty for a direct terminal, where every read is live and there is no 'as of' to show. */
+  const ages = useSnapshotAges(device.id, viaAgent);
 
   const { data, error, loading, readAt, reload } = useTerminalRead<TerminalIdentity>(
     `/api/devices/${String(device.id)}/terminal/identity`,
-    { skip: viaAgent },
   );
 
   /**
@@ -923,13 +958,13 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
-        unavailable={viaAgent}
+        snapshotAt={ages['identity']?.readAt ?? null}
       />
 
       <SettingsStack>
         <Feedback error={error} />
 
-        {viaAgent && <ConnectorManagedNote device={device} />}
+        {viaAgent && <ConnectorManagedNote device={device} age={ages['identity']} />}
 
         {swapped && (
           <PanelNote tone="danger" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
@@ -1096,15 +1131,16 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
 function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
   /** A connector collects commands and does not serve reads, so none is attempted. */
   const viaAgent = device.agentId !== null;
+  /** Empty for a direct terminal, where every read is live and there is no 'as of' to show. */
+  const ages = useSnapshotAges(device.id, viaAgent);
 
   const { t } = useLabels();
   const { can } = useAuth();
   const permitted = can('settings.devices', 'clock');
-  const allowed = permitted && !viaAgent;
+  const allowed = permitted;
 
   const { data, error, loading, readAt, reload } = useTerminalRead<TerminalClock>(
     `/api/devices/${String(device.id)}/terminal/clock`,
-    { skip: viaAgent },
   );
 
   const [ntpHost, setNtpHost] = useState('');
@@ -1192,13 +1228,13 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
-        unavailable={viaAgent}
+        snapshotAt={ages['clock']?.readAt ?? null}
       />
 
       <SettingsStack>
         <Feedback error={error ?? writeError} notice={notice} />
 
-        {viaAgent && <ConnectorManagedNote device={device} writable />}
+        {viaAgent && <ConnectorManagedNote device={device} writable age={ages['clock']} />}
 
         {!permitted && <ReadOnlyNote actionKey="perm.action.clock" />}
 
@@ -1393,15 +1429,16 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
 function AttendanceTab({ device }: { device: DeviceRecord }): ReactNode {
   /** A connector collects commands and does not serve reads, so none is attempted. */
   const viaAgent = device.agentId !== null;
+  /** Empty for a direct terminal, where every read is live and there is no 'as of' to show. */
+  const ages = useSnapshotAges(device.id, viaAgent);
 
   const { t } = useLabels();
   const { can } = useAuth();
   const permitted = can('settings.devices', 'terminal');
-  const allowed = permitted && !viaAgent;
+  const allowed = permitted;
 
   const { data, error, loading, readAt, reload } = useTerminalRead<AttendanceModeState>(
     `/api/devices/${String(device.id)}/terminal/attendance`,
-    { skip: viaAgent },
   );
 
   const [mode, setMode] = useState<string>('');
@@ -1463,13 +1500,13 @@ function AttendanceTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
-        unavailable={viaAgent}
+        snapshotAt={ages['attendance']?.readAt ?? null}
       />
 
       <SettingsStack>
         <Feedback error={error ?? writeError} notice={notice} />
 
-        {viaAgent && <ConnectorManagedNote device={device} writable />}
+        {viaAgent && <ConnectorManagedNote device={device} writable age={ages['attendance']} />}
 
         {!permitted && <ReadOnlyNote actionKey="perm.action.terminalConfig" />}
 
@@ -1553,15 +1590,16 @@ function AttendanceTab({ device }: { device: DeviceRecord }): ReactNode {
 function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
   /** A connector collects commands and does not serve reads, so none is attempted. */
   const viaAgent = device.agentId !== null;
+  /** Empty for a direct terminal, where every read is live and there is no 'as of' to show. */
+  const ages = useSnapshotAges(device.id, viaAgent);
 
   const { t } = useLabels();
   const { can } = useAuth();
   const permitted = can('settings.devices', 'terminal');
-  const allowed = permitted && !viaAgent;
+  const allowed = permitted;
 
   const { data, error, loading, readAt, reload } = useTerminalRead<TerminalDoor>(
     `/api/devices/${String(device.id)}/terminal/door`,
-    { skip: viaAgent },
   );
 
   const [verifyMode, setVerifyMode] = useState('');
@@ -1754,13 +1792,13 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
-        unavailable={viaAgent}
+        snapshotAt={ages['door']?.readAt ?? null}
       />
 
       <SettingsStack>
         <Feedback error={error ?? writeError} notice={notice} />
 
-        {viaAgent && <ConnectorManagedNote device={device} writable />}
+        {viaAgent && <ConnectorManagedNote device={device} writable age={ages['door']} />}
 
         {!permitted && <ReadOnlyNote actionKey="perm.action.terminalConfig" />}
 
@@ -2192,15 +2230,16 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
 function PushTab({ device }: { device: DeviceRecord }): ReactNode {
   /** A connector collects commands and does not serve reads, so none is attempted. */
   const viaAgent = device.agentId !== null;
+  /** Empty for a direct terminal, where every read is live and there is no 'as of' to show. */
+  const ages = useSnapshotAges(device.id, viaAgent);
 
   const { t } = useLabels();
   const { can } = useAuth();
   const permitted = can('settings.devices', 'sync');
-  const allowed = permitted && !viaAgent;
+  const allowed = permitted;
 
   const { data, error, loading, readAt, reload } = useTerminalRead<PushHost[]>(
     `/api/devices/${String(device.id)}/push`,
-    { skip: viaAgent },
   );
 
   const [host, setHost] = useState('');
@@ -2274,13 +2313,13 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
-        unavailable={viaAgent}
+        snapshotAt={ages['push']?.readAt ?? null}
       />
 
       <SettingsStack>
         <Feedback error={error ?? writeError} notice={notice} />
 
-        {viaAgent && <ConnectorManagedNote device={device} writable />}
+        {viaAgent && <ConnectorManagedNote device={device} writable age={ages['push']} />}
 
         {!permitted && <ReadOnlyNote actionKey="perm.action.sync.push" />}
 
@@ -2446,6 +2485,8 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
 function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
   /** A connector collects commands and does not serve reads, so none is attempted. */
   const viaAgent = device.agentId !== null;
+  /** Empty for a direct terminal, where every read is live and there is no 'as of' to show. */
+  const ages = useSnapshotAges(device.id, viaAgent);
 
   const { t } = useLabels();
   const { can } = useAuth();
@@ -2454,7 +2495,6 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
   const allowed = permitted;
   const { data, error, loading, readAt, reload } = useTerminalRead<TerminalDiagnostics>(
     `/api/devices/${String(device.id)}/terminal/diagnostics`,
-    { skip: viaAgent },
   );
 
   const [confirmReboot, setConfirmReboot] = useState(false);
@@ -2490,13 +2530,13 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
         readAt={readAt}
         loading={loading}
         onReload={() => void reload()}
-        unavailable={viaAgent}
+        snapshotAt={ages['diagnostics']?.readAt ?? null}
       />
 
       <SettingsStack>
         <Feedback error={error ?? writeError} notice={notice} />
 
-        {viaAgent && <ConnectorManagedNote device={device} />}
+        {viaAgent && <ConnectorManagedNote device={device} age={ages['diagnostics']} />}
 
         <SettingsGroup
           title={<T k="device.editor.diag.group.cursor" />}
@@ -2850,6 +2890,18 @@ interface DeviceHealth {
   status: string;
   warnings: Array<{ key: LabelKey; vars?: Record<string, string | number> }>;
   error?: string;
+}
+
+/**
+ * How old one tab's values are, and whether the newest refresh of them failed.
+ *
+ * Both, not one. A terminal that answered an hour ago and refuses now has to show the settings and
+ * the fact they have stopped refreshing — dropping either turns a diagnosable state into a mystery.
+ */
+interface SnapshotAge {
+  readAt: string | null;
+  error: string | null;
+  errorAt: string | null;
 }
 
 interface TerminalIdentity {

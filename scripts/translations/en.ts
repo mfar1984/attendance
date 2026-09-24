@@ -6281,11 +6281,12 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
 
   // The device editor, when the terminal is reached through a connector rather than dialled.
   'device.editor.viaAgent.read':
-    'This terminal is served by the “{agent}” connector. A connector collects commands and does not answer reads, so the terminal’s own settings cannot be shown here. Status, clock drift, firmware and serial number come from the connector’s reports — see its columns on the device list.',
+    'This terminal is served by the “{agent}” connector, so the values below come from the connector’s last sweep rather than a live read. The timestamp above says when they were taken.',
   'device.editor.viaAgent.write':
-    'Writing these settings is not available through a connector either. Connector v1 carries person records, faces and restarts only; anything else has to be changed at the terminal itself.',
-  'device.editor.viaAgent.disabled':
-    'Not available through a connector — change it at the terminal itself.',
+    'Changes are queued rather than applied immediately — the connector collects them on its next poll, so the screen says “queued” and not “done”.',
+  'device.editor.viaAgent.stale':
+    'The most recent sweep failed: {reason}. The values below are the last ones read successfully, so they may no longer match the terminal.',
+  'device.editor.live.snapshotAt': 'Connector report {time}',
 
   // Who reaches this terminal, chosen per device rather than per installation.
   'device.editor.field.agent': 'Reached through',

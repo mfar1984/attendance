@@ -4288,6 +4288,16 @@ export const LABELS = {
    * this page knowing — the same reason the record tables carry a generated-at stamp.
    */
   'device.editor.live.readAt': 'Dibaca dari terminal {time}',
+  /**
+   * Worded differently from a live reading, because it is not one.
+   *
+   * For a terminal behind a connector these values came from the connector's last sweep, which may
+   * be minutes old. Presenting that as `Dibaca dari terminal` would make a ten-minute-old setting
+   * look current — and somebody who changes the verification mode at the keypad would find this
+   * screen confidently wrong with a fresh-looking timestamp beside it. Includes the date, because
+   * a connector that stopped reporting yesterday must not read as "this morning".
+   */
+  'device.editor.live.snapshotAt': 'Laporan connector {time}',
   'device.editor.live.reading': 'Sedang membaca…',
   'device.editor.live.reload': 'Baca semula',
   'device.editor.live.unsupported': 'Firmware terminal ini tidak melaporkan tetapan ini.',
@@ -4714,13 +4724,33 @@ export const LABELS = {
    *
    * It names where the values actually are, because the operator came here to see them.
    */
+  /**
+   * Rewritten once the connector began reporting.
+   *
+   * It used to say these values could not be shown at all, which was true when nothing collected
+   * them. Leaving that wording after the data arrived would have been worse than the original
+   * problem: a screen full of real settings with a note above it saying they are unavailable.
+   */
   'device.editor.viaAgent.read':
-    'Terminal ini dilayan oleh connector "{agent}". Connector mengutip arahan dan tidak menjawab bacaan, jadi tetapan terminal tidak boleh dipaparkan di sini. Status, hanyutan jam, firmware dan nombor siri datang dari laporan connector — lihat lajurnya pada Senarai Peranti.',
+    'Terminal ini dilayan oleh connector "{agent}", jadi nilai di bawah datang dari sapuan terakhir connector dan bukan bacaan langsung. Cap masa di atas menyatakan bila ia diambil.',
   'device.editor.viaAgent.write':
-    'Menulis tetapan ini juga belum tersedia melalui connector. Connector v1 membawa pendaftaran orang, wajah, dan restart sahaja — yang lain mesti ditukar di terminal itu sendiri.',
-  /** On the control itself, so the reason is read at the moment somebody reaches for it. */
-  'device.editor.viaAgent.disabled':
-    'Tidak tersedia melalui connector — tukar di terminal itu sendiri.',
+    'Perubahan dibariskan dan bukan dipakai serta-merta — connector mengutipnya pada tinjauan berikutnya, jadi skrin berkata "dibariskan" dan bukan "siap".',
+  /** Shown when the values are real but have stopped refreshing, which is its own state. */
+  'device.editor.viaAgent.stale':
+    'Sapuan terbaharu gagal: {reason}. Nilai di bawah ialah yang terakhir berjaya dibaca, jadi ia mungkin sudah tidak sepadan dengan terminal.',
+  /*
+   * `device.editor.viaAgent.disabled` was here, and is gone.
+   *
+   * It was the tooltip on controls this screen disabled wholesale for a connector terminal. Those
+   * controls now work: reads answer from the connector's report and writes are queued. The three
+   * that genuinely stay refused — setting the clock by hand, releasing the door, setting the push
+   * target — carry their own reason from `DriverCapabilities.unavailable`, written per operation in
+   * `agent-proxy.ts`, which is more specific than one shared sentence could be.
+   *
+   * Per-operation disabling of those three is not built: pressing them answers 409 with that
+   * reason. Worth doing, and named here so the next person knows it is a gap rather than an
+   * oversight.
+   */
 
   /**
    * Who reaches this terminal, chosen per device.
