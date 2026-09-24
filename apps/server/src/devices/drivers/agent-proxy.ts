@@ -209,6 +209,35 @@ export class AgentProxyDriver implements TerminalDriver {
   }
 
   /**
+   * The same read, but an absent snapshot yields a value instead of a refusal.
+   *
+   * For every operation whose contract can express emptiness — a list, or a nullable setting —
+   * "the connector has not swept yet" is expressible *as data*, and expressing it that way is
+   * strictly better than throwing. A 409 reaches the screen as a red error strip, which is what a
+   * broken terminal looks like; a connector ten minutes into its first sweep is not broken.
+   *
+   * A failed read still throws, because that one *is* a condition worth interrupting for: the
+   * terminal refused, and the connector's reason is the useful thing to show.
+   */
+  private async fromSnapshotOrEmpty<T>(
+    kind: SnapshotKind,
+    fallback: T,
+    pick: (payload: Record<string, unknown>) => T,
+  ): Promise<T> {
+    const snapshot = await snapshotOf(this.device.id, kind);
+    if (snapshot === null) return fallback;
+
+    if (snapshot.payload === null) {
+      if (snapshot.error === null) return fallback;
+      throw conflict(
+        `Connector tidak dapat membaca tetapan ini pada "${this.device.name}": ${snapshot.error}`,
+      );
+    }
+
+    return pick(snapshot.payload as Record<string, unknown>);
+  }
+
+  /**
    * Composite snapshots exist because the editor's tabs are composite, not the endpoints.
    *
    * The unit tab shows identity, credential counts, capacity and the face libraries together, so
@@ -242,7 +271,7 @@ export class AgentProxyDriver implements TerminalDriver {
         return value as TerminalCapacity;
       }),
     faceStores: (): Promise<FaceStore[]> =>
-      this.fromSnapshot(SnapshotKind.identity, 'simpanan wajah', (payload) =>
+      this.fromSnapshotOrEmpty(SnapshotKind.identity, [] as FaceStore[], (payload) =>
         Array.isArray(payload['faceStores']) ? (payload['faceStores'] as FaceStore[]) : [],
       ),
   };
@@ -390,9 +419,9 @@ export class AgentProxyDriver implements TerminalDriver {
 
   access = {
     door: (): Promise<DoorSettings | null> =>
-      this.fromSnapshot(
+      this.fromSnapshotOrEmpty(
         SnapshotKind.door,
-        'tetapan pintu',
+        null,
         (payload) => (payload['door'] ?? null) as DoorSettings | null,
       ),
     /**
@@ -409,9 +438,9 @@ export class AgentProxyDriver implements TerminalDriver {
         JSON.stringify(agentDoorArgs.parse({ doorNo, patch })),
       ),
     reader: (): Promise<ReaderSettings | null> =>
-      this.fromSnapshot(
+      this.fromSnapshotOrEmpty(
         SnapshotKind.door,
-        'tetapan pembaca',
+        null,
         (payload) => (payload['reader'] ?? null) as ReaderSettings | null,
       ),
     setReader: (readerNo: number, patch: ReaderPatch): Promise<WriteAck> =>
@@ -430,7 +459,7 @@ export class AgentProxyDriver implements TerminalDriver {
      * whole tab over a document the unit is not obliged to serve.
      */
     options: (): Promise<OptionSets> =>
-      this.fromSnapshot(SnapshotKind.door, 'senarai pilihan terminal', (payload) =>
+      this.fromSnapshotOrEmpty(SnapshotKind.door, {} as OptionSets, (payload) =>
         payload['options'] === null || payload['options'] === undefined
           ? {}
           : (payload['options'] as OptionSets),
@@ -438,10 +467,11 @@ export class AgentProxyDriver implements TerminalDriver {
   };
 
   attendance = {
+    /** Nullable in the contract, so an unswept connector answers null rather than erroring. */
     mode: (): Promise<AttendanceModeSetting | null> =>
-      this.fromSnapshot(
+      this.fromSnapshotOrEmpty(
         SnapshotKind.attendance,
-        'mod kehadiran',
+        null,
         (payload) => payload as unknown as AttendanceModeSetting | null,
       ),
     setMode: (mode: AttendanceModeSetting['mode']): Promise<WriteAck> =>
@@ -456,8 +486,16 @@ export class AgentProxyDriver implements TerminalDriver {
   lifecycle = {
     reboot: (): Promise<WriteAck> =>
       enqueue(this.device.id, CommandKind.reboot, JSON.stringify({})),
+    /**
+     * Empty before the first sweep, not a refusal.
+     *
+     * The contract returns a list, and "no slots reported yet" is expressible as an empty one — so
+     * throwing here was wrong. It rendered a red error strip across the push tab for a connector
+     * that had simply not finished its first sweep, which is a waiting state and not a fault. The
+     * note on the tab explains the wait; the screen does not need an error to say it.
+     */
     callbackTargets: (): Promise<CallbackTarget[]> =>
-      this.fromSnapshot(SnapshotKind.push, 'sasaran panggil balik', (payload) =>
+      this.fromSnapshotOrEmpty(SnapshotKind.push, [], (payload) =>
         Array.isArray(payload) ? (payload as CallbackTarget[]) : [],
       ),
     /**
