@@ -1,3 +1,4 @@
+import { AGENT_VERSION } from '@attendance/shared';
 import { z } from 'zod';
 
 /**
@@ -96,7 +97,15 @@ export type AgentConfig = z.infer<typeof schema> & {
   version: string;
 };
 
-export const AGENT_VERSION = '0.1.0';
+/**
+ * Re-exported rather than declared here.
+ *
+ * It moved to `@attendance/shared` because the cloud needs the same value: it compares what a
+ * connector reports against what this installation would install, which is how the update button
+ * knows whether a site is behind. Two copies of a version number is one copy that disagrees, and
+ * the one that disagrees decides whether somebody is told their site is out of date.
+ */
+export { AGENT_VERSION };
 
 let cached: AgentConfig | null = null;
 

@@ -4,6 +4,7 @@ import {
   agentEventBatchSchema,
   agentHeartbeatSchema,
   agentSnapshotBatchSchema,
+  AGENT_VERSION,
   type AgentCommandItem,
   type AgentDeviceAssignment,
   type AgentEnrolReply,
@@ -237,8 +238,24 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         );
       }
 
+      /**
+       * Self-update state, in both directions on this one request.
+       *
+       * The connector reports a failure if it had one, and learns whether an operator has asked it
+       * to update. Success is not reported and does not need to be: a connector that updated has
+       * already exited, systemd brought it back on the new code, and `body.version` above is the
+       * proof. That is also what clears the request — matching the target means there is nothing
+       * left to ask for, so a stale request cannot cause a second pointless rebuild.
+       */
+      const update = await settleUpdate(agent.id, body.version, body.updateError ?? null);
+
       reply.header('cache-control', 'no-store');
-      return { now: new Date().toISOString(), devices: await rosterFor(agent.id) };
+      return {
+        now: new Date().toISOString(),
+        devices: await rosterFor(agent.id),
+        ...(update.requested ? { updateRequested: true } : {}),
+        targetVersion: AGENT_VERSION,
+      };
     },
   );
 
@@ -370,6 +387,58 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       return { ok: true };
     },
   );
+}
+
+/**
+ * Reconciles a connector's self-update state on each heartbeat.
+ *
+ * Three things happen here, and the order matters.
+ *
+ * A reported failure is stored, because the connector is the only thing that knows why: `git pull`
+ * refused, the build failed, the compiled entry point was missing. Each has a different answer and
+ * none is visible from the cloud.
+ *
+ * A request is cleared once the reported build matches what this installation would install. That
+ * is the only success signal there is, and it is a better one than a flag the connector sets: a
+ * connector that recorded success and then failed to start would read as updated while running
+ * nothing. Here, "updated" means "reporting the new version", which cannot be claimed falsely.
+ *
+ * Clearing it that way also makes a stale request harmless. Pressing the button twice, or a request
+ * that outlived the update it asked for, resolves to nothing rather than a second rebuild and
+ * restart of a site that was already current.
+ */
+async function settleUpdate(
+  agentId: number,
+  reportedVersion: string,
+  reportedError: string | null,
+): Promise<{ requested: boolean }> {
+  const prisma = db();
+  const row = await prisma.deviceAgent.findUnique({
+    where: { id: agentId },
+    select: { updateRequestedAt: true, updateError: true },
+  });
+  if (row === null) return { requested: false };
+
+  const current = reportedVersion === AGENT_VERSION;
+  const data: Prisma.DeviceAgentUpdateInput = {};
+
+  if (reportedError !== null) {
+    data.updateError = reportedError.slice(0, 500);
+    data.updateErrorAt = new Date();
+  } else if (row.updateError !== null && current) {
+    // The condition it described is over, so the words go with it.
+    data.updateError = null;
+    data.updateErrorAt = null;
+  }
+
+  const requested = row.updateRequestedAt !== null && !current;
+  if (row.updateRequestedAt !== null && current) data.updateRequestedAt = null;
+
+  if (Object.keys(data).length > 0) {
+    await prisma.deviceAgent.update({ where: { id: agentId }, data }).catch(() => undefined);
+  }
+
+  return { requested };
 }
 
 /**

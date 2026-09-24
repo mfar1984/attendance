@@ -155,6 +155,17 @@ export const agentHeartbeatSchema = z.strictObject({
   /** Events held on disk that have not been accepted yet. A rising number means trouble. */
   spooled: z.number().int().nonnegative(),
   devices: z.array(agentDeviceReportSchema).max(200),
+
+  /**
+   * Why the last requested self-update did not happen.
+   *
+   * Reported here rather than through a separate endpoint, because the success case has no report
+   * to make: a connector that updated successfully has already exited, and systemd brought it back
+   * on the new code — so the proof is the `version` field above changing. Only failure needs
+   * words, and a failed update leaves the process running, which means the next heartbeat can
+   * carry them.
+   */
+  updateError: z.string().max(500).nullable().optional(),
 });
 
 export type AgentHeartbeat = z.infer<typeof agentHeartbeatSchema>;
@@ -191,6 +202,23 @@ export type AgentCommandOutcome = z.infer<typeof agentCommandOutcomeSchema>;
  * and grouping by endpoint would leave the screen assembling a picture from parts that arrived at
  * different times.
  */
+/**
+ * The connector build this repository contains.
+ *
+ * Shared rather than declared in `apps/agent`, because both sides need it and for different
+ * reasons. The agent reports it on every heartbeat; the cloud compares that report against this
+ * value to answer "is that site running old code".
+ *
+ * That comparison is why "latest" is defined as *what this installation would install* rather than
+ * a number fetched from anywhere. The cloud serves the installer and the update runs `git pull` in
+ * the same repository, so this constant is the only honest definition of current — and it cannot
+ * disagree with reality the way a hardcoded remote version could.
+ *
+ * Raise it when a change to `apps/agent` is worth pushing out. Leaving it alone means the update
+ * button stays grey, which is correct for a cloud-only change.
+ */
+export const AGENT_VERSION = '0.1.0';
+
 export const SnapshotKind = {
   identity: 'identity',
   clock: 'clock',
@@ -295,6 +323,29 @@ export interface AgentHeartbeatReply {
   now: string;
   /** Terminals this agent serves, with what it needs to reach them. */
   devices: AgentDeviceAssignment[];
+
+  /**
+   * An operator has asked this connector to update itself.
+   *
+   * Carried here rather than as a queued command, and that is a shape decision. `device_commands`
+   * is keyed on a terminal, but an update is about the connector — so an agent with no terminals
+   * assigned could not be sent one, which is exactly the connector most likely to be freshly
+   * installed and behind.
+   *
+   * It also survives naturally. The flag lives on the agent row, so a connector that was offline
+   * when the operator pressed the button finds the request waiting on its next heartbeat rather
+   * than needing the request re-queued.
+   */
+  updateRequested?: boolean;
+
+  /**
+   * The build the cloud would install, so the connector can decide rather than obey.
+   *
+   * A connector already running this version does nothing and reports that, which makes a stale
+   * request harmless: pressing the button twice, or a request that outlived the update it asked
+   * for, cannot cause a second pointless rebuild and restart.
+   */
+  targetVersion?: string;
 }
 
 export interface AgentCommandItem {

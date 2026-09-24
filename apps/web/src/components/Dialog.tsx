@@ -113,6 +113,7 @@ export function DialogFooter({
   disabled,
   submitLabel,
   closeLabel,
+  submitTitle,
 }: {
   onClose: () => void;
   onSubmit?: () => void;
@@ -126,6 +127,14 @@ export function DialogFooter({
    */
   submitLabel?: ReactNode;
   closeLabel?: ReactNode;
+  /**
+   * Why the submit button is disabled, as a tooltip on the button itself.
+   *
+   * A string rather than a node, because `title` cannot hold one. Added because a greyed-out action
+   * with no explanation reads as a permission somebody lacks, which sends them to ask for one they
+   * already have — the same rule `RowAction` has always followed with its `label`.
+   */
+  submitTitle?: string;
 }): ReactNode {
   return (
     /*
@@ -144,7 +153,11 @@ export function DialogFooter({
         {closeLabel ?? <T k="dialog.cancel" />}
       </Button>
       {onSubmit !== undefined && (
-        <Button onClick={onSubmit} disabled={busy === true || disabled === true}>
+        <Button
+          onClick={onSubmit}
+          disabled={busy === true || disabled === true}
+          {...(submitTitle === undefined ? {} : { title: submitTitle })}
+        >
           {submitLabel ?? <T k="dialog.save" />}
         </Button>
       )}

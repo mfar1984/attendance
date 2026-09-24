@@ -6279,6 +6279,39 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
   'agent.deleted': 'Connector “{name}” was removed.',
   'agent.error.delete': 'Could not remove the connector',
 
+  // Connector details, and the self-update.
+  'agent.row.view': 'View connector details',
+  'agent.detail.title': 'Connector details',
+  'agent.detail.subtitle':
+    'What this connector reports about itself, and whether it is running the current build.',
+
+  'agent.detail.reported': 'Reported by the connector',
+  'agent.detail.target': 'This installation would install',
+  'agent.build.current': 'CURRENT',
+  'agent.build.outdated': 'OUT OF DATE',
+  'agent.build.unknown': 'NOT REPORTED',
+
+  'agent.detail.lan': 'LAN address the terminals point at',
+  'agent.detail.publicAddress': 'Last public address',
+  'agent.detail.enrolled': 'Enrolled',
+  'agent.detail.lastSeen': 'Seen',
+  'agent.detail.devices': 'Terminals served',
+  'agent.detail.queued': 'Commands queued',
+  'agent.detail.never': 'never',
+
+  'agent.update.action': 'Update connector',
+  'agent.update.disabled.current':
+    'Already on build {version}, which is what this installation would install.',
+  'agent.update.disabled.unknown':
+    'This connector has not reported its build, so there is nothing to compare. Run the installer at that site first.',
+  'agent.update.disabled.pending': 'A request is already waiting to be collected.',
+  'agent.update.note':
+    'The connector collects this request on its next heartbeat, builds the new code, then exits so systemd starts it again. No inbound port is opened and no root access is needed. If the build fails it stays on the old code and reports the reason here.',
+  'agent.update.requested': 'Update requested. The connector will collect it on its next heartbeat.',
+  'agent.update.pending': 'An update request has been waiting since {time}.',
+  'agent.update.failed': 'The last update failed {time}: {reason}',
+  'agent.error.update': 'Could not request the update',
+
   // The device editor, when the terminal is reached through a connector rather than dialled.
   'device.editor.viaAgent.read':
     'This terminal is served by the “{agent}” connector, so the values below come from the connector’s last sweep rather than a live read. The timestamp above says when they were taken.',

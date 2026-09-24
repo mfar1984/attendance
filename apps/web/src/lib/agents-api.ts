@@ -31,7 +31,30 @@ export interface AgentRow {
   devices: number;
   /** Commands waiting to be collected. A rising number against terminals means trouble. */
   queued: number;
+
+  /** The build this installation would install, so "out of date" has one definition. */
+  targetVersion: string;
+  /**
+   * `current` | `outdated` | `unknown`.
+   *
+   * `unknown` is a connector that has never reported a version, and it is deliberately not
+   * `outdated`: those call for different actions, and offering to update a site that has never
+   * checked in sends somebody to fix the wrong thing.
+   */
+  buildStatus: string;
+
+  /** Set while a self-update is waiting to be collected. */
+  updateRequestedAt: string | null;
+  /** Why the last attempt did not happen, in the connector's own words. */
+  updateError: string | null;
+  updateErrorAt: string | null;
 }
+
+export const AGENT_BUILD_LABELS: Record<string, LabelKey> = {
+  current: 'agent.build.current',
+  outdated: 'agent.build.outdated',
+  unknown: 'agent.build.unknown',
+};
 
 /**
  * The reply to creating or reissuing. Carries the token, and nothing else does.
@@ -89,4 +112,14 @@ export const agentsApi = {
    * live connector would turn a working site into 401s with nothing naming the cause.
    */
   remove: (id: number) => api.delete<{ ok: true }>(`/api/agents/${String(id)}`),
+
+  /**
+   * Asks the connector to update itself on its next heartbeat.
+   *
+   * Records a request; nothing happens synchronously. The connector rebuilds and exits, and systemd
+   * restarts it on the new code — so the screen learns it worked by the reported version changing,
+   * which is a fact that cannot be claimed falsely.
+   */
+  update: (id: number) =>
+    api.post<{ requested: true; targetVersion: string }>(`/api/agents/${String(id)}/update`),
 };

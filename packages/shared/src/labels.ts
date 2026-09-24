@@ -4902,6 +4902,66 @@ export const LABELS = {
   'agent.error.delete': 'Gagal membuang connector',
 
   // -------------------------------------------------------------------------
+  // Butiran connector, dan kemas kini sendiri
+  // -------------------------------------------------------------------------
+  'agent.row.view': 'Lihat butiran connector',
+  'agent.detail.title': 'Butiran connector',
+  'agent.detail.subtitle':
+    'Apa yang connector ini laporkan tentang dirinya, dan sama ada ia menjalankan binaan terkini.',
+
+  /*
+   * No group headings here, and two were written before being removed.
+   *
+   * The dialog holds eight rows. Splitting them under `Binaan` and `Kebolehcapaian` would put more
+   * headings on screen than it saved anybody reading, and a heading over two rows reads as a
+   * section somebody forgot to fill.
+   */
+  'agent.detail.reported': 'Dilaporkan oleh connector',
+  'agent.detail.target': 'Pemasangan ini akan pasang',
+  /**
+   * Three states, and `unknown` is not a softer `outdated`.
+   *
+   * A connector that has never reported a version has never checked in, so offering to update it
+   * would send somebody to fix the wrong thing — the installer has not run, or it cannot reach the
+   * cloud at all.
+   */
+  'agent.build.current': 'TERKINI',
+  'agent.build.outdated': 'LAPUK',
+  'agent.build.unknown': 'BELUM DILAPORKAN',
+
+  'agent.detail.lan': 'Alamat LAN yang terminal dituding',
+  'agent.detail.publicAddress': 'Alamat awam terakhir',
+  'agent.detail.enrolled': 'Didaftar',
+  'agent.detail.lastSeen': 'Dilihat',
+  'agent.detail.devices': 'Terminal dilayan',
+  'agent.detail.queued': 'Arahan dalam giliran',
+  'agent.detail.never': 'belum pernah',
+
+  'agent.update.action': 'Kemas kini connector',
+  /**
+   * On the disabled button, so the reason is read at the moment somebody reaches for it.
+   *
+   * Three reasons because three things stop it, and they need different responses: nothing to do,
+   * nothing installed yet, or an attempt already waiting.
+   */
+  'agent.update.disabled.current':
+    'Sudah pada binaan {version}, iaitu yang pemasangan ini akan pasang.',
+  'agent.update.disabled.unknown':
+    'Connector ini belum melaporkan binaannya, jadi tiada apa untuk dibandingkan. Jalankan pemasang di tapak itu dahulu.',
+  'agent.update.disabled.pending': 'Permintaan sudah menunggu untuk dikutip.',
+  /**
+   * What actually happens, stated because none of it is instant and the screen would otherwise look
+   * broken while it works.
+   */
+  'agent.update.note':
+    'Connector mengutip permintaan ini pada heartbeat berikutnya, membina kod baharu, kemudian keluar supaya systemd memulakannya semula. Tiada port masuk dibuka dan tiada akses root diperlukan. Kalau bina gagal, ia kekal pada kod lama dan melaporkan sebabnya di sini.',
+  'agent.update.requested': 'Kemas kini diminta. Connector akan mengutipnya pada heartbeat berikutnya.',
+  'agent.update.pending': 'Permintaan kemas kini menunggu sejak {time}.',
+  /** The connector's own words, because it is the only thing that knows why. */
+  'agent.update.failed': 'Kemas kini terakhir gagal {time}: {reason}',
+  'agent.error.update': 'Gagal meminta kemas kini',
+
+  // -------------------------------------------------------------------------
   // Tetapan › Integrasi › Token API
   // -------------------------------------------------------------------------
   'token.title': 'Token API',

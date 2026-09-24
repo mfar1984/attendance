@@ -2,6 +2,7 @@ import {
   Activity,
   Clock,
   Download,
+  Eye,
   HeartPulse,
   KeyRound,
   Pencil,
@@ -40,6 +41,7 @@ import {
 import { RevealSecret } from '../components/RevealSecret';
 import { Badge, Button, Field, StatTile } from '../components/ui';
 import {
+  AGENT_BUILD_LABELS,
   AGENT_CREDENTIAL_PATH,
   AGENT_STATUS_LABELS,
   agentInstallCommand,
@@ -1525,6 +1527,7 @@ function ConnectorPanel(): ReactNode {
   );
   const [revoking, setRevoking] = useState<AgentRow | null>(null);
   const [removing, setRemoving] = useState<AgentRow | null>(null);
+  const [viewing, setViewing] = useState<AgentRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1705,6 +1708,17 @@ function ConnectorPanel(): ReactNode {
             </td>
             <td className="px-2 py-2.5 pr-4">
               <RowActions>
+                {/*
+                  Blue, because it reads rather than changes. The build comparison lives in here
+                  rather than as another column: it needs both version numbers and an explanation of
+                  what updating does, which is more than a cell can carry.
+                */}
+                <RowAction
+                  icon={<Eye className="size-4" aria-hidden />}
+                  label={t('agent.row.view')}
+                  tone="view"
+                  onClick={() => setViewing(row)}
+                />
                 <RowAction
                   icon={<KeyRound className="size-4" aria-hidden />}
                   label={t('agent.row.reissue')}
@@ -1820,6 +1834,18 @@ function ConnectorPanel(): ReactNode {
         </Dialog>
       )}
 
+      {viewing !== null && (
+        <AgentDetailDialog
+          row={viewing}
+          onClose={() => setViewing(null)}
+          onUpdated={async (message) => {
+            setViewing(null);
+            setNotice(message);
+            await load();
+          }}
+        />
+      )}
+
       {removing !== null && (
         <Dialog
           title={<T k="agent.delete.title" />}
@@ -1841,6 +1867,172 @@ function ConnectorPanel(): ReactNode {
         </Dialog>
       )}
     </>
+  );
+}
+
+/**
+ * What one connector reports about itself, and the one action that changes it.
+ *
+ * A dialog rather than an expanding row, because the build comparison is the reason somebody opens
+ * it and that comparison needs both numbers side by side with room for the explanation of what
+ * pressing the button will do.
+ */
+function AgentDetailDialog({
+  row,
+  onClose,
+  onUpdated,
+}: {
+  row: AgentRow;
+  onClose: () => void;
+  onUpdated: (message: string) => Promise<void>;
+}): ReactNode {
+  const { t } = useLabels();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const pending = row.updateRequestedAt !== null;
+
+  /*
+   * Three reasons the button is off, and each names a different next step: nothing to do, nothing
+   * installed yet, or an attempt already waiting. One shared "cannot update" would leave the
+   * operator guessing which applies.
+   */
+  const blocked =
+    row.buildStatus === 'current'
+      ? t('agent.update.disabled.current', { version: row.targetVersion })
+      : row.buildStatus === 'unknown'
+        ? t('agent.update.disabled.unknown')
+        : pending
+          ? t('agent.update.disabled.pending')
+          : null;
+
+  async function requestUpdate(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      await agentsApi.update(row.id);
+      await onUpdated(t('agent.update.requested'));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('agent.error.update'));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      title={<T k="agent.detail.title" />}
+      titleText={t('agent.detail.title')}
+      description={<T k="agent.detail.subtitle" />}
+      width="lg"
+      onClose={onClose}
+    >
+      <div className="space-y-4">
+        <Feedback error={error} />
+
+        <div>
+          <p className="font-medium text-slate-800">{row.name}</p>
+          <p className="text-xs text-slate-500">{row.agentKey}</p>
+        </div>
+
+        <KeyValueList>
+          <KeyValue
+            label={<T k="agent.detail.reported" />}
+            value={row.version ?? <T k="agent.detail.never" />}
+            mono
+          />
+          <KeyValue label={<T k="agent.detail.target" />} value={row.targetVersion} mono />
+          <KeyValue
+            label={<T k="panel.column.status" />}
+            value={
+              <Badge
+                tone={
+                  row.buildStatus === 'current'
+                    ? 'success'
+                    : row.buildStatus === 'outdated'
+                      ? 'warning'
+                      : 'neutral'
+                }
+                className="uppercase"
+              >
+                <TEnum k={AGENT_BUILD_LABELS[row.buildStatus]} fallback={row.buildStatus} />
+              </Badge>
+            }
+          />
+          <KeyValue
+            label={<T k="agent.detail.lan" />}
+            value={
+              row.lanHost === null ? (
+                <T k="agent.row.noAddress" />
+              ) : (
+                `${row.lanHost}${row.lanPort === null ? '' : `:${String(row.lanPort)}`}`
+              )
+            }
+            mono
+          />
+          <KeyValue label={<T k="agent.detail.devices" />} value={row.devices} />
+          <KeyValue label={<T k="agent.detail.queued" />} value={row.queued} />
+          {/* When the installer actually ran, which is not the same as when the row was created. */}
+          <KeyValue
+            label={<T k="agent.detail.enrolled" />}
+            value={
+              row.enrolledAt === null ? <T k="agent.detail.never" /> : formatDateTime(row.enrolledAt)
+            }
+          />
+          <KeyValue
+            label={<T k="agent.detail.lastSeen" />}
+            value={
+              row.lastSeenAt === null ? <T k="agent.detail.never" /> : formatDateTime(row.lastSeenAt)
+            }
+          />
+          <KeyValue
+            label={<T k="agent.detail.publicAddress" />}
+            value={row.lastAddress ?? <T k="agent.detail.never" />}
+            mono
+          />
+        </KeyValueList>
+
+        {/*
+          The failure is shown above the note, because it is what the operator came back for.
+          A previous attempt's reason beside a fresh button is the difference between "try again"
+          and "go and look at the machine".
+        */}
+        {row.updateError !== null && (
+          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+            <T
+              k="agent.update.failed"
+              vars={{
+                time: row.updateErrorAt === null ? '' : formatDateTime(row.updateErrorAt),
+                reason: row.updateError,
+              }}
+            />
+          </PanelNote>
+        )}
+
+        {pending && row.updateError === null && (
+          <PanelNote tone="info">
+            <T
+              k="agent.update.pending"
+              vars={{ time: formatDateTime(row.updateRequestedAt ?? '') }}
+            />
+          </PanelNote>
+        )}
+
+        <div className="pb-2">
+          <PanelNote>
+            <T k="agent.update.note" />
+          </PanelNote>
+        </div>
+
+        <DialogFooter
+          onClose={onClose}
+          onSubmit={() => void requestUpdate()}
+          busy={busy}
+          disabled={blocked !== null}
+          submitLabel={<T k="agent.update.action" />}
+          {...(blocked === null ? {} : { submitTitle: blocked })}
+        />
+      </div>
+    </Dialog>
   );
 }
 

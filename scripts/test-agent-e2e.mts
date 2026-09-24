@@ -19,7 +19,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PunchDirection, RawEventKind, VerifyMethod } from '@attendance/shared';
+import { AGENT_VERSION, PunchDirection, RawEventKind, VerifyMethod } from '@attendance/shared';
 
 import { buildApp } from '../apps/server/src/app.js';
 import { encryptSecret } from '../apps/server/src/crypto.js';
@@ -796,6 +796,91 @@ try {
     'the connector recognises the kind rather than failing it as unknown',
     pushAfter.status === 'sent' || (pushAfter.result ?? '').includes('Slot push'),
   );
+
+  // -------------------------------------------------------------------------
+  /*
+   * The self-update handshake, which is the only cloud-to-connector instruction that is not a queued
+   * command.
+   *
+   * It cannot be one: `device_commands` is keyed on a terminal, and a connector with no terminals
+   * assigned is exactly the one most likely to be freshly installed and behind. So the request lives
+   * on the agent row and rides the heartbeat reply.
+   *
+   * Three properties are asserted, and the third is the one that would silently rot.
+   */
+  section('a connector learns it should update itself, and reports failure in words');
+
+  await db().deviceAgent.update({
+    where: { id: agentRow.id },
+    data: { updateRequestedAt: new Date(), version: '0.0.1' },
+  });
+
+  const asked = await cloud.heartbeat({
+    version: '0.0.1',
+    lanHost: '192.168.99.10',
+    lanPort: 18080,
+    spooled: 0,
+    devices: [],
+  });
+  check('the request reaches the connector on its heartbeat', asked.ok);
+  if (asked.ok) {
+    check('and it is told which build to move to', asked.value.targetVersion === AGENT_VERSION);
+    check('and asked to act', asked.value.updateRequested === true);
+  }
+
+  /*
+   * A connector already on the target is told nothing, which is what makes a stale request harmless.
+   * Pressing the button twice, or a request that outlived the update it asked for, must not rebuild
+   * and restart a site that is already current.
+   */
+  const current = await cloud.heartbeat({
+    version: AGENT_VERSION,
+    lanHost: '192.168.99.10',
+    lanPort: 18080,
+    spooled: 0,
+    devices: [],
+  });
+  check('a connector already on the target build is not asked', current.ok && current.value.updateRequested !== true);
+
+  const settled = await db().deviceAgent.findUniqueOrThrow({ where: { id: agentRow.id } });
+  check('and the request is cleared by the version matching, not by a flag it set itself', settled.updateRequestedAt === null);
+
+  /*
+   * The failure path. A connector that could not build stays running on the old code, so it is still
+   * able to say why — and those words are the only thing that distinguishes "try again" from "go and
+   * look at the machine".
+   */
+  await db().deviceAgent.update({
+    where: { id: agentRow.id },
+    data: { updateRequestedAt: new Date(), version: '0.0.1' },
+  });
+
+  const failed = await cloud.heartbeat({
+    version: '0.0.1',
+    lanHost: '192.168.99.10',
+    lanPort: 18080,
+    spooled: 0,
+    devices: [],
+    updateError: 'Bina pakej gagal. npx tsc: exit 2',
+  });
+  check('a reported failure is accepted', failed.ok);
+
+  const withError = await db().deviceAgent.findUniqueOrThrow({ where: { id: agentRow.id } });
+  check("the connector's own reason is stored", withError.updateError === 'Bina pakej gagal. npx tsc: exit 2');
+  check('and stamped', withError.updateErrorAt !== null);
+  check('while the request stays, because it has not happened yet', withError.updateRequestedAt !== null);
+
+  // Recovering clears the words with the condition they described.
+  await cloud.heartbeat({
+    version: AGENT_VERSION,
+    lanHost: '192.168.99.10',
+    lanPort: 18080,
+    spooled: 0,
+    devices: [],
+  });
+  const recoveredAgent = await db().deviceAgent.findUniqueOrThrow({ where: { id: agentRow.id } });
+  check('a later success clears the reason with the condition', recoveredAgent.updateError === null);
+  check('and clears the request', recoveredAgent.updateRequestedAt === null);
 
   await releaseAllClients();
 

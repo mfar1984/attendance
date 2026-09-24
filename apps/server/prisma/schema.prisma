@@ -378,6 +378,31 @@ model DeviceAgent {
   /// somebody spends an afternoon on a bug that was fixed.
   version String? @db.VarChar(32)
 
+  /// When an operator asked this connector to update itself.
+  ///
+  /// Not a queued command, because `device_commands` is keyed on a terminal and an update is about
+  /// the connector — an agent with no devices assigned could not be sent one, which is exactly the
+  /// connector most likely to be freshly installed and behind. It also survives better here: a
+  /// connector that was offline when the button was pressed finds the request on its next
+  /// heartbeat rather than needing somebody to notice and re-queue it.
+  ///
+  /// Cleared once `version` matches what this installation would install, which is what makes
+  /// pressing the button twice harmless.
+  updateRequestedAt DateTime?
+
+  /// Why the last attempt did not happen, in the connector's own words.
+  ///
+  /// There is deliberately no matching `updateCompletedAt`. A successful update has nothing to
+  /// report: the connector exits, systemd brings it back on the new code, and the proof is
+  /// `version` changing. A separate success flag would be a second source for one fact, and the
+  /// two can disagree — a connector that recorded success and then failed to start would read as
+  /// updated while running nothing.
+  ///
+  /// Only failure needs words, because a failed update leaves the old process running and
+  /// therefore able to speak.
+  updateError   String?   @db.VarChar(500)
+  updateErrorAt DateTime?
+
   /// Last heartbeat, and the public address it arrived from.
   ///
   /// This is the agent's own liveness, deliberately distinct from `Device.lastSeenAt`. Without

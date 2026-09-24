@@ -58,6 +58,7 @@ export {
 
 export {
   AGENT_EVENT_BATCH_MAX,
+  AGENT_VERSION,
   agentCommandOutcomeSchema,
   agentDeviceReportSchema,
   agentEnrolSchema,

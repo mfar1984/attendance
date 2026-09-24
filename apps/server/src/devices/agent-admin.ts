@@ -1,4 +1,4 @@
-import { AgentStatus } from '@attendance/shared';
+import { AGENT_VERSION, AgentStatus } from '@attendance/shared';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
@@ -84,6 +84,21 @@ export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
             ...agent,
             devices: _count.devices,
             queued: queueByAgent.get(agent.id) ?? 0,
+            /**
+             * The build this installation would install, and whether the site matches it.
+             *
+             * Derived here rather than compared on the screen, so "out of date" has one definition.
+             * A connector that has never reported a version is `unknown` and not `outdated`: those
+             * call for different actions, and telling somebody to update a site that has never
+             * checked in sends them to fix the wrong thing.
+             */
+            targetVersion: AGENT_VERSION,
+            buildStatus:
+              agent.version === null
+                ? 'unknown'
+                : agent.version === AGENT_VERSION
+                  ? 'current'
+                  : 'outdated',
           }),
         ),
       );
@@ -194,6 +209,69 @@ export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
 
       await revokeAgent(agent.id);
       return { ok: true };
+    },
+  );
+
+  /**
+   * Asks a connector to update itself.
+   *
+   * Records a request rather than doing anything. The connector collects it on its next heartbeat,
+   * rebuilds, and exits so systemd restarts it on the new code — no inbound port, no VPN, and no
+   * privileged helper, because `Restart=always` in its service unit means exiting *is* restarting.
+   *
+   * ## Why this is a flag and not a queued command
+   *
+   * `device_commands` is keyed on a terminal, and this is about the connector. An agent with no
+   * devices assigned could not be sent one — and that is exactly the connector most likely to be
+   * freshly installed and behind. The flag also survives: a connector that was offline when the
+   * button was pressed finds the request on its next heartbeat instead of somebody having to notice
+   * and ask again.
+   *
+   * ## Pressing it twice is harmless
+   *
+   * The request clears when the reported version matches the target, so a connector that is already
+   * current resolves the request and does nothing. That is also the only success signal there is,
+   * and a better one than a flag the connector sets: a connector that recorded success and then
+   * failed to start would read as updated while running nothing.
+   */
+  app.post(
+    '/api/agents/:id/update',
+    { preHandler: requirePermission('settings.devices', 'edit') },
+    async (request) => {
+      const agent = await requireAgent(idParam(request.params));
+
+      if (agent.status !== AgentStatus.active) {
+        throw conflict(
+          `"${agent.name}" belum mendaftar, jadi tiada apa di sana untuk dikemas kini. ` +
+            'Jalankan pemasang di tapak itu dahulu.',
+        );
+      }
+
+      if (agent.version === AGENT_VERSION) {
+        /*
+         * Refused rather than accepted as a no-op, because the screen already knows this — the
+         * button is meant to be disabled. Reaching here means the page is stale, and saying so is
+         * more useful than queueing a request that resolves to nothing.
+         */
+        throw conflict(
+          `"${agent.name}" sudah menjalankan binaan ${AGENT_VERSION}, iaitu yang pemasangan ini ` +
+            'akan pasang. Tiada apa untuk dikemas kini.',
+        );
+      }
+
+      await db().deviceAgent.update({
+        where: { id: agent.id },
+        // The previous failure is cleared on request rather than left beside a pending attempt,
+        // where it would read as the reason this one failed.
+        data: { updateRequestedAt: new Date(), updateError: null, updateErrorAt: null },
+      });
+
+      logger().info(
+        { agentId: agent.id, from: agent.version, to: AGENT_VERSION },
+        'Operator requested a connector self-update',
+      );
+
+      return { requested: true, targetVersion: AGENT_VERSION };
     },
   );
 

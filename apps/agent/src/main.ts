@@ -10,6 +10,7 @@ import { createListener } from './listener.js';
 import { logger } from './logging.js';
 import { Puller } from './puller.js';
 import { Roster } from './roster.js';
+import { selfUpdate } from './selfupdate.js';
 import { Snapshotter } from './snapshots.js';
 import { Spool } from './spool.js';
 import { SiteState } from './state.js';
@@ -73,6 +74,51 @@ const snapshotter = new Snapshotter(cloud, roster);
 const { app, stats } = createListener(config, roster, spool, state);
 
 /**
+ * Assigned once the timers are created, and declared here so shutdown can always clear them.
+ *
+ * `let` with an empty default rather than `const` at the point of creation, because the first
+ * heartbeat runs *before* the timers exist — and that heartbeat can trigger a self-update, which
+ * shuts down. A `const` declared later would put this in its temporal dead zone and turn the very
+ * first update after an install into a crash.
+ */
+let timers: NodeJS.Timeout[] = [];
+
+/** Carried on the next heartbeat. Null once the cloud has it. */
+let updateError: string | null = null;
+
+/**
+ * Guards re-entry into the update.
+ *
+ * A build can outlast the heartbeat interval, and two `npm ci` runs in one clone is a broken
+ * install rather than a slow one.
+ */
+let updating = false;
+
+/**
+ * Ordered shutdown.
+ *
+ * The listener closes first so no further event is accepted, then the forwarder is given one last
+ * chance to deliver what is spooled. The spool is durable either way, so this is about latency
+ * rather than safety — a restart during a deployment should not leave a site an hour behind.
+ *
+ * Also the exit path for a self-update. `Restart=always` in the service unit means exiting *is*
+ * restarting, which is why this connector needs no permission to restart itself and no privileged
+ * helper to do it for it.
+ */
+async function shutdown(reason: string): Promise<void> {
+  log.info({ reason, spooled: spool.count() }, 'Shutting down');
+
+  for (const timer of timers) clearInterval(timer);
+  await app.close();
+  await forwarder.drain().catch(() => undefined);
+  await roster.closeAll();
+  spool.close();
+
+  log.info({ stats }, 'Connector stopped');
+  process.exit(0);
+}
+
+/**
  * One heartbeat: report what we know, take back the roster and the cloud's clock.
  *
  * The roster is applied before anything else uses it, so a terminal added on the devices screen
@@ -96,6 +142,14 @@ async function heartbeat(): Promise<void> {
     lanPort: config.LISTEN_PORT,
     spooled: spool.count(),
     devices,
+    /*
+     * Carried until the cloud has it, then cleared locally.
+     *
+     * A failed update has to survive the heartbeat that reports it failing, because that heartbeat
+     * can itself fail — and an error dropped on its first delivery attempt leaves the screen saying
+     * an update was requested and nothing else.
+     */
+    ...(updateError === null ? {} : { updateError }),
   };
 
   const result = await cloud.heartbeat(payload);
@@ -103,6 +157,9 @@ async function heartbeat(): Promise<void> {
     log.warn({ failure: result.failure }, 'Heartbeat failed');
     return;
   }
+
+  // Delivered, so stop repeating it. The cloud holds it now.
+  updateError = null;
 
   /*
    * The cloud's clock, recorded before the roster.
@@ -127,6 +184,48 @@ async function heartbeat(): Promise<void> {
      * worth seeing, because its own log timestamps are then misleading too.
      */
     log.warn({ driftSeconds: drift }, "This machine's own clock disagrees with the cloud");
+  }
+
+  /*
+   * Self-update last, and inside the heartbeat rather than on a timer of its own.
+   *
+   * Last because everything above is what the site depends on — the roster, the clock — and an
+   * update that takes minutes must not delay any of it. Inside the heartbeat because that is the
+   * only place the request arrives, and a separate timer would need its own copy of the decision
+   * about whether one is pending.
+   *
+   * `updating` guards re-entry. A build can outlast the heartbeat interval, and two `npm ci` runs
+   * in the same clone is a broken install rather than a slow one.
+   */
+  if (result.value.updateRequested === true && !updating) {
+    updating = true;
+    try {
+      const outcome = await selfUpdate(result.value.targetVersion ?? config.version);
+      updateError = outcome.error;
+
+      if (outcome.restart) {
+        /*
+         * Exit rather than restart, because this process has no permission to restart anything —
+         * and does not need it. `Restart=always` in the unit brings it back on the new code five
+         * seconds later.
+         *
+         * The listener closes first through the same shutdown path a deployment uses, so nothing is
+         * accepted that this process will not live to spool.
+         */
+        log.info('Exiting so systemd restarts this connector on the new build');
+        await shutdown('update');
+        return;
+      }
+
+      /*
+       * Reported on the next heartbeat rather than this one. The request is still set on the cloud,
+       * so the next beat carries the reason and the screen stops saying an update is pending with no
+       * explanation.
+       */
+      if (outcome.error !== null) log.error({ detail: outcome.error }, 'Self-update did not complete');
+    } finally {
+      updating = false;
+    }
   }
 }
 
@@ -183,7 +282,7 @@ log.info(
   'Connector started',
 );
 
-const timers = [
+timers = [
   every(config.HEARTBEAT_SECONDS, 'heartbeat', heartbeat),
   every(config.PULL_SECONDS, 'pull', () => puller.runOnce()),
   every(5, 'forward', () => forwarder.drain()),
@@ -203,26 +302,8 @@ const timers = [
   every(config.SNAPSHOT_SECONDS, 'snapshots', () => snapshotter.runOnce()),
 ];
 
-/**
- * Ordered shutdown.
- *
- * The listener closes first so no further event is accepted, then the forwarder is given one last
- * chance to deliver what is spooled. The spool is durable either way, so this is about latency
- * rather than safety — a restart during a deployment should not leave a site an hour behind.
- */
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
-    void (async () => {
-      log.info({ signal, spooled: spool.count() }, 'Shutting down');
-
-      for (const timer of timers) clearInterval(timer);
-      await app.close();
-      await forwarder.drain().catch(() => undefined);
-      await roster.closeAll();
-      spool.close();
-
-      log.info({ stats }, 'Connector stopped');
-      process.exit(0);
-    })();
+    void shutdown(signal);
   });
 }
