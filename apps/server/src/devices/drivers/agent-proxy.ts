@@ -3,6 +3,7 @@ import {
   agentFaceRemoveArgs,
   agentPersonRemoveArgs,
   agentPersonUpsertArgs,
+  SnapshotKind,
 } from '@attendance/shared';
 import {
   DriverOperation,
@@ -34,6 +35,7 @@ import type { Device } from '@prisma/client';
 
 import { conflict } from '../../http.js';
 import { CommandKind, enqueue, enqueueReplacing } from '../driver/commands.js';
+import { snapshotOf } from '../snapshots.js';
 
 /**
  * A terminal this server cannot reach, reached through its on-site connector.
@@ -108,15 +110,92 @@ export class AgentProxyDriver implements TerminalDriver {
     );
   }
 
+  /**
+   * A value the connector last read from the terminal, rather than a refusal.
+   *
+   * This is what stopped the device editor being six tabs of empty fields. A browser request
+   * cannot wait for the connector's next poll, so it cannot be a live read — but it does not have
+   * to be nothing either. The connector sweeps its terminals on a timer and reports, and this
+   * returns the newest report.
+   *
+   * ## Three outcomes, and they are not the same
+   *
+   * Never reported means the connector has not swept yet, or has only just enrolled: the answer is
+   * to wait, and the message says so. Reported-but-failed means the terminal itself refused, and
+   * the connector's own reason is worth more than anything this layer could say. A stored value is
+   * returned even when the newest attempt failed, because last known settings beside a stale
+   * timestamp beat an empty tab — the screen carries the timestamp so nobody mistakes it for live.
+   */
+  private async fromSnapshot<T>(
+    kind: SnapshotKind,
+    what: string,
+    pick: (payload: Record<string, unknown>) => T,
+  ): Promise<T> {
+    const snapshot = await snapshotOf(this.device.id, kind);
+
+    if (snapshot === null || (snapshot.payload === null && snapshot.error === null)) {
+      throw conflict(
+        `Connector belum melaporkan ${what} untuk "${this.device.name}". Ia membaca terminal ` +
+          'pada pemasangnya sendiri, jadi ini terisi selepas sapuan pertama selesai.',
+      );
+    }
+
+    if (snapshot.payload === null) {
+      throw conflict(
+        `Connector tidak dapat membaca ${what} pada "${this.device.name}": ${snapshot.error ?? ''}`,
+      );
+    }
+
+    return pick(snapshot.payload as Record<string, unknown>);
+  }
+
+  /**
+   * Composite snapshots exist because the editor's tabs are composite, not the endpoints.
+   *
+   * The unit tab shows identity, credential counts, capacity and the face libraries together, so
+   * the connector reports them as one document read at one moment. Splitting them on the wire
+   * would let the screen assemble one picture from four reads taken minutes apart, each with its
+   * own timestamp and no way to show four of them.
+   *
+   * So each accessor here picks its field back out, and a piece the terminal refused is null
+   * rather than an exception — which is the same thing the direct path does with `.catch(() => null)`
+   * on the advisory reads.
+   */
   identity = {
-    read: (): Promise<TerminalIdentity> => this.unreachable('membaca identiti terminal'),
-    counts: (): Promise<TerminalCounts> => this.unreachable('membaca kiraan pendaftaran'),
-    capacity: (): Promise<TerminalCapacity> => this.unreachable('membaca kapasiti'),
-    faceStores: (): Promise<FaceStore[]> => this.unreachable('membaca simpanan wajah'),
+    read: (): Promise<TerminalIdentity> =>
+      this.fromSnapshot(SnapshotKind.identity, 'identiti terminal', (payload) => {
+        const value = payload['identity'];
+        if (value === null || value === undefined) {
+          this.unreachable('membaca identiti terminal');
+        }
+        return value as TerminalIdentity;
+      }),
+    counts: (): Promise<TerminalCounts> =>
+      this.fromSnapshot(SnapshotKind.identity, 'kiraan pendaftaran', (payload) => {
+        const value = payload['counts'];
+        if (value === null || value === undefined) this.unreachable('membaca kiraan pendaftaran');
+        return value as TerminalCounts;
+      }),
+    capacity: (): Promise<TerminalCapacity> =>
+      this.fromSnapshot(SnapshotKind.identity, 'kapasiti', (payload) => {
+        const value = payload['capacity'];
+        if (value === null || value === undefined) this.unreachable('membaca kapasiti');
+        return value as TerminalCapacity;
+      }),
+    faceStores: (): Promise<FaceStore[]> =>
+      this.fromSnapshot(SnapshotKind.identity, 'simpanan wajah', (payload) =>
+        Array.isArray(payload['faceStores']) ? (payload['faceStores'] as FaceStore[]) : [],
+      ),
   };
 
   clock = {
-    read: (): Promise<ClockReading> => this.unreachable('membaca jam terminal'),
+    /** The whole payload is the reading, so there is no field to pick out. */
+    read: (): Promise<ClockReading> =>
+      this.fromSnapshot(
+        SnapshotKind.clock,
+        'jam terminal',
+        (payload) => payload as unknown as ClockReading,
+      ),
     /**
      * Refused rather than queued, and this one is worth stating.
      *
@@ -232,18 +311,45 @@ export class AgentProxyDriver implements TerminalDriver {
   };
 
   access = {
-    door: (): Promise<DoorSettings | null> => this.unreachable('membaca tetapan pintu'),
+    door: (): Promise<DoorSettings | null> =>
+      this.fromSnapshot(
+        SnapshotKind.door,
+        'tetapan pintu',
+        (payload) => (payload['door'] ?? null) as DoorSettings | null,
+      ),
     setDoor: (_doorNo: number, _patch: DoorPatch): Promise<WriteAck> =>
       this.unreachable('menukar tetapan pintu'),
-    reader: (): Promise<ReaderSettings | null> => this.unreachable('membaca tetapan pembaca'),
+    reader: (): Promise<ReaderSettings | null> =>
+      this.fromSnapshot(
+        SnapshotKind.door,
+        'tetapan pembaca',
+        (payload) => (payload['reader'] ?? null) as ReaderSettings | null,
+      ),
     setReader: (_readerNo: number, _patch: ReaderPatch): Promise<WriteAck> =>
       this.unreachable('menukar tetapan pembaca'),
     open: (): Promise<WriteAck> => this.unreachable('membuka pintu'),
-    options: (): Promise<OptionSets> => this.unreachable('membaca senarai pilihan terminal'),
+    /**
+     * Empty rather than a refusal when the firmware published nothing.
+     *
+     * These lists build real controls on the door tab, and the direct path already treats their
+     * absence as "no published options" instead of a fault. A refusal here would take down the
+     * whole tab over a document the unit is not obliged to serve.
+     */
+    options: (): Promise<OptionSets> =>
+      this.fromSnapshot(SnapshotKind.door, 'senarai pilihan terminal', (payload) =>
+        payload['options'] === null || payload['options'] === undefined
+          ? {}
+          : (payload['options'] as OptionSets),
+      ),
   };
 
   attendance = {
-    mode: (): Promise<AttendanceModeSetting | null> => this.unreachable('membaca mod kehadiran'),
+    mode: (): Promise<AttendanceModeSetting | null> =>
+      this.fromSnapshot(
+        SnapshotKind.attendance,
+        'mod kehadiran',
+        (payload) => payload as unknown as AttendanceModeSetting | null,
+      ),
     setMode: (): Promise<WriteAck> => this.unreachable('menukar mod kehadiran'),
   };
 
@@ -251,7 +357,9 @@ export class AgentProxyDriver implements TerminalDriver {
     reboot: (): Promise<WriteAck> =>
       enqueue(this.device.id, CommandKind.reboot, JSON.stringify({})),
     callbackTargets: (): Promise<CallbackTarget[]> =>
-      this.unreachable('membaca sasaran panggil balik'),
+      this.fromSnapshot(SnapshotKind.push, 'sasaran panggil balik', (payload) =>
+        Array.isArray(payload) ? (payload as CallbackTarget[]) : [],
+      ),
     /**
      * Refused rather than queued.
      *
@@ -265,9 +373,19 @@ export class AgentProxyDriver implements TerminalDriver {
     clearCallback: (): Promise<WriteAck> => this.unreachable('mengosongkan sasaran panggil balik'),
   };
 
-  /** Vendor checks need live reads, so there are none to report from here. */
-  vendorWarnings(): Promise<DeviceWarning[]> {
-    return Promise.resolve([]);
+  /**
+   * Vendor findings the connector reported, or none.
+   *
+   * Empty rather than a refusal when nothing has been reported yet, because the contract says this
+   * must not throw for a diagnostic that is merely unavailable — and an empty list is a real
+   * answer here: the absence of a vendor-shaped fault is itself a finding.
+   */
+  async vendorWarnings(): Promise<DeviceWarning[]> {
+    const snapshot = await snapshotOf(this.device.id, SnapshotKind.diagnostics);
+    if (snapshot === null || snapshot.payload === null) return [];
+
+    const warnings = (snapshot.payload as Record<string, unknown>)['warnings'];
+    return Array.isArray(warnings) ? (warnings as DeviceWarning[]) : [];
   }
 
   diagnostics(): Promise<Record<string, unknown>> {

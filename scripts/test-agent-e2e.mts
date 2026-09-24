@@ -627,6 +627,53 @@ try {
   check('the driver shape survived the wire', (doorRow.payload ?? '').includes('openDuration'));
   check('and the earlier error is cleared, because the condition is over', doorRow.error === null);
 
+  // -------------------------------------------------------------------------
+  /*
+   * The point of the whole exercise: a read on an agent terminal now answers.
+   *
+   * Earlier in this suite the same call was refused, because nothing had been reported yet — and
+   * that refusal is correct, it says to wait rather than pretending. What must not happen is the
+   * refusal surviving a report, which is what left the editor showing six empty tabs for a site
+   * that was working perfectly.
+   */
+  section('a read on an agent terminal answers once the connector has reported');
+
+  const reporting = driverFor(await db().device.findUniqueOrThrow({ where: { id: device.id } }));
+
+  const readDoor = await reporting.access.door(1);
+  check('the stored door settings come back', readDoor !== null);
+  check(
+    'and they are the values the connector reported, not invented ones',
+    (readDoor as { openDuration?: number } | null)?.openDuration === 5,
+  );
+
+  const readOptions = await reporting.access.options();
+  check('an absent option list is empty rather than a refusal', typeof readOptions === 'object');
+
+  /*
+   * A read the terminal refused carries the connector's own reason, not a generic one.
+   *
+   * The clock was reported in the sweep above — as a failure, because this terminal is not
+   * reachable. So the refusal here is not "the connector has not said yet", it is "the connector
+   * tried and the terminal would not answer", and the difference decides what somebody does next:
+   * wait, or go and look at the unit.
+   *
+   * Written the other way round first, asserting the not-yet-reported wording. That was wrong:
+   * every kind had been reported, some of them as errors. The distinction is what the value is,
+   * not whether a row exists.
+   */
+  let clockReason = '';
+  try {
+    await reporting.clock.read();
+  } catch (error) {
+    clockReason = error instanceof Error ? error.message : '';
+  }
+  check('a read the terminal refused is still refused here', clockReason !== '');
+  check(
+    "and it carries the connector's own reason rather than a generic one",
+    clockReason.includes('tidak dapat membaca') && !clockReason.includes('belum melaporkan'),
+  );
+
   await releaseAllClients();
 
   spool.close();
