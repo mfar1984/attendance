@@ -29,6 +29,20 @@ export const CommandKind = {
   reboot: 'reboot',
   peopleQuery: 'people.query',
   setOption: 'option.set',
+
+  /**
+   * Terminal settings writes, for a unit behind a connector.
+   *
+   * These were refused rather than queued until the editor could show what a terminal currently
+   * holds — a write with no read is a form somebody saves blind, choosing a verification mode
+   * without knowing the present one. Now that the connector reports its settings, the write has
+   * something to be a change *to*.
+   */
+  configureNtp: 'clock.ntp',
+  setDoor: 'door.settings',
+  setReader: 'reader.settings',
+  setAttendanceMode: 'attendance.mode',
+  clearCallback: 'push.clear',
 } as const;
 export type CommandKind = (typeof CommandKind)[keyof typeof CommandKind];
 

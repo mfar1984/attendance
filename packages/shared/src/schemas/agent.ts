@@ -376,6 +376,67 @@ export type AgentFaceRemoveArgs = z.infer<typeof agentFaceRemoveArgs>;
 export const agentRebootArgs = z.strictObject({});
 export type AgentRebootArgs = z.infer<typeof agentRebootArgs>;
 
+/**
+ * Settings writes a connector can carry, and the ones it deliberately cannot.
+ *
+ * Queued like every other write, so the screen says "queued" rather than "done" — and the editor
+ * shows the queue so a change nobody collected is visible rather than assumed.
+ *
+ * Three writes stay refused at the proxy and are absent here on purpose, each for a reason that
+ * queueing would break rather than solve:
+ *
+ * - **Setting the clock by hand.** The connector already sets terminal clocks from the cloud time
+ *   it receives on every heartbeat. A queued timestamp is stale by the time it is collected, and
+ *   writing a stale time to a clock bakes in the drift this was meant to fix.
+ * - **Releasing the door.** Fifteen seconds late is not a slow success; it is a door opening when
+ *   nobody expects it.
+ * - **Setting the push target.** For a terminal behind a connector that address is the
+ *   connector's own, which the connector knows and the cloud does not. Queueing an address from
+ *   here would point the unit at a host it cannot reach.
+ */
+export const agentNtpArgs = z.strictObject({
+  host: z.string().min(1).max(190),
+  timeZone: z.string().min(1).max(64),
+  port: z.number().int().min(1).max(65535).optional(),
+  intervalMinutes: z.number().int().min(1).max(10080).optional(),
+});
+export type AgentNtpArgs = z.infer<typeof agentNtpArgs>;
+
+/**
+ * A partial door patch, mirroring `DoorPatch` on the driver contract.
+ *
+ * Partial because these documents are read-modify-write on the firmware: sending a whole object
+ * back also sends fields the unit reports but refuses to be told, which fails the write for a
+ * setting nobody was changing.
+ */
+export const agentDoorArgs = z.strictObject({
+  doorNo: z.number().int().min(1),
+  patch: z.record(z.string(), z.unknown()),
+});
+export type AgentDoorArgs = z.infer<typeof agentDoorArgs>;
+
+export const agentReaderArgs = z.strictObject({
+  readerNo: z.number().int().min(1),
+  patch: z.record(z.string(), z.unknown()),
+});
+export type AgentReaderArgs = z.infer<typeof agentReaderArgs>;
+
+export const agentAttendanceModeArgs = z.strictObject({
+  mode: z.string().min(1).max(32),
+});
+export type AgentAttendanceModeArgs = z.infer<typeof agentAttendanceModeArgs>;
+
+/**
+ * Clearing a push slot is allowed where setting one is not.
+ *
+ * Asymmetric on purpose. Setting needs an address the cloud does not know; clearing needs only the
+ * slot number, and it is how a decommissioned listener stops being pushed to.
+ */
+export const agentCallbackClearArgs = z.strictObject({
+  slot: z.number().int().min(1).max(8),
+});
+export type AgentCallbackClearArgs = z.infer<typeof agentCallbackClearArgs>;
+
 export interface AgentEnrolReply {
   agentKey: string;
   name: string;

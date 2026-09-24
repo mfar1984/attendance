@@ -3,6 +3,11 @@ import {
   agentFaceRemoveArgs,
   agentPersonRemoveArgs,
   agentPersonUpsertArgs,
+  agentAttendanceModeArgs,
+  agentCallbackClearArgs,
+  agentDoorArgs,
+  agentNtpArgs,
+  agentReaderArgs,
   SnapshotKind,
 } from '@attendance/shared';
 import {
@@ -52,16 +57,31 @@ import { snapshotOf } from '../snapshots.js';
  * same driver the server would have run, and reports back. Same table, same lifecycle, same
  * re-offer sweep.
  *
- * ## What it refuses, and why refusing is better than waiting
+ * ## Reads answer from the connector's last report
  *
- * Every read is declared unavailable. A read cannot be queued — there is nothing to hand back —
- * so the alternatives were to block a browser request until the connector next polls, or invent a
- * value. Both are worse than a screen that says where to look: device status, clock drift and
- * firmware already arrive on the connector's heartbeat, which is the honest source for them.
+ * A read cannot be queued — there is nothing to hand back — so this returns what the connector
+ * last swept from the terminal, with the time it was taken. Not live, and the screen says so:
+ * a cached setting presented as current is worse than an empty field, because somebody changes
+ * the verification mode at the keypad and this stays confidently wrong.
  *
- * `openDoor` is refused separately and deliberately. Releasing a lock fifteen seconds after
- * somebody pressed the button is not a slow success, it is a door opening when nobody is
- * expecting it — and the person who pressed it has already assumed it failed and walked away.
+ * Every read used to be declared unavailable, which left the device editor as six tabs of empty
+ * fields for a site that was working perfectly.
+ *
+ * ## Three writes stay refused, and queueing would break each rather than fix it
+ *
+ * `setClockManually` — the connector already sets terminal clocks from the cloud time on every
+ * heartbeat. A queued timestamp is stale when collected, and writing a stale time bakes in the
+ * drift this was meant to correct. An NTP *host* is queued instead, because a configuration is as
+ * correct later as it was when typed.
+ *
+ * `openDoor` — releasing a lock fifteen seconds after somebody pressed the button is not a slow
+ * success, it is a door opening when nobody expects it, and the person who pressed it has already
+ * assumed it failed and walked away.
+ *
+ * `configureCallback` — the push target for a terminal behind a connector is the connector's own
+ * LAN address, which it knows and this server does not. Queueing an address from here would point
+ * the unit at a host it cannot reach. Clearing a slot *is* allowed, because that needs only the
+ * slot number.
  */
 export class AgentProxyDriver implements TerminalDriver {
   readonly protocol: string;
@@ -79,6 +99,31 @@ export class AgentProxyDriver implements TerminalDriver {
         DriverOperation.enrolFace,
         DriverOperation.removeFace,
         DriverOperation.reboot,
+
+        /*
+         * Reads, answered from the connector's last sweep rather than live.
+         *
+         * Declared because the screen uses this list to decide whether to render a control at all.
+         * Leaving them out would keep the tabs blank even though the values are held — which is
+         * how "the data exists but nothing shows it" happens.
+         */
+        DriverOperation.readIdentity,
+        DriverOperation.readCounts,
+        DriverOperation.readCapacity,
+        DriverOperation.readFaceStores,
+        DriverOperation.readClock,
+        DriverOperation.readAttendanceMode,
+        DriverOperation.readDoorSettings,
+        DriverOperation.readReaderSettings,
+        DriverOperation.readCallbackTargets,
+        DriverOperation.readDiagnostics,
+
+        /* Settings writes, queued and collected. */
+        DriverOperation.configureNtp,
+        DriverOperation.writeDoorSettings,
+        DriverOperation.writeReaderSettings,
+        DriverOperation.writeAttendanceMode,
+        DriverOperation.clearCallback,
       ],
       writeModel: 'queued',
       reachability: 'deviceInitiated',
@@ -87,6 +132,20 @@ export class AgentProxyDriver implements TerminalDriver {
           'Terminal ini dicapai melalui connector tapak, jadi arahan mengambil beberapa saat ' +
           'untuk sampai. Membuka pintu dengan lengah begitu tidak selamat - buka di terminal itu ' +
           'sendiri.',
+
+        /*
+         * Stated rather than silently absent, because the screen shows these reasons on the
+         * control itself. A greyed button with no explanation reads as a permission somebody
+         * lacks, which sends them to ask for one they already have.
+         */
+        [DriverOperation.setClockManually]:
+          'Connector menetapkan jam terminal sendiri daripada masa cloud yang ia terima pada ' +
+          'setiap heartbeat. Cap masa yang dibariskan dari sini sudah lapuk ketika ia dikutip, ' +
+          'dan menulis masa lapuk ke jam mengekalkan hanyutan yang sepatutnya dibetulkan. ' +
+          'Tetapkan hos NTP sebaliknya.',
+        [DriverOperation.configureCallback]:
+          'Sasaran push untuk terminal di belakang connector ialah alamat LAN connector itu ' +
+          'sendiri, yang ia tahu dan pelayan ini tidak. Connector menetapkannya sendiri.',
       },
     };
   }
@@ -206,7 +265,26 @@ export class AgentProxyDriver implements TerminalDriver {
      */
     setManually: (): Promise<WriteAck> =>
       this.unreachable('menetapkan jam terminal secara manual'),
-    configureNtp: (): Promise<WriteAck> => this.unreachable('mengkonfigurasi NTP'),
+    /**
+     * Queued, unlike setting the clock by hand.
+     *
+     * The distinction is what the value means. A timestamp is only correct at the instant it is
+     * produced, so queueing one delivers a time that is already wrong. An NTP host is a
+     * configuration — it says where to ask, not what the answer is — so it is as correct fifteen
+     * seconds later as it was when somebody typed it.
+     */
+    configureNtp: (config: {
+      host: string;
+      timeZone: string;
+      port?: number;
+      intervalMinutes?: number;
+    }): Promise<WriteAck> =>
+      enqueueReplacing(
+        this.device.id,
+        CommandKind.configureNtp,
+        'clock',
+        JSON.stringify(agentNtpArgs.parse(config)),
+      ),
   };
 
   people = {
@@ -317,16 +395,32 @@ export class AgentProxyDriver implements TerminalDriver {
         'tetapan pintu',
         (payload) => (payload['door'] ?? null) as DoorSettings | null,
       ),
-    setDoor: (_doorNo: number, _patch: DoorPatch): Promise<WriteAck> =>
-      this.unreachable('menukar tetapan pintu'),
+    /**
+     * Keyed on the door so a second edit supersedes the first rather than queueing behind it.
+     *
+     * Saving the same tab twice should leave one pending change, not two applied in order — and
+     * with a patch the second would win anyway, so the queue may as well say so.
+     */
+    setDoor: (doorNo: number, patch: DoorPatch): Promise<WriteAck> =>
+      enqueueReplacing(
+        this.device.id,
+        CommandKind.setDoor,
+        `door:${String(doorNo)}`,
+        JSON.stringify(agentDoorArgs.parse({ doorNo, patch })),
+      ),
     reader: (): Promise<ReaderSettings | null> =>
       this.fromSnapshot(
         SnapshotKind.door,
         'tetapan pembaca',
         (payload) => (payload['reader'] ?? null) as ReaderSettings | null,
       ),
-    setReader: (_readerNo: number, _patch: ReaderPatch): Promise<WriteAck> =>
-      this.unreachable('menukar tetapan pembaca'),
+    setReader: (readerNo: number, patch: ReaderPatch): Promise<WriteAck> =>
+      enqueueReplacing(
+        this.device.id,
+        CommandKind.setReader,
+        `reader:${String(readerNo)}`,
+        JSON.stringify(agentReaderArgs.parse({ readerNo, patch })),
+      ),
     open: (): Promise<WriteAck> => this.unreachable('membuka pintu'),
     /**
      * Empty rather than a refusal when the firmware published nothing.
@@ -350,7 +444,13 @@ export class AgentProxyDriver implements TerminalDriver {
         'mod kehadiran',
         (payload) => payload as unknown as AttendanceModeSetting | null,
       ),
-    setMode: (): Promise<WriteAck> => this.unreachable('menukar mod kehadiran'),
+    setMode: (mode: AttendanceModeSetting['mode']): Promise<WriteAck> =>
+      enqueueReplacing(
+        this.device.id,
+        CommandKind.setAttendanceMode,
+        'attendance',
+        JSON.stringify(agentAttendanceModeArgs.parse({ mode })),
+      ),
   };
 
   lifecycle = {
@@ -370,7 +470,19 @@ export class AgentProxyDriver implements TerminalDriver {
      */
     configureCallback: (_config: CallbackConfig): Promise<WriteAck> =>
       this.unreachable('menetapkan sasaran panggil balik'),
-    clearCallback: (): Promise<WriteAck> => this.unreachable('mengosongkan sasaran panggil balik'),
+    /**
+     * Allowed where setting one is not, and the asymmetry is the point.
+     *
+     * Setting a target needs an address the cloud does not know. Clearing needs only the slot
+     * number, and it is how a decommissioned listener stops being pushed to.
+     */
+    clearCallback: (slot: number): Promise<WriteAck> =>
+      enqueueReplacing(
+        this.device.id,
+        CommandKind.clearCallback,
+        `push:${String(slot)}`,
+        JSON.stringify(agentCallbackClearArgs.parse({ slot })),
+      ),
   };
 
   /**

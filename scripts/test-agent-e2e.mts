@@ -674,6 +674,79 @@ try {
     clockReason.includes('tidak dapat membaca') && !clockReason.includes('belum melaporkan'),
   );
 
+  // -------------------------------------------------------------------------
+  /*
+   * Settings writes, and the three that stay refused.
+   *
+   * These were all refused until the connector could report what a terminal currently holds — a
+   * write with no read is a form somebody saves blind, choosing a verification mode without
+   * knowing the present one. Now that reads answer, the write has something to be a change *to*.
+   *
+   * The three still refused are refused at the point of queueing, because queueing would break
+   * each rather than fix it. Asserted here so that "we could queue this too" does not quietly
+   * become true later.
+   */
+  section('settings writes are queued, and three stay refused');
+
+  const writable = driverFor(await db().device.findUniqueOrThrow({ where: { id: device.id } }));
+
+  const ntpAck = await writable.clock.configureNtp({ host: '192.168.99.1', timeZone: 'CST-8:00:00' });
+  check('an NTP host is queued rather than refused', ntpAck.confirmed === false);
+
+  const doorAck = await writable.access.setDoor(1, { openDuration: 7 });
+  check('door settings are queued', doorAck.confirmed === false);
+
+  const modeAck = await writable.attendance.setMode('manual');
+  check('an attendance mode is queued', modeAck.confirmed === false);
+
+  const clearAck = await writable.lifecycle.clearCallback(2);
+  check('clearing a push slot is queued, because it needs only the slot number', clearAck.confirmed === false);
+
+  const refuse = async (run: () => Promise<unknown>): Promise<string> => {
+    try {
+      await run();
+      return '';
+    } catch (error) {
+      return error instanceof Error ? error.message : '';
+    }
+  };
+
+  const manualClock = await refuse(() => writable.clock.setManually(new Date(), 'CST-8:00:00'));
+  check('setting the clock by hand is still refused', manualClock !== '');
+  const openDoor = await refuse(() => writable.access.open(1));
+  check('releasing the door is still refused', openDoor !== '');
+  const setPush = await refuse(() =>
+    writable.lifecycle.configureCallback({
+      host: '1.2.3.4',
+      port: 8080,
+      path: '/hik/events',
+      slot: 1,
+    }),
+  );
+  check('setting a push target is still refused', setPush !== '');
+
+  /*
+   * The queued work is then collectable and runnable. The terminal is unreachable in this suite,
+   * so each is deferred rather than reported — which is the correct outcome and proves the
+   * executor recognises the kinds rather than failing them as unknown.
+   */
+  const queuedKinds = await db().deviceCommand.findMany({
+    where: { deviceId: device.id, status: 'pending' },
+    select: { kind: true },
+  });
+  const kinds = new Set(queuedKinds.map((row) => row.kind));
+  check('all four writes are waiting in the queue', kinds.size === 4);
+  check('and each is a kind this connector build recognises', ['clock.ntp', 'door.settings', 'attendance.mode', 'push.clear'].every((kind) => kinds.has(kind)));
+
+  await executor.runOnce();
+  const afterWrites = await db().deviceCommand.findMany({
+    where: { deviceId: device.id, kind: { in: ['clock.ntp', 'door.settings', 'attendance.mode', 'push.clear'] } },
+  });
+  check(
+    'an unreachable terminal defers them rather than failing them as unrecognised',
+    afterWrites.every((row) => row.status === 'sent'),
+  );
+
   await releaseAllClients();
 
   spool.close();

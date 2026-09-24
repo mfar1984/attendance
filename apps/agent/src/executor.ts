@@ -1,5 +1,10 @@
 import { DeviceLockedError } from '@attendance/hik-isapi';
 import {
+  agentAttendanceModeArgs,
+  agentCallbackClearArgs,
+  agentDoorArgs,
+  agentNtpArgs,
+  agentReaderArgs,
   agentFaceEnrolArgs,
   agentFaceRemoveArgs,
   agentPersonRemoveArgs,
@@ -244,6 +249,78 @@ export class Executor {
 
         const ack = await driver.lifecycle.reboot();
         return { outcome: 'done', detail: describe(ack.confirmed, 'Terminal dimulakan semula') };
+      }
+
+      /*
+       * Terminal settings writes.
+       *
+       * Each runs through the same `TerminalDriver` a direct installation would have used, which is
+       * the whole reason the driver layer was moved into a shared package. The cloud queued a
+       * change; this applies it and reports what the unit said.
+       *
+       * Absent on purpose: setting the clock by hand, releasing the door, and setting a push
+       * target. The proxy refuses those three at the point of queueing, each for a reason queueing
+       * would break rather than solve — see `agent-proxy.ts`.
+       */
+      case 'clock.ntp': {
+        const refusal = refuseUnsupported(DriverOperation.configureNtp);
+        if (refusal) return refusal;
+
+        const args = agentNtpArgs.parse(payload);
+        const ack = await driver.clock.configureNtp({
+          host: args.host,
+          timeZone: args.timeZone,
+          ...(args.port === undefined ? {} : { port: args.port }),
+          ...(args.intervalMinutes === undefined ? {} : { intervalMinutes: args.intervalMinutes }),
+        });
+        return { outcome: 'done', detail: describe(ack.confirmed, `NTP ${args.host}`) };
+      }
+
+      case 'door.settings': {
+        const refusal = refuseUnsupported(DriverOperation.writeDoorSettings);
+        if (refusal) return refusal;
+
+        const args = agentDoorArgs.parse(payload);
+        const ack = await driver.access.setDoor(args.doorNo, args.patch);
+        return {
+          outcome: 'done',
+          detail: describe(ack.confirmed, `Tetapan pintu ${String(args.doorNo)}`),
+        };
+      }
+
+      case 'reader.settings': {
+        const refusal = refuseUnsupported(DriverOperation.writeReaderSettings);
+        if (refusal) return refusal;
+
+        const args = agentReaderArgs.parse(payload);
+        const ack = await driver.access.setReader(args.readerNo, args.patch);
+        return {
+          outcome: 'done',
+          detail: describe(ack.confirmed, `Tetapan pembaca ${String(args.readerNo)}`),
+        };
+      }
+
+      case 'attendance.mode': {
+        const refusal = refuseUnsupported(DriverOperation.writeAttendanceMode);
+        if (refusal) return refusal;
+
+        const args = agentAttendanceModeArgs.parse(payload);
+        const ack = await driver.attendance.setMode(
+          args.mode as Parameters<typeof driver.attendance.setMode>[0],
+        );
+        return { outcome: 'done', detail: describe(ack.confirmed, `Mod kehadiran ${args.mode}`) };
+      }
+
+      case 'push.clear': {
+        const refusal = refuseUnsupported(DriverOperation.clearCallback);
+        if (refusal) return refusal;
+
+        const args = agentCallbackClearArgs.parse(payload);
+        const ack = await driver.lifecycle.clearCallback(args.slot);
+        return {
+          outcome: 'done',
+          detail: describe(ack.confirmed, `Slot push ${String(args.slot)} dikosongkan`),
+        };
       }
 
       default:
