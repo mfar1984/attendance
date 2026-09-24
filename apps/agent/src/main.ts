@@ -10,6 +10,7 @@ import { createListener } from './listener.js';
 import { logger } from './logging.js';
 import { Puller } from './puller.js';
 import { Roster } from './roster.js';
+import { Snapshotter } from './snapshots.js';
 import { Spool } from './spool.js';
 import { SiteState } from './state.js';
 
@@ -68,6 +69,7 @@ if (!cloud.enrolled) {
 const puller = new Puller(config, roster, spool, state);
 const forwarder = new Forwarder(config, cloud, spool);
 const executor = new Executor(cloud, roster);
+const snapshotter = new Snapshotter(cloud, roster);
 const { app, stats } = createListener(config, roster, spool, state);
 
 /**
@@ -191,6 +193,14 @@ const timers = [
    * the timers that talk to the cloud.
    */
   every(config.COMMAND_POLL_SECONDS, 'commands', () => executor.runOnce()),
+  /*
+   * The device editor's data for this site.
+   *
+   * Slowest of the timers, and the only one that exists for a screen rather than for attendance.
+   * The cloud cannot read a terminal behind a connector, so without this every settings tab is
+   * empty — and an operator who opens one learns nothing about the unit in front of them.
+   */
+  every(config.SNAPSHOT_SECONDS, 'snapshots', () => snapshotter.runOnce()),
 ];
 
 /**

@@ -58,6 +58,17 @@ const schema = z.object({
   /** Liveness and roster refresh. Also how the connector learns the cloud's clock. */
   HEARTBEAT_SECONDS: z.coerce.number().int().min(10).max(900).default(60),
 
+  /**
+   * How often to read each terminal's own settings and report them.
+   *
+   * Slow on purpose. These values move when somebody edits a setting, and they are large: a full
+   * sweep is about a dozen reads per unit. The cloud cannot ask for them on demand — a browser
+   * request cannot wait for the next poll — so the trade is freshness against load on firmware
+   * that caps concurrent sessions. Ten minutes keeps the device editor populated without a
+   * Raspberry Pi hammering fifteen door controllers.
+   */
+  SNAPSHOT_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
+
   /** Reconcile pull cadence. Push is unreliable, so this always runs. */
   PULL_SECONDS: z.coerce.number().int().min(15).max(3600).default(60),
 

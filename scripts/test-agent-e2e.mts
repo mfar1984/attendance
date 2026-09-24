@@ -558,6 +558,75 @@ try {
   const afterMalformed = await db().deviceCommand.findUniqueOrThrow({ where: { id: malformed.id } });
   check('a payload that will not parse is failed', afterMalformed.status === 'failed');
 
+  // -------------------------------------------------------------------------
+  /*
+   * The settings the device editor shows for a connector site.
+   *
+   * The cloud cannot read a terminal behind a connector — a browser request cannot wait for the
+   * next poll — so the connector reads on its own timer and reports. Without it every settings tab
+   * renders empty, and an operator who opens one learns nothing about the unit in front of them.
+   *
+   * The terminal in this suite is not reachable, which makes this the case worth driving: every
+   * read fails, and the sweep still has to produce reported conditions rather than throwing. One
+   * unreadable document must not cost the others, because abandoning the pass would leave the tabs
+   * empty — reproducing one level up the exact failure this path removes.
+   */
+  section('terminal settings reach the cloud even when the reads fail');
+
+  const { Snapshotter } = await import('../apps/agent/src/snapshots.js');
+  const snapshotter = new Snapshotter(cloud, roster);
+
+  await snapshotter.runOnce();
+  check('the sweep completes rather than throwing', snapshotter.stats.sweeps === 1);
+  check('and something was reported', snapshotter.stats.reported > 0);
+
+  const snapshotRows = await db().deviceSnapshot.findMany({ where: { deviceId: device.id } });
+  check('the cloud stored what arrived', snapshotRows.length > 0);
+
+  const refused = snapshotRows.filter((row) => row.error !== null);
+  check('an unreachable terminal is recorded as a reason, not as silence', refused.length > 0);
+  check(
+    'and no payload is invented for a read that never answered',
+    refused.every((row) => row.payload === null && row.readAt === null),
+  );
+
+  /*
+   * Diagnostics succeeds even here, and that is the contract rather than an accident.
+   *
+   * `vendorWarnings` must not throw for a diagnostic that is merely unavailable — an empty list is
+   * the honest answer, because the absence of a vendor-shaped fault is itself a finding. So this
+   * one carries a payload while the network reads carry reasons, and an assertion that every row
+   * must hold an error would be wrong about the design rather than about the code. It was, once.
+   */
+  const diagnostics = snapshotRows.find((row) => row.kind === 'diagnostics');
+  check('diagnostics still reports, because an empty warning list is an answer', diagnostics?.error === null);
+  check('and it carries the capability document the screen explains itself with',
+    (diagnostics?.payload ?? '').includes('capabilities'));
+
+  /*
+   * A later success has to replace the error, and the last good values have to survive a later
+   * failure. Driven here through the real endpoint rather than the storage function, because the
+   * wire schema is the part that could reject a driver-contract shape.
+   */
+  const reported = await cloud.snapshots({
+    deviceId: device.id,
+    snapshots: [
+      {
+        kind: 'door',
+        payload: { door: { openDuration: 5 }, reader: null, options: {} },
+        readAt: new Date(),
+        error: null,
+      },
+    ],
+  });
+  check('a successful read is accepted by the endpoint', reported.ok);
+
+  const doorRow = await db().deviceSnapshot.findUniqueOrThrow({
+    where: { deviceId_kind: { deviceId: device.id, kind: 'door' } },
+  });
+  check('the driver shape survived the wire', (doorRow.payload ?? '').includes('openDuration'));
+  check('and the earlier error is cleared, because the condition is over', doorRow.error === null);
+
   await releaseAllClients();
 
   spool.close();

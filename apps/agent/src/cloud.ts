@@ -7,6 +7,7 @@ import type {
   AgentEnrolReply,
   AgentHeartbeat,
   AgentHeartbeatReply,
+  AgentSnapshotBatch,
   TerminalEventPayload,
 } from '@attendance/shared';
 
@@ -84,6 +85,17 @@ export class Cloud {
 
   heartbeat(payload: AgentHeartbeat): Promise<CallResult<AgentHeartbeatReply>> {
     return this.call<AgentHeartbeatReply>('POST', '/agent/heartbeat', payload);
+  }
+
+  /**
+   * Reports what one terminal says about its own settings.
+   *
+   * Its own call rather than part of the heartbeat, because these are large and change rarely.
+   * Carrying them on a request that arrives every sixty seconds from every site would spend
+   * bandwidth continuously for a value that moves only when somebody edits a setting.
+   */
+  snapshots(payload: AgentSnapshotBatch): Promise<CallResult<{ stored: number }>> {
+    return this.call<{ stored: number }>('POST', '/agent/snapshots', payload);
   }
 
   /**
