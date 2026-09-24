@@ -178,6 +178,103 @@ sudo systemctl restart attendance
 `npm ci` dan bukan `npm install`: ia memasang tepat apa yang `package-lock.json` namakan.
 `npm install` boleh menaikkan versi transitif pada pelayan yang tiada siapa uji.
 
+### Setiap push dinyatakan siap dengan dua fakta
+
+**Commit mana, dan sama ada migrasi diperlukan.** Tanpa kedua-duanya, operator tidak boleh tahu
+bila anda push melainkan anda beritahu — dan commit yang duduk tanpa di-deploy kelihatan sama
+seperti bug yang belum dibetulkan. Ini sudah berlaku: pembetulan dihantar, dilaporkan siap, dan
+operator terus melihat gejala lama selama beberapa pusingan sebelum bertanya sendiri.
+
+Nyatakan juga **mesin mana**. Cloud dan agent kedua-duanya Debian dan kedua-duanya ada klon di
+`/opt/attendance`, jadi "jalankan ini di pelayan" tidak mencukupi. Arahan deploy cloud yang
+ditaip pada mesin agent gagal empat kali — pemilikan git, `DATABASE_URL` tiada, unit tidak
+dijumpai — dan tiada satu pun daripada ralat itu menyebut bahawa mesin itu yang salah.
+
+### Perubahan pada `apps/agent` mesti menaikkan `AGENT_VERSION`
+
+`AGENT_VERSION` dalam `packages/shared/src/schemas/agent.ts`. Ia dikongsi kerana kedua-dua belah
+memerlukannya: agent melaporkannya pada setiap heartbeat, dan cloud membandingkan laporan itu
+dengan nilai yang sama untuk menjawab "adakah tapak itu menjalankan kod lama".
+
+Perbandingan itulah yang memacu butang **Kemas kini connector** dalam dialog butiran connector.
+Jadi:
+
+- **Sentuh `apps/agent` → naikkan `AGENT_VERSION`.** Kalau tidak, butang kekal kelabu dan setiap
+  tapak kekal pada kod lama sambil skrin berkata ia terkini. Tiada apa akan melaporkan itu.
+- **Sentuh cloud sahaja → jangan naikkan.** Butang kelabu memang betul; tiada apa di tapak
+  berubah, dan meminta lima belas connector membina semula tanpa sebab ialah lima belas peluang
+  untuk bina gagal.
+
+"Terkini" bermaksud **apa yang pemasangan ini akan pasang**, bukan nombor dari internet. Cloud
+menghidangkan pemasang dan kemas kini menjalankan `git pull` dalam repo yang sama, jadi pemalar
+itu satu-satunya definisi jujur — dan ia tidak boleh bercanggah dengan realiti seperti versi
+jauh yang dikodkan tetap boleh.
+
+Dua salinan nombor versi ialah satu salinan yang bercanggah, dan yang bercanggah itu memutuskan
+sama ada seseorang diberitahu tapak mereka lapuk. Sebab itu ia dipindah keluar dari
+`apps/agent/src/config.ts`, yang kini mengimport dan mengeksportnya semula.
+
+### Arahan yang diberi pada setiap deploy
+
+**Cloud.** Nama unit dan direktori berbeza antara pemasangan, jadi cari dan jangan teka:
+
+```bash
+systemctl list-units --type=service --all | grep -i attend
+systemctl cat <unit> | grep -E 'WorkingDirectory|ExecStart'
+```
+
+Kemudian, dalam direktori itu:
+
+```bash
+git log --oneline -1          # sahkan di mana cloud berada sekarang
+git pull
+npm ci
+# migrasi HANYA jika skema berubah, dan backup dahulu setiap kali:
+mysqldump -u <user> -p <db> > pre-migration-$(date +%F).sql
+mysql -u <user> -p <db> < apps/server/prisma/migrations/<fail>.sql
+npm run build:prod
+sudo systemctl restart <unit>
+```
+
+**Agent.** Hanya apabila `apps/agent` atau `packages/*` berubah. Tiga perkara yang mudah
+terlepas, dan ketiga-tiganya sudah menggagalkan deploy sebenar:
+
+```bash
+git config --global --add safe.directory /opt/attendance
+
+cd /opt/attendance \
+  && git pull \
+  && npm ci --ignore-scripts \
+  && npx tsc --build \
+  && npm run build:prod --workspace @attendance/agent \
+  && chown -R attendance-agent:attendance-agent /opt/attendance
+
+sudo systemctl restart attendance-agent
+```
+
+- **`safe.directory`** — pemasang `chown` klon kepada pengguna servis, jadi root yang `git pull`
+  di situ ditolak dengan `dubious ownership`.
+- **`npx tsc --build`** — membina `packages/*` dahulu. Pemasang menjalankan dua arahan bina dan
+  bukan satu; meninggalkan yang pertama menggagalkan bina agent dengan
+  `has no exported member` bagi apa-apa yang baru ditambah ke `shared`.
+- **`chown` di hujung** — bina sebagai root meninggalkan `dist/` dan `node_modules/` dimiliki
+  root, dan `git pull` seterusnya bergelut dengan pemilikan bercampur.
+
+Sahkan sebelum restart, kerana bina boleh gagal sementara arahan sebelumnya kelihatan lulus:
+
+```bash
+ls -l /opt/attendance/apps/agent/dist/main.js
+```
+
+**Selepas kemas kini manual pertama, langkah ini tidak diperlukan lagi.** Butang Kemas kini
+connector melakukan perkara yang sama dari skrin. Ia tidak boleh memasang dirinya sendiri —
+binaan yang berjalan sekarang tidak tahu membaca permintaan itu — jadi setiap tapak yang ada
+perlukan satu lawatan manual, dan setiap tapak baharu mendapatnya dari hari pertama.
+
+**Susunan: cloud dahulu, agent kemudian.** Agent yang dikemas kini bercakap dengan endpoint yang
+cloud lama tidak ada, dapat 404, dan log amaran pada setiap pusingan. Tiada kerosakan, tetapi ia
+bunyi yang menghantar seseorang memburu bug yang tidak wujud.
+
 ### Skrip pemasangan mesti diluluskan dalam repo
 
 npm 11.19+ **menyekat skrip pemasangan dependensi secara lalai**. Kelulusan hidup dalam medan
@@ -358,7 +455,9 @@ sana.
 ### Apa yang berfungsi, dan apa yang tidak
 
 **Berfungsi:** push terminal, tarikan rekonsil pada LAN, penghantaran peristiwa
-mentah, tambah/buang pengguna, tambah/buang wajah, reboot.
+mentah, tambah/buang pengguna, tambah/buang wajah, reboot, NTP, tetapan pintu dan
+pembaca, mod kehadiran, mengosongkan slot push, menuding terminal ke connector
+sendiri, dan kemas kini connector sendiri.
 
 **Hikvision ISAPI sahaja.** Driver ZKTeco TA Push menulis melalui baris giliran
 cloud yang connector tiada akses, dan rentetan arahannya datang dari transkripsi
@@ -366,15 +465,52 @@ pihak ketiga dan belum pernah disemak terhadap SenseFace sebenar. `roster.ts`
 menolaknya dengan baris log, bukan secara senyap — connector yang mendakwa
 menyokongnya akan menghasilkan tapak yang kelihatan sihat dan merekod sifar.
 
-**Bacaan langsung ditolak.** Status peranti, hanyutan jam dan firmware datang
-dari heartbeat connector. Bacaan tidak boleh dibariskan, jadi alternatifnya ialah
-menahan permintaan pelayar atau mencipta nilai.
+**Bacaan ialah snapshot, bukan langsung.** Connector menyapu terminalnya pada
+pemasa `SNAPSHOT_SECONDS` (lalai 600) dan melaporkan apa yang dibacanya ke
+`POST /agent/snapshots`; cloud menyimpannya dalam `device_snapshots` dan
+`AgentProxyDriver` menjawab daripada laporan terbaharu.
 
-**Buka pintu ditolak.** Melepaskan kunci lima belas saat lewat bukan kejayaan
-yang lambat — ia pintu yang terbuka ketika tiada siapa menjangkakannya.
+Bacaan segerak masih mustahil — permintaan pelayar tidak boleh menunggu tinjauan
+berikutnya — tetapi itu tidak bermakna tiada apa untuk ditunjukkan. Skrin
+memaparkan cap masa di sebelah nilai (`device.editor.live.snapshotAt`,
+"Laporan connector"), berperkataan berbeza daripada bacaan langsung dengan
+sengaja: tetapan cache yang dipersembahkan sebagai semasa lebih buruk daripada
+medan kosong, kerana seseorang menukar mod pengesahan di papan kekunci dan skrin
+kekal yakin dan salah.
 
-**Skrin belum ada.** Urus agent melalui `create-agent.mts` dan tetapkan
-`devices.agentId` secara langsung sampai borang peranti mendapat pemilihnya.
+Editor peranti pernah menembak bacaan itu secara buta, dapat 409, dan merender
+penolakan sebagai ralat — enam jalur merah untuk satu fakta struktur. Kemudian ia
+melangkaunya sepenuhnya, yang membuang merah tetapi meninggalkan tab kosong.
+Kedua-duanya salah kerana kedua-duanya tiada tempat untuk nilai itu datang.
+
+Bacaan yang kontraknya boleh menyatakan kekosongan memulangkan kosong sebelum
+sapuan pertama, bukan membaling. Hanya `identity.read` dan `clock.read` masih
+membaling, kerana `TerminalIdentity` dan `ClockReading` bukan nullable.
+
+**Tiga tulisan kekal ditolak,** dan membariskannya akan merosakkan setiap satu
+dan bukan membetulkannya. Ketiga-tiganya menyatakan sebabnya dalam
+`DriverCapabilities.unavailable`, kerana skrin memaparkan sebab itu pada kawalan
+itu sendiri.
+
+- **Buka pintu.** Melepaskan kunci lima belas saat lewat bukan kejayaan yang
+  lambat — ia pintu terbuka ketika tiada siapa menjangkakannya, dan orang yang
+  menekannya sudah menganggap ia gagal lalu beredar.
+- **Tetapkan jam secara manual.** Connector sudah menetapkan jam terminal dari
+  masa cloud pada setiap heartbeat. Cap masa yang dibariskan sudah lapuk ketika
+  dikutip, dan menulis masa lapuk ke jam mengekalkan hanyutan yang sepatutnya
+  dibetulkan. Hos NTP dibariskan sebaliknya: konfigurasi kekal betul lima belas
+  saat kemudian, cap masa tidak.
+- **Tetapkan sasaran push.** Sasarannya ialah alamat LAN connector itu sendiri,
+  yang ia tahu dan cloud tidak. `POST /api/devices/:id/push/via-agent`
+  membariskan arahan yang membawa slot dan laluan **sahaja**; connector mengisi
+  alamat dan kata laluan Digestnya sendiri. Mengosongkan slot dibenarkan, kerana
+  itu perlukan nombor slot sahaja.
+
+**Skrin sudah ada.** Tab Connector pada Senarai Peranti mencipta agent, jana
+token pendaftaran semula, tarik kredensial, buang baris yang ditarik, dan buka
+dialog butiran dengan butang kemas kini. Borang peranti ada pemilih "Dicapai
+melalui" yang menetapkan `devices.agentId`. `create-agent.mts` masih ada untuk
+sesiapa yang lebih suka shell, tetapi tiada langkah operasi memerlukannya lagi.
 
 ### Dua perkara yang akan menggigit kalau dilupakan
 
