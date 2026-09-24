@@ -43,6 +43,16 @@ export const CommandKind = {
   setReader: 'reader.settings',
   setAttendanceMode: 'attendance.mode',
   clearCallback: 'push.clear',
+
+  /**
+   * Point a terminal at its own connector's listener.
+   *
+   * Distinct from `configureCallback` on the driver, which stays refused for an agent terminal: a
+   * config assembled in the cloud would name a host the unit cannot reach. This command carries no
+   * address at all — the connector fills in its own, because only it knows which interface it is
+   * reachable on and what Digest password its installer generated.
+   */
+  configurePush: 'push.configure',
 } as const;
 export type CommandKind = (typeof CommandKind)[keyof typeof CommandKind];
 

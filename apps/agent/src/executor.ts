@@ -9,11 +9,14 @@ import {
   agentFaceRemoveArgs,
   agentPersonRemoveArgs,
   agentPersonUpsertArgs,
+  agentPushConfigureArgs,
   type AgentCommandItem,
 } from '@attendance/shared';
 import { DriverOperation, supports, type TerminalDriver } from '@attendance/terminal-drivers';
 
 import type { Cloud } from './cloud.js';
+import type { AgentConfig } from './config.js';
+import { resolveLanHost } from './lan.js';
 import { logger } from './logging.js';
 import type { Roster } from './roster.js';
 
@@ -62,7 +65,25 @@ export class Executor {
   constructor(
     private readonly cloud: Cloud,
     private readonly roster: Roster,
+    /**
+     * Needed for one command: pointing a terminal at this connector's own listener.
+     *
+     * The listener port and the Digest credentials live here and nowhere else — the cloud does not
+     * hold them and should not — so the command that uses them has to be able to read them.
+     */
+    private readonly config: AgentConfig,
   ) {}
+
+  /**
+   * The address a terminal on this LAN should push to.
+   *
+   * Resolved at the moment it is needed rather than cached at boot, for the same reason the
+   * heartbeat re-resolves it: a DHCP lease moves, and a stale address written into fifteen
+   * terminals is fifteen units pushing somewhere nobody answers. An explicit `LAN_HOST` wins.
+   */
+  private advertisedHost(): Promise<string | null> {
+    return resolveLanHost(this.config.LAN_HOST ?? null, this.config.CLOUD_URL);
+  }
 
   /**
    * One poll: collect whatever is waiting and run it.
@@ -309,6 +330,66 @@ export class Executor {
           args.mode as Parameters<typeof driver.attendance.setMode>[0],
         );
         return { outcome: 'done', detail: describe(ack.confirmed, `Mod kehadiran ${args.mode}`) };
+      }
+
+      /**
+       * Point the terminal at this connector's own listener.
+       *
+       * The payload carries a slot and a path and nothing else. Everything that identifies where to
+       * push is filled in here, because this process is the only thing that knows it: which
+       * interface it is actually reachable on — it may have several, and a DHCP lease can move it —
+       * and the Digest password its own installer generated.
+       *
+       * That is why `configureCallback` stays refused on the cloud side. A config assembled there
+       * would name a host the unit cannot reach, producing a terminal that has stopped delivering
+       * with nothing on any screen saying why.
+       *
+       * Replaces the hand-written `curl` against the unit's ISAPI endpoint that was previously the
+       * only way to do this.
+       */
+      case 'push.configure': {
+        const refusal = refuseUnsupported(DriverOperation.configureCallback);
+        if (refusal) return refusal;
+
+        const args = agentPushConfigureArgs.parse(payload);
+        const host = await this.advertisedHost();
+
+        if (host === null) {
+          /*
+           * Transient, not permanent. The address is discovered by opening a socket towards the
+           * cloud and reading which local interface the kernel chose, so failing to learn it means
+           * the network is momentarily unavailable — the same condition that defers every other
+           * command. Failing it permanently would leave the operator with a request that never
+           * resolves and no way to retry from the screen.
+           */
+          return {
+            outcome: 'transient',
+            detail: 'Alamat LAN connector belum diketahui; akan dicuba semula.',
+          };
+        }
+
+        const ack = await driver.lifecycle.configureCallback({
+          host,
+          port: this.config.LISTEN_PORT,
+          path: args.path,
+          slot: args.slot,
+          useHttps: false,
+          auth: {
+            username: this.config.INGEST_USERNAME,
+            password: this.config.INGEST_PASSWORD,
+          },
+          heartbeatSeconds: 30,
+        });
+
+        // The address is named in the outcome so the devices screen can show where it was pointed,
+        // but the credential is not: this string is stored and shown.
+        return {
+          outcome: 'done',
+          detail: describe(
+            ack.confirmed,
+            `Slot push ${String(args.slot)} dituding ke ${host}:${String(this.config.LISTEN_PORT)}${args.path}`,
+          ),
+        };
       }
 
       case 'push.clear': {

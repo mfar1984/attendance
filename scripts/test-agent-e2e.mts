@@ -24,6 +24,7 @@ import { PunchDirection, RawEventKind, VerifyMethod } from '@attendance/shared';
 import { buildApp } from '../apps/server/src/app.js';
 import { encryptSecret } from '../apps/server/src/crypto.js';
 import { db, disconnectDb } from '../apps/server/src/db.js';
+import { enqueueReplacing } from '../apps/server/src/devices/driver/commands.js';
 import { issueAgentKey, issueEnrolToken } from '../apps/server/src/devices/agents.js';
 
 let failures = 0;
@@ -474,7 +475,7 @@ try {
   section('the connector collects the command');
 
   const { Executor } = await import('../apps/agent/src/executor.js');
-  const executor = new Executor(cloud, roster);
+  const executor = new Executor(cloud, roster, config);
 
   /*
    * Pointed at a closed loopback port so the attempt fails immediately with a connection refused
@@ -745,6 +746,55 @@ try {
   check(
     'an unreachable terminal defers them rather than failing them as unrecognised',
     afterWrites.every((row) => row.status === 'sent'),
+  );
+
+  // -------------------------------------------------------------------------
+  /*
+   * Pointing a terminal at its own connector, without the cloud knowing where that is.
+   *
+   * This replaces a hand-written `curl` against the unit's ISAPI endpoint with the Digest password
+   * copied out of the installer's output — which was the only way to do it, once per site, by
+   * somebody on the LAN.
+   *
+   * The property that matters is an absence: the queued payload must carry no address and no
+   * credential. If either ever appears here, the cloud has started deciding something only the
+   * connector can know, and a terminal will end up pushing at a host it cannot reach.
+   */
+  section('a terminal is pointed at its own connector, with no address from the cloud');
+
+  const pushQueued = await app.inject({
+    method: 'POST',
+    url: `/api/devices/${String(device.id)}/push/via-agent`,
+    payload: { slot: 2 },
+  });
+  /*
+   * Unauthenticated here, so this is the guard answering rather than the handler. The point being
+   * checked is that the route exists behind the permission and does not fall through to a 404,
+   * which is what a mistyped path would produce.
+   */
+  check('the route is registered behind a permission', pushQueued.statusCode !== 404);
+
+  const queuedPush = await enqueueReplacing(
+    device.id,
+    'push.configure',
+    'push:2',
+    JSON.stringify({ slot: 2, path: '/hik/events' }),
+  );
+  check('the command is queued', queuedPush.confirmed === false);
+
+  const pushRow = await db().deviceCommand.findFirstOrThrow({
+    where: { deviceId: device.id, kind: 'push.configure' },
+    orderBy: { id: 'desc' },
+  });
+  check('and it carries no host', !pushRow.payload.includes('192.168'));
+  check('and no credential', !pushRow.payload.toLowerCase().includes('password'));
+  check('only the slot and the path', pushRow.payload === JSON.stringify({ slot: 2, path: '/hik/events' }));
+
+  await executor.runOnce();
+  const pushAfter = await db().deviceCommand.findUniqueOrThrow({ where: { id: pushRow.id } });
+  check(
+    'the connector recognises the kind rather than failing it as unknown',
+    pushAfter.status === 'sent' || (pushAfter.result ?? '').includes('Slot push'),
   );
 
   await releaseAllClients();

@@ -437,6 +437,28 @@ export const agentCallbackClearArgs = z.strictObject({
 });
 export type AgentCallbackClearArgs = z.infer<typeof agentCallbackClearArgs>;
 
+/**
+ * Point a terminal at its own connector.
+ *
+ * Carries no address and no credential, and that absence is the entire design. The target is the
+ * connector's own listener: it knows which interface it is reachable on — it may have several, and
+ * a DHCP lease can move it — and it knows the Digest password its installer generated. The cloud
+ * knows neither and should not.
+ *
+ * So `configureCallback` stays refused on the proxy, because a config assembled in the cloud would
+ * name a host the terminal cannot reach. This is the command that replaces it: the operator asks
+ * for the slot to be pointed home, and the connector fills in where home is.
+ *
+ * Before this existed the only way to do it was a hand-written `curl` against the unit's ISAPI
+ * endpoint, with the Digest password copied out of the installer's output.
+ */
+export const agentPushConfigureArgs = z.strictObject({
+  slot: z.number().int().min(1).max(8),
+  /** Path on the connector's listener. Kept settable because the connector's own route could move. */
+  path: z.string().min(1).max(128).default('/hik/events'),
+});
+export type AgentPushConfigureArgs = z.infer<typeof agentPushConfigureArgs>;
+
 export interface AgentEnrolReply {
   agentKey: string;
   name: string;

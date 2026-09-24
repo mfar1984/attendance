@@ -68,7 +68,7 @@ if (!cloud.enrolled) {
 
 const puller = new Puller(config, roster, spool, state);
 const forwarder = new Forwarder(config, cloud, spool);
-const executor = new Executor(cloud, roster);
+const executor = new Executor(cloud, roster, config);
 const snapshotter = new Snapshotter(cloud, roster);
 const { app, stats } = createListener(config, roster, spool, state);
 

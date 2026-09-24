@@ -19,6 +19,7 @@ import { loadEnv } from '../env.js';
 import { badRequest, conflict, forUpdate, notFound, parseBody } from '../http.js';
 import { syncDevice } from '../sync/worker.js';
 import { checkAllDevices, checkDevice } from './health.js';
+import { CommandKind, enqueueReplacing } from './driver/commands.js';
 import { clientFor, driverFor, releaseClient } from './registry.js';
 
 const deviceInputSchema = z.object({
@@ -459,6 +460,68 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       const device = await requireDevice(idParam(request.params));
       // Credentials are dropped inside the driver, so no caller here can reach them.
       return driverFor(device).lifecycle.callbackTargets();
+    },
+  );
+
+  /**
+   * Points a terminal at its own connector's listener.
+   *
+   * Its own route rather than a branch inside `POST /api/devices/:id/push`, because the two take
+   * genuinely different arguments. That one needs a host, a port and the ingest credentials this
+   * server holds. This one must not accept a host at all: the target is the connector's own
+   * listener, and only the connector knows which interface it is reachable on — it may have
+   * several, and a DHCP lease can move it — and what Digest password its installer generated.
+   *
+   * ## Why this route had to exist
+   *
+   * Without it the only way to point a connector-served terminal at its connector was a
+   * hand-written `curl` against the unit's ISAPI endpoint, with the Digest password copied out of
+   * the installer's output. Every new site meant somebody on the LAN with a terminal password and a
+   * command to assemble correctly.
+   *
+   * Pressing the existing Push button did not do it and could not: it writes the cloud's own ingest
+   * credentials, which the connector's listener would refuse.
+   */
+  app.post(
+    '/api/devices/:id/push/via-agent',
+    { preHandler: requirePermission('settings.devices', 'sync') },
+    async (request) => {
+      const device = await requireDevice(idParam(request.params));
+
+      if (device.agentId === null) {
+        throw conflict(
+          `"${device.name}" dicapai terus oleh pelayan ini, bukan melalui connector. Guna ` +
+            'tetapan push biasa — ia menulis alamat dan kredensial pelayan ini.',
+        );
+      }
+
+      const body = parseBody(
+        z.object({
+          slot: z.coerce.number().int().min(1).max(DEVICE_LIMITS.notificationHostSlots).default(1),
+          path: z.string().trim().max(DEVICE_LIMITS.ingestPathMaxLength).default('/hik/events'),
+        }),
+        request.body,
+      );
+
+      /**
+       * Keyed on the slot so asking twice leaves one pending change.
+       *
+       * The address is deliberately absent from both the payload and this reply. There is nothing
+       * here for an operator to get wrong, and nothing for a log to leak.
+       */
+      const ack = await enqueueReplacing(
+        device.id,
+        CommandKind.configurePush,
+        `push:${String(body.slot)}`,
+        JSON.stringify({ slot: body.slot, path: body.path }),
+      );
+
+      // `WriteAck` is a union: a queued one carries the row id, an applied one does not.
+      return {
+        queued: true,
+        commandId: ack.confirmed ? null : ack.commandId,
+        slot: body.slot,
+      };
     },
   );
 }
