@@ -68,6 +68,9 @@ export {
   agentPersonRemoveArgs,
   agentPersonUpsertArgs,
   agentRebootArgs,
+  agentSnapshotBatchSchema,
+  agentSnapshotSchema,
+  SnapshotKind,
   terminalEventWireSchema,
   type AgentFaceEnrolArgs,
   type AgentFaceRemoveArgs,
@@ -82,6 +85,8 @@ export {
   type AgentEventBatch,
   type AgentHeartbeat,
   type AgentHeartbeatReply,
+  type AgentSnapshot,
+  type AgentSnapshotBatch,
   type TerminalEventPayload,
   type TerminalEventWire,
 } from './schemas/agent.js';

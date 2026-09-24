@@ -3,6 +3,7 @@ import {
   agentEnrolSchema,
   agentEventBatchSchema,
   agentHeartbeatSchema,
+  agentSnapshotBatchSchema,
   type AgentCommandItem,
   type AgentDeviceAssignment,
   type AgentEnrolReply,
@@ -28,6 +29,7 @@ import {
 import type { TerminalEvent } from '@attendance/terminal-drivers';
 import { badRequest, notFound, parseBody, unauthorized } from '../http.js';
 import { storeEvents } from '../ingest/store.js';
+import { storeSnapshots } from '../devices/snapshots.js';
 import { logger } from '../logger.js';
 
 /**
@@ -282,6 +284,35 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       });
 
       return { accepted: events.length, ...outcome };
+    },
+  );
+
+  /**
+   * What one terminal reports about its own settings.
+   *
+   * Its own endpoint rather than riding the heartbeat, because these are large and change rarely.
+   * Identity, door, reader and the option lists together run to several kilobytes per unit, and
+   * attaching that to a request arriving every sixty seconds from every site would spend bandwidth
+   * continuously to carry a value that moves only when somebody edits a setting.
+   *
+   * This is what stops the device editor being six empty tabs for a connector site. The connector
+   * cannot answer a read on demand — a browser request cannot wait for its next poll — so it
+   * reports on its own schedule and the screen renders the last report with its timestamp.
+   */
+  app.post(
+    `${AGENT_PATH}/snapshots`,
+    { preHandler: requireAgent, bodyLimit: AGENT_BODY_LIMIT },
+    async (request) => {
+      const agent = agentOf(request);
+      const body = parseBody(agentSnapshotBatchSchema, request.body);
+
+      // 404 rather than 403, for the same reason the events route does it: a terminal at another
+      // site must be indistinguishable from one that does not exist.
+      const device = await agentDevice(agent.id, body.deviceId);
+      if (!device) throw notFound('Terminal tidak dijumpai');
+
+      const stored = await storeSnapshots(device.id, body.snapshots);
+      return { stored };
     },
   );
 

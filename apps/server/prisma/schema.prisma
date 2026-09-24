@@ -494,6 +494,8 @@ model Device {
   /// deleted agent as the cause. Move or deactivate the devices first.
   agent      DeviceAgent?      @relation(fields: [agentId], references: [id], onDelete: Restrict)
   syncState  DeviceSyncState?
+  /// Only populated for a terminal behind a connector; a direct one is read live.
+  snapshots  DeviceSnapshot[]
   rawEvents  RawEvent[]
   punches    Punch[]
   enrolments DeviceEnrolment[]
@@ -593,6 +595,60 @@ model DeviceSyncState {
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@map("device_sync_state")
+}
+
+/// What a terminal behind a connector last reported about its own settings.
+///
+/// Exists because a connector collects commands and does not answer reads. The cloud cannot open
+/// a socket to a terminal on a hospital LAN, so the device editor had nothing to show for a
+/// connector site: six tabs of empty fields, each explaining that the value could not be read.
+/// Every tab an operator opens has to hold data, and this is where it comes from.
+///
+/// ## Why one JSON payload per kind rather than a column per field
+///
+/// The shapes are already defined — `TerminalIdentity`, `ClockReading`, `DoorSettings`,
+/// `ReaderSettings`, `AttendanceModeSetting`, `CallbackTarget[]` — as the driver contract that both
+/// a direct installation and the connector return. Mirroring them into columns would be a second
+/// copy of that contract, and the copy that drifts is the one the screen renders. A new read kind
+/// is then a new row rather than a migration.
+///
+/// ## This is a snapshot, and the screen must say so
+///
+/// `readAt` is when the **agent** read the terminal, not when the cloud stored it; those differ by
+/// the reporting interval. A cached value presented as live is worse than no value, because
+/// somebody changes a setting at the keypad and the screen stays confidently wrong. The editor
+/// shows the timestamp beside the data for exactly that reason.
+///
+/// Deliberately NOT written for a direct terminal. Those are read live on every request, and a
+/// cache beside a live read is a second version of the truth with nothing deciding which wins.
+model DeviceSnapshot {
+  deviceId Int
+  /// `identity`, `clock`, `attendance`, `door`, `push`, `diagnostics`.
+  ///
+  /// Keyed by editor tab rather than by ISAPI endpoint, because the tab is what an operator opens
+  /// and what has to be either populated or honestly empty. One tab can need several vendor reads.
+  kind String @db.VarChar(32)
+
+  /// The driver-contract shape, serialised. Null until the first successful read.
+  payload String? @db.Text
+  /// When the agent read it from the terminal. Null while `payload` is null.
+  readAt  DateTime?
+
+  /// Why the most recent attempt failed, if it did.
+  ///
+  /// Kept alongside `payload` rather than replacing it. A terminal that was readable an hour ago
+  /// and refuses now leaves both facts on screen: the values, and the fact they have stopped
+  /// refreshing. Clearing the payload on a failed attempt would turn one bad read into an empty
+  /// tab, which is the behaviour this table exists to remove.
+  error   String?   @db.VarChar(500)
+  errorAt DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@id([deviceId, kind])
+  @@map("device_snapshots")
 }
 
 /// Maps a person to their identity on one specific terminal.

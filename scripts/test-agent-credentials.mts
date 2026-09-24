@@ -15,10 +15,12 @@
  * client, which writes into `node_modules/.prisma/client`, which `tsx watch` notices. The dev
  * server will restart. Harmless here because this script talks to the database directly.
  */
-import { AgentStatus } from '@attendance/shared';
+import { AgentStatus, SnapshotKind } from '@attendance/shared';
 
 import { db, disconnectDb } from '../apps/server/src/db.js';
 import { cloudOrigin } from '../apps/server/src/devices/agent-admin.js';
+import { snapshotOf, storeSnapshots } from '../apps/server/src/devices/snapshots.js';
+import { encryptSecret } from '../apps/server/src/crypto.js';
 import {
   agentDevice,
   agentDevices,
@@ -323,6 +325,85 @@ try {
     restricted = true;
   }
   check('an agent with devices attached cannot be deleted', restricted);
+
+  // -------------------------------------------------------------------------
+  /*
+   * Snapshot storage, and the one property that is easy to get backwards.
+   *
+   * A connector cannot answer a read on demand — a browser request cannot wait for its next poll —
+   * so the device editor renders the last report instead. That is what stops it being six tabs of
+   * empty fields for a connector site.
+   *
+   * The property worth holding: **a failed read keeps the previous payload.** The obvious
+   * implementation overwrites the row with the error, and that turns one bad attempt into the
+   * empty tab this whole path exists to remove. A terminal that answered an hour ago and refuses
+   * now has to leave both facts on screen: the settings, and the fact they stopped refreshing.
+   */
+  section('snapshots survive a failed read');
+
+  const snapDevice = await db().device.create({
+    data: {
+      name: `ujian-agent-snap-${String(stamp)}`,
+      host: '192.168.99.77',
+      agentId: created[0] ?? null,
+      username: 'admin',
+      passwordEncrypted: encryptSecret('rahsia-snap'),
+    },
+  });
+
+  await storeSnapshots(snapDevice.id, [
+    {
+      kind: SnapshotKind.door,
+      payload: { verifyMode: 'faceOrFp', openDuration: 5 },
+      readAt: new Date('2026-09-24T10:00:00.000Z'),
+      error: null,
+    },
+  ]);
+
+  const good = await snapshotOf(snapDevice.id, SnapshotKind.door);
+  check('a reported snapshot is stored', good !== null);
+  check(
+    'the driver-contract shape survives the round trip',
+    JSON.stringify(good?.payload) === JSON.stringify({ verifyMode: 'faceOrFp', openDuration: 5 }),
+  );
+  check('it records when the agent read the terminal', good?.readAt === '2026-09-24T10:00:00.000Z');
+  check('and carries no error', good?.error === null);
+
+  await storeSnapshots(snapDevice.id, [
+    { kind: SnapshotKind.door, readAt: null, error: 'Terminal tidak menjawab' },
+  ]);
+
+  const afterFailure = await snapshotOf(snapDevice.id, SnapshotKind.door);
+  check(
+    'a failed read keeps the last good values',
+    JSON.stringify(afterFailure?.payload) ===
+      JSON.stringify({ verifyMode: 'faceOrFp', openDuration: 5 }),
+  );
+  check('and leaves their timestamp alone, so the screen can say how old they are',
+    afterFailure?.readAt === '2026-09-24T10:00:00.000Z');
+  check('while naming why the newest attempt failed', afterFailure?.error === 'Terminal tidak menjawab');
+  check('and stamping when that happened', afterFailure?.errorAt !== null);
+
+  await storeSnapshots(snapDevice.id, [
+    {
+      kind: SnapshotKind.door,
+      payload: { verifyMode: 'face', openDuration: 3 },
+      readAt: new Date('2026-09-24T11:00:00.000Z'),
+      error: null,
+    },
+  ]);
+
+  const recovered = await snapshotOf(snapDevice.id, SnapshotKind.door);
+  check('a later success clears the error, because the condition is over', recovered?.error === null);
+  check('and replaces the values', JSON.stringify(recovered?.payload) === JSON.stringify({ verifyMode: 'face', openDuration: 3 }));
+
+  check('a kind never reported is absent rather than empty', (await snapshotOf(snapDevice.id, SnapshotKind.push)) === null);
+
+  await db().device.delete({ where: { id: snapDevice.id } });
+  check(
+    'snapshots go with the device, since they describe nothing without it',
+    (await db().deviceSnapshot.count({ where: { deviceId: snapDevice.id } })) === 0,
+  );
 
   // -------------------------------------------------------------------------
   /*

@@ -183,6 +183,64 @@ export const agentCommandOutcomeSchema = z.strictObject({
 
 export type AgentCommandOutcome = z.infer<typeof agentCommandOutcomeSchema>;
 
+/**
+ * What a connector reports about one terminal's own settings.
+ *
+ * Keyed by editor tab rather than by ISAPI endpoint, because the tab is what an operator opens
+ * and what has to be either populated or honestly empty. One tab can need several vendor reads,
+ * and grouping by endpoint would leave the screen assembling a picture from parts that arrived at
+ * different times.
+ */
+export const SnapshotKind = {
+  identity: 'identity',
+  clock: 'clock',
+  attendance: 'attendance',
+  door: 'door',
+  push: 'push',
+  diagnostics: 'diagnostics',
+} as const;
+export type SnapshotKind = (typeof SnapshotKind)[keyof typeof SnapshotKind];
+
+/**
+ * One reported snapshot: either what the terminal said, or why it could not be asked.
+ *
+ * Both are useful and they are not exclusive on the receiving side — the cloud keeps the last
+ * good payload alongside the newest error, so a terminal that was readable an hour ago and
+ * refuses now leaves both facts on screen. Clearing the values on a failed read would turn one
+ * bad attempt into an empty tab, which is the behaviour this whole path exists to remove.
+ *
+ * `payload` is `unknown` on the wire on purpose. Its shape is the driver contract — `TerminalIdentity`,
+ * `ClockReading`, `DoorSettings` and the rest — and re-declaring those here as Zod schemas would be
+ * a second copy of a contract that already exists, with the copy that drifts being the one the
+ * screen renders. The cloud stores it and the screen types it; nothing in between needs to know.
+ */
+export const agentSnapshotSchema = z.strictObject({
+  kind: z.enum(SnapshotKind),
+  /** Present when the read succeeded. Serialised by the caller, so any JSON value is valid. */
+  payload: z.unknown().optional(),
+  /** When the agent read the terminal, not when this arrived. */
+  readAt: z.coerce.date().nullable(),
+  /** Present when the read failed. */
+  error: z.string().max(500).nullable(),
+});
+
+export type AgentSnapshot = z.infer<typeof agentSnapshotSchema>;
+
+/**
+ * A batch of snapshots for one terminal.
+ *
+ * Its own endpoint rather than riding the heartbeat, because these are large and change rarely.
+ * Identity, door, reader and the option lists together run to several kilobytes per unit, and
+ * attaching that to a request which arrives every sixty seconds from every site would spend
+ * bandwidth continuously to carry a value that moves when somebody edits a setting.
+ */
+export const agentSnapshotBatchSchema = z.strictObject({
+  deviceId: z.number().int().positive(),
+  snapshots: z.array(agentSnapshotSchema).min(1).max(12),
+});
+
+export type AgentSnapshotBatch = z.infer<typeof agentSnapshotBatchSchema>;
+
 // ---------------------------------------------------------------------------
 // Responses. Produced by the cloud, so these are types rather than schemas.
 // ---------------------------------------------------------------------------
