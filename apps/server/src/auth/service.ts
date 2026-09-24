@@ -238,12 +238,36 @@ export async function resolveSession(token: string): Promise<AuthenticatedUser |
   // role and losing what the accounts under it were allowed to do.
   if (session.account.role.status !== 'active') return null;
 
-  // Throttled so an active operator does not generate a write per request.
-  if (Date.now() - session.lastSeenAt.getTime() > 60_000) {
-    await prisma.session.update({
-      where: { tokenHash: session.tokenHash },
-      data: { lastSeenAt: new Date() },
-    });
+  /**
+   * Throttled so an active operator does not generate a write per request.
+   *
+   * ## Why the cutoff is in the `WHERE` and not only in the `if`
+   *
+   * This runs on every authenticated request, and a screen opening fires several at once. All of
+   * them read the same session row, all of them find `lastSeenAt` older than a minute, and all of
+   * them then wrote to that one row at the same moment — which MariaDB refuses with 1020, "record
+   * has changed since last read".
+   *
+   * Moving the condition into the statement makes it a compare-and-swap: the first writer matches,
+   * the rest match nothing and become no-ops. That removes the contention rather than tolerating
+   * it, and it is the same shape as `exchangeEnrolToken` claiming a token.
+   *
+   * ## And why it cannot fail the request
+   *
+   * `updateMany` rather than `update` because the singular form reads the row back and carries the
+   * optimistic check this is avoiding, and because a session that vanished mid-request should not
+   * raise `RecordNotFound` on a liveness stamp. The swallowed rejection is the same trade
+   * `revokeSession` makes below: failing the request an operator is waiting on, because a
+   * last-seen timestamp could not be written, is the wrong way round.
+   */
+  const staleBefore = new Date(Date.now() - 60_000);
+  if (session.lastSeenAt < staleBefore) {
+    await prisma.session
+      .updateMany({
+        where: { tokenHash: session.tokenHash, lastSeenAt: { lt: staleBefore } },
+        data: { lastSeenAt: new Date() },
+      })
+      .catch(() => undefined);
   }
 
   return toAuthenticatedUser(session.account);
