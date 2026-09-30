@@ -79,6 +79,8 @@ export interface OvertimeRequestPage {
   total: number;
   /** Per status, computed ignoring the status filter so choosing a chip cannot zero the rest. */
   counts: Partial<Record<OvertimeStatus, number>>;
+  /** Waiting across every date, for the heading — the chips are scoped to the date window. */
+  pendingTotal: number;
   /**
    * Rungs in the configured approval chain. Zero means one decision settles a request.
    *
@@ -128,6 +130,12 @@ export interface OvertimeDecision {
 }
 
 export const overtimeApi = {
+  /** Filtered server-side and gated on overtime: five thousand staff is not a dropdown. */
+  searchStaff: (query: string) =>
+    api.get<Array<{ id: number; employeeNo: string; fullName: string; department: { name: string } | null }>>(
+      `/api/overtime-requests/staff-search?q=${encodeURIComponent(query)}`,
+    ),
+
   rates: () => api.get<OvertimeRate[]>('/api/overtime-rates'),
 
   createRate: (body: {

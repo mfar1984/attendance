@@ -7,9 +7,8 @@ import {
   Trash2,
   TriangleAlert,
   UserPlus,
-  Users,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
 import {
@@ -28,10 +27,10 @@ import {
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
-import { Badge, Button, Field } from '../components/ui';
+import { Badge, Button, Field, SelectField, TextArea } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
-import type { ApprovalTrailEntry } from '../lib/hr-api';
+import { signedNotice, type ApprovalTrailEntry } from '../lib/hr-api';
 import { formatDateTime, lookupsApi, todayIso, type Lookups } from '../lib/operations-api';
 import {
   APPLICANT_STATUS_LABELS,
@@ -63,14 +62,32 @@ const STATUS_TONE: Record<ApplicantStatus, 'neutral' | 'warning' | 'danger' | 's
   withdrawn: 'neutral',
 };
 
+/** Every stage, withdrawn included: a stage without a chip is a stage nobody can filter to. */
+const STATUSES: ApplicantStatus[] = [
+  'new',
+  'screening',
+  'interview',
+  'offered',
+  'hired',
+  'rejected',
+  'withdrawn',
+];
+
 const SCREEN = 'hr.applicants';
 
-/** Candidates against live postings. */
+/** Candidates against live postings. The card belongs to the page, so the archive can reuse the panel. */
 export function ApplicantsPage(): ReactNode {
-  return <ApplicantsPanel archived={false} />;
+  return (
+    <PanelCard
+      title={<T k="recruit.applicant.title" />}
+      subtitle={<T k="recruit.applicant.subtitle" />}
+    >
+      <ApplicantsPanel archived={false} />
+    </PanelCard>
+  );
 }
 
-/** Candidates against closed postings, for the archive screen. */
+/** Candidates against closed postings, mounted as a tab of the archive screen. */
 export function ArchivedApplicantsPanel(): ReactNode {
   return <ApplicantsPanel archived />;
 }
@@ -82,6 +99,8 @@ function ApplicantsPanel({ archived }: { archived: boolean }): ReactNode {
   const [pageSize, setPageSize] = useState(30);
   const [status, setStatus] = useState<ApplicantStatus | undefined>(undefined);
   const [postingId, setPostingId] = useState('');
+  const [search, setSearch] = useState('');
+  const [debounced, setDebounced] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -90,28 +109,46 @@ function ApplicantsPanel({ archived }: { archived: boolean }): ReactNode {
   const [advancing, setAdvancing] = useState<ApplicantRow | null>(null);
   const [deciding, setDeciding] = useState<{ row: ApplicantRow; approve: boolean } | null>(null);
   const [hiring, setHiring] = useState<ApplicantRow | null>(null);
+  const [removing, setRemoving] = useState<ApplicantRow | null>(null);
   const { t } = useLabels();
   const { can } = useAuth();
+  /*
+   * Which load is the latest. A search answered out of order would otherwise leave the table
+   * showing the rows for the previous term under the box that now holds the next one.
+   */
+  const latest = useRef(0);
+
+  // Same debounce as the leave list: one request per pause in typing, not one per key.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebounced(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const load = useCallback(async () => {
+    const mine = ++latest.current;
     setLoading(true);
     try {
-      setData(
-        await recruitmentApi.applicants({
-          page,
-          pageSize,
-          archived,
-          ...(status === undefined ? {} : { status }),
-          ...(postingId === '' ? {} : { postingId: Number(postingId) }),
-        }),
-      );
+      const result = await recruitmentApi.applicants({
+        page,
+        pageSize,
+        archived,
+        ...(status === undefined ? {} : { status }),
+        ...(postingId === '' ? {} : { postingId: Number(postingId) }),
+        ...(debounced === '' ? {} : { search: debounced }),
+      });
+      if (mine !== latest.current) return;
+      setData(result);
       setError(null);
     } catch (cause) {
+      if (mine !== latest.current) return;
       setError(cause instanceof Error ? cause.message : t('recruit.applicant.error.load'));
     } finally {
-      setLoading(false);
+      if (mine === latest.current) setLoading(false);
     }
-  }, [page, pageSize, status, postingId, archived, t]);
+  }, [page, pageSize, status, postingId, debounced, archived, t]);
 
   useEffect(() => {
     void load();
@@ -120,25 +157,28 @@ function ApplicantsPanel({ archived }: { archived: boolean }): ReactNode {
   useEffect(() => {
     void (async () => {
       try {
-        // Only live postings can take a new application, so the picker offers those.
-        const result = await recruitmentApi.postings({ status: 'published', pageSize: 200 });
+        /*
+          The postings this list can be filtered by. Live: the published ones, which are also the
+          only ones the create form may offer. Archive: the closed ones its candidates applied to.
+        */
+        const result = await recruitmentApi.postings(
+          archived ? { archived: true, pageSize: 200 } : { status: 'published', pageSize: 200 },
+        );
         setPostings(result.rows);
       } catch {
         // The filter and the create form fall back to empty, which the dialog states.
       }
     })();
-  }, []);
+  }, [archived]);
 
   const rows = data?.rows ?? [];
+  // The heading counts every stage, so choosing a chip does not make it shrink with the table.
+  const count = Object.values(data?.counts ?? {}).reduce((sum, value) => sum + (value ?? 0), 0);
 
   return (
-    <PanelCard
-      title={<T k="recruit.applicant.title" />}
-      subtitle={<T k="recruit.applicant.subtitle" />}
-    >
+    <>
       <PanelSection
-        icon={<Users className="size-4" aria-hidden />}
-        title={<T k={archived ? 'recruit.archive.tab.applicants' : 'recruit.applicant.title'} />}
+        title={<T k="recruit.applicant.count" vars={{ count }} />}
         action={
           !archived && can(SCREEN, 'edit') ? (
             <Button onClick={() => setCreating(true)}>
@@ -155,9 +195,7 @@ function ApplicantsPanel({ archived }: { archived: boolean }): ReactNode {
           setStatus(id as ApplicantStatus | undefined);
           setPage(1);
         }}
-        chips={(
-          ['new', 'screening', 'interview', 'offered', 'hired', 'rejected'] as ApplicantStatus[]
-        ).map((key) => ({
+        chips={STATUSES.map((key) => ({
           id: key,
           label: <T k={APPLICANT_STATUS_LABELS[key]} />,
           count: data?.counts[key] ?? 0,
@@ -166,15 +204,19 @@ function ApplicantsPanel({ archived }: { archived: boolean }): ReactNode {
       />
 
       <FilterRow
-        dirty={status !== undefined || postingId !== ''}
+        search={search}
+        onSearch={setSearch}
+        placeholder={t('recruit.applicant.search')}
+        dirty={status !== undefined || postingId !== '' || search.length > 0}
         onReset={() => {
           setStatus(undefined);
           setPostingId('');
+          setSearch('');
           setPage(1);
         }}
       >
         <FacetSelect
-          label={t('recruit.applicant.form.posting')}
+          label={t('recruit.applicant.filter.allPostings')}
           value={postingId}
           onChange={(value) => {
             setPostingId(value);
@@ -187,14 +229,20 @@ function ApplicantsPanel({ archived }: { archived: boolean }): ReactNode {
         />
       </FilterRow>
 
-      <PanelBody className="space-y-2 pb-0">
-        <Feedback error={error} notice={notice} />
-        <PanelNote icon={<CircleAlert className="size-3.5" aria-hidden />}>
-          <T k="recruit.applicant.note.offer" />
-        </PanelNote>
-      </PanelBody>
+      {(error !== null || notice !== null || !archived) && (
+        <PanelBody className="space-y-2 pb-0">
+          <Feedback error={error} notice={notice} />
+          {/* How an offer is made, on the screen where offers are made. */}
+          {!archived && (
+            <PanelNote icon={<CircleAlert className="size-3.5" aria-hidden />}>
+              <T k="recruit.applicant.note.offer" />
+            </PanelNote>
+          )}
+        </PanelBody>
+      )}
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={rows.length}
         empty={<T k="recruit.applicant.empty" />}
@@ -220,11 +268,7 @@ function ApplicantsPanel({ archived }: { archived: boolean }): ReactNode {
             onApprove={() => setDeciding({ row, approve: true })}
             onReject={() => setDeciding({ row, approve: false })}
             onHire={() => setHiring(row)}
-            onChanged={async (message) => {
-              setNotice(message);
-              await load();
-            }}
-            onError={setError}
+            onRemove={() => setRemoving(row)}
           />
         ))}
       </RecordTable>
@@ -292,7 +336,19 @@ function ApplicantsPanel({ archived }: { archived: boolean }): ReactNode {
           }}
         />
       )}
-    </PanelCard>
+
+      {removing !== null && (
+        <RemoveDialog
+          target={removing}
+          onClose={() => setRemoving(null)}
+          onDone={async (message) => {
+            setRemoving(null);
+            setNotice(message);
+            await load();
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -305,8 +361,7 @@ function ApplicantRowView({
   onApprove,
   onReject,
   onHire,
-  onChanged,
-  onError,
+  onRemove,
 }: {
   row: ApplicantRow;
   chainLength: number;
@@ -316,8 +371,7 @@ function ApplicantRowView({
   onApprove: () => void;
   onReject: () => void;
   onHire: () => void;
-  onChanged: (message: string) => Promise<void>;
-  onError: (message: string) => void;
+  onRemove: () => void;
 }): ReactNode {
   const [detail, setDetail] = useState<{ coverNote: string | null; trail: ApprovalTrailEntry[] } | null>(
     null,
@@ -333,7 +387,7 @@ function ApplicantRowView({
   const canAdvance = row.nextStatuses.some((next) => next !== 'offered' && next !== 'hired');
   const canDecide = row.status === 'interview';
   const canHire = row.status === 'offered' && row.staffId === null;
-  const live = row.nextStatuses.length > 0;
+  const hired = row.staffId !== null;
 
   useEffect(() => {
     if (!expanded || detail !== null) return;
@@ -384,10 +438,9 @@ function ApplicantRowView({
           )}
         </td>
         <td className="px-2 py-2">
-          <Badge tone={STATUS_TONE[row.status]}>
-            <span className="uppercase">
-              <T k={APPLICANT_STATUS_LABELS[row.status]} />
-            </span>
+          {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
+          <Badge tone={STATUS_TONE[row.status]} className="uppercase">
+            <T k={APPLICANT_STATUS_LABELS[row.status]} />
           </Badge>
           {chainLength > 1 && row.status === 'interview' && row.currentLevel > 0 && (
             <span className="mt-0.5 block text-[10px] text-slate-500">
@@ -397,10 +450,12 @@ function ApplicantRowView({
         </td>
         <td className="px-2 py-2 pr-4">
           <RowActions>
+            {/* Amber: moving a candidate between stages changes the record. */}
             {canAdvance && can(SCREEN, 'edit') && (
               <RowAction
                 icon={<MoveRight className="size-4" aria-hidden />}
                 label={t('recruit.applicant.action.advance')}
+                tone="edit"
                 onClick={onAdvance}
               />
             )}
@@ -428,19 +483,20 @@ function ApplicantRowView({
                 onClick={onHire}
               />
             )}
-            {can(SCREEN, 'delete') && row.staffId === null && (
+            {/*
+              Disabled with the reason rather than hidden once the candidate is hired: the staff
+              record refers to the application, and a bin that silently vanishes from one row reads
+              as a permission somebody lost.
+            */}
+            {can(SCREEN, 'delete') && (
               <RowAction
                 icon={<Trash2 className="size-4" aria-hidden />}
-                label={t('recruit.applicant.action.delete')}
+                label={
+                  hired ? t('recruit.applicant.row.locked') : t('recruit.applicant.action.delete')
+                }
                 tone="danger"
-                onClick={async () => {
-                  try {
-                    await recruitmentApi.deleteApplicant(row.id);
-                    await onChanged(`${row.applicantNo} dibuang.`);
-                  } catch (cause) {
-                    onError(cause instanceof Error ? cause.message : '');
-                  }
-                }}
+                disabled={hired}
+                onClick={onRemove}
               />
             )}
             <ExpandButton
@@ -478,12 +534,6 @@ function ApplicantRowView({
             {row.status === 'hired' && (
               <PanelNote tone="warn" className="mt-3">
                 <T k="recruit.applicant.note.hired" />
-              </PanelNote>
-            )}
-
-            {live && can(SCREEN, 'delete') && (
-              <PanelNote tone="danger" className="mt-2">
-                <T k="recruit.applicant.note.delete" />
               </PanelNote>
             )}
 
@@ -565,15 +615,15 @@ function NewApplicantDialog({
     try {
       const created = await recruitmentApi.createApplicant({
         postingId: Number(postingId),
-        fullName,
-        ...(icNo === '' ? {} : { icNo }),
-        ...(email === '' ? {} : { email }),
-        ...(phone === '' ? {} : { phone }),
-        ...(coverNote === '' ? {} : { coverNote }),
+        fullName: fullName.trim(),
+        ...(icNo.trim() === '' ? {} : { icNo: icNo.trim() }),
+        ...(email.trim() === '' ? {} : { email: email.trim() }),
+        ...(phone.trim() === '' ? {} : { phone: phone.trim() }),
+        ...(coverNote.trim() === '' ? {} : { coverNote: coverNote.trim() }),
       });
-      await onDone(`${created.applicantNo} direkodkan.`);
+      await onDone(t('hr.record.created', { number: created.applicantNo }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
@@ -582,42 +632,60 @@ function NewApplicantDialog({
     <Dialog
       title={<T k="recruit.applicant.form.title" />}
       titleText={t('recruit.applicant.form.title')}
-      width="lg"
+      width="2xl"
       onClose={onClose}
     >
       <div className="space-y-4">
         <Feedback error={error} />
 
+        {/*
+          The vacancy first: it is what the application is for, and with none published there is
+          nothing below worth filling in.
+        */}
         {postings.length === 0 ? (
           <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
             <T k="recruit.applicant.form.posting.hint" />
           </PanelNote>
         ) : (
-          <FacetSelect
-            label={t('recruit.applicant.form.posting')}
+          <SelectField
+            label={<T k="recruit.applicant.form.posting" />}
+            hint={<T k="recruit.applicant.form.posting.hint" />}
             value={postingId}
-            onChange={setPostingId}
-            options={postings.map((row) => ({
-              value: String(row.id),
-              label: `${row.code} — ${row.title}`,
-            }))}
-          />
+            onChange={(event) => setPostingId(event.target.value)}
+          >
+            {/* A prompt, not a choice: submitting stays disabled until a posting is picked. */}
+            <option value="">{t('recruit.applicant.form.posting')}</option>
+            {postings.map((row) => (
+              <option key={row.id} value={String(row.id)}>
+                {`${row.code} — ${row.title}`}
+              </option>
+            ))}
+          </SelectField>
         )}
 
-        <Field
-          label={<T k="recruit.applicant.form.fullName" />}
-          value={fullName}
-          maxLength={190}
-          onChange={(event) => setFullName(event.target.value)}
-        />
-
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid items-start gap-4 sm:grid-cols-2">
+          <Field
+            label={<T k="recruit.applicant.form.fullName" />}
+            value={fullName}
+            maxLength={190}
+            onChange={(event) => setFullName(event.target.value)}
+          />
           <Field
             label={<T k="recruit.applicant.form.icNo" />}
             hint={<T k="recruit.applicant.form.icNo.hint" />}
             value={icNo}
             maxLength={20}
             onChange={(event) => setIcNo(event.target.value)}
+          />
+        </div>
+
+        <div className="grid items-start gap-4 sm:grid-cols-2">
+          <Field
+            label={<T k="recruit.applicant.form.email" />}
+            type="email"
+            value={email}
+            maxLength={190}
+            onChange={(event) => setEmail(event.target.value)}
           />
           <Field
             label={<T k="recruit.applicant.form.phone" />}
@@ -627,27 +695,15 @@ function NewApplicantDialog({
           />
         </div>
 
-        <Field
-          label={<T k="recruit.applicant.form.email" />}
-          type="email"
-          value={email}
-          maxLength={190}
-          onChange={(event) => setEmail(event.target.value)}
+        {/* The last block before the footer, so it carries the `pb-2`. */}
+        <TextArea
+          label={<T k="recruit.applicant.form.coverNote" />}
+          rows={4}
+          value={coverNote}
+          maxLength={4000}
+          wrapperClassName="pb-2"
+          onChange={(event) => setCoverNote(event.target.value)}
         />
-
-        <div>
-          <label htmlFor="applicant-cover" className="block text-sm font-medium text-slate-700">
-            <T k="recruit.applicant.form.coverNote" />
-          </label>
-          <textarea
-            id="applicant-cover"
-            rows={4}
-            value={coverNote}
-            maxLength={4000}
-            onChange={(event) => setCoverNote(event.target.value)}
-            className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
-        </div>
 
         <DialogFooter
           onClose={onClose}
@@ -688,12 +744,17 @@ function AdvanceDialog({
     try {
       await recruitmentApi.setApplicantStatus(target.id, {
         status,
-        ...(note === '' ? {} : { note }),
+        ...(note.trim() === '' ? {} : { note: note.trim() }),
         ...(interviewAt === '' ? {} : { interviewAt: new Date(interviewAt).toISOString() }),
       });
-      await onDone(`${target.applicantNo}: ${t(APPLICANT_STATUS_LABELS[status])}.`);
+      await onDone(
+        t('recruit.advance.done', {
+          number: target.applicantNo,
+          status: t(APPLICANT_STATUS_LABELS[status]),
+        }),
+      );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
@@ -709,15 +770,21 @@ function AdvanceDialog({
       <div className="space-y-4">
         <Feedback error={error} />
 
-        <FacetSelect
-          label={t('recruit.advance.status')}
+        {/*
+          A form select, not a facet: the stage always has a value, and a facet's empty option
+          would let somebody submit a move to nowhere.
+        */}
+        <SelectField
+          label={<T k="recruit.advance.status" />}
           value={status}
-          onChange={(value) => setStatus(value as ApplicantStatus)}
-          options={options.map((value) => ({
-            value,
-            label: t(APPLICANT_STATUS_LABELS[value]),
-          }))}
-        />
+          onChange={(event) => setStatus(event.target.value as ApplicantStatus)}
+        >
+          {options.map((value) => (
+            <option key={value} value={value}>
+              {t(APPLICANT_STATUS_LABELS[value])}
+            </option>
+          ))}
+        </SelectField>
 
         {/* Only asked for when the new stage is an interview. */}
         {status === 'interview' && (
@@ -734,6 +801,7 @@ function AdvanceDialog({
           {...(status === 'rejected' ? { hint: <T k="recruit.advance.note.required" /> } : {})}
           value={note}
           maxLength={500}
+          wrapperClassName="pb-2"
           onChange={(event) => setNote(event.target.value)}
         />
 
@@ -770,20 +838,18 @@ function DecideDialog({
     try {
       const result = await recruitmentApi.decideApplicant(target.id, {
         decision: approve ? 'approved' : 'rejected',
-        ...(note === '' ? {} : { note }),
+        ...(note.trim() === '' ? {} : { note: note.trim() }),
       });
 
-      const base = !approve
-        ? `${target.applicantNo} tidak berjaya.`
-        : result.finalized
-          ? `${target.applicantNo} ditawarkan jawatan.`
-          : `${target.applicantNo}: ${t('hr.approval.progress', {
-              level: result.level,
-              total: result.totalLevels,
-            })}.`;
-      await onDone(base);
+      await onDone(
+        !approve
+          ? t('recruit.decide.done.rejected', { number: target.applicantNo })
+          : result.finalized
+            ? t('recruit.decide.done.offered', { number: target.applicantNo })
+            : signedNotice(t, target.applicantNo, result),
+      );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
@@ -816,6 +882,7 @@ function DecideDialog({
           {...(approve ? {} : { hint: <T k="recruit.advance.note.required" /> })}
           value={note}
           maxLength={500}
+          wrapperClassName="pb-2"
           onChange={(event) => setNote(event.target.value)}
         />
 
@@ -864,9 +931,9 @@ function HireDialog({
     setBusy(true);
     try {
       const result = await recruitmentApi.hire(target.id, {
-        employeeNo,
+        employeeNo: employeeNo.trim(),
         hireDate,
-        ...(position === '' ? {} : { position }),
+        ...(position.trim() === '' ? {} : { position: position.trim() }),
         departmentId: departmentId === '' ? null : Number(departmentId),
         locationId: locationId === '' ? null : Number(locationId),
       });
@@ -874,10 +941,12 @@ function HireDialog({
         t('recruit.hire.done', { name: target.fullName, employeeNo: result.employeeNo }),
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
+
+  const noIc = target.icNo === null || target.icNo.trim() === '';
 
   return (
     <Dialog
@@ -894,7 +963,7 @@ function HireDialog({
           Stated before the attempt. An IC is not required to apply but is required to become an
           employee, because payroll and the statutory returns are keyed on it.
         */}
-        {(target.icNo === null || target.icNo.trim() === '') && (
+        {noIc && (
           <PanelNote tone="danger" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
             <T k="recruit.applicant.form.icNo.hint" />
           </PanelNote>
@@ -907,11 +976,12 @@ function HireDialog({
           <Detail label={<T k="recruit.applicant.form.phone" />} value={target.phone ?? '—'} />
         </DetailGrid>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid items-start gap-4 sm:grid-cols-2">
           <Field
             label={<T k="recruit.hire.employeeNo" />}
             value={employeeNo}
             maxLength={32}
+            autoFocus
             onChange={(event) => setEmployeeNo(event.target.value)}
           />
           <Field
@@ -930,37 +1000,117 @@ function HireDialog({
           onChange={(event) => setPosition(event.target.value)}
         />
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <FacetSelect
-            label={t('recruit.hire.department')}
+        {/*
+          Form selects with "none" written out: a hire without a department is valid, and the staff
+          form can set it later. A facet's empty option would say "no filter" instead.
+        */}
+        <div className="grid items-start gap-4 sm:grid-cols-2">
+          <SelectField
+            label={<T k="recruit.hire.department" />}
             value={departmentId}
-            onChange={setDepartmentId}
-            options={(lookups?.departments ?? []).map((row) => ({
-              value: String(row.id),
-              label: row.name,
-            }))}
-          />
-          <FacetSelect
-            label={t('recruit.hire.location')}
+            onChange={(event) => setDepartmentId(event.target.value)}
+          >
+            <option value="">{t('staffForm.none')}</option>
+            {(lookups?.departments ?? []).map((row) => (
+              <option key={row.id} value={String(row.id)}>
+                {row.name}
+              </option>
+            ))}
+          </SelectField>
+          <SelectField
+            label={<T k="recruit.hire.location" />}
             value={locationId}
-            onChange={setLocationId}
-            options={(lookups?.locations ?? []).map((row) => ({
-              value: String(row.id),
-              label: row.name,
-            }))}
-          />
+            onChange={(event) => setLocationId(event.target.value)}
+          >
+            <option value="">{t('staffForm.none')}</option>
+            {(lookups?.locations ?? []).map((row) => (
+              <option key={row.id} value={String(row.id)}>
+                {row.name}
+              </option>
+            ))}
+          </SelectField>
         </div>
 
-        <PanelNote tone="warn">
-          <T k="recruit.applicant.note.hired" />
-        </PanelNote>
+        {/* The last block before the footer, so it carries the `pb-2`. */}
+        <div className="pb-2">
+          <PanelNote tone="warn">
+            <T k="recruit.applicant.note.hired" />
+          </PanelNote>
+        </div>
 
         <DialogFooter
           onClose={onClose}
           onSubmit={() => void submit()}
           busy={busy}
-          disabled={employeeNo.trim() === '' || target.icNo === null || target.icNo.trim() === ''}
+          disabled={employeeNo.trim() === '' || noIc}
           submitLabel={<T k="recruit.hire.submit" />}
+        />
+      </div>
+    </Dialog>
+  );
+}
+
+/**
+ * The second step of removing a candidate.
+ *
+ * A real delete of a member of the public's personal data, with their decision trail, and it
+ * cannot be undone — so it is not a single click on a bin. The consequence is stated here, at the
+ * moment of deciding, rather than in the expanded row where it used to sit and be read afterwards.
+ */
+function RemoveDialog({
+  target,
+  onClose,
+  onDone,
+}: {
+  target: ApplicantRow;
+  onClose: () => void;
+  onDone: (message: string) => Promise<void>;
+}): ReactNode {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { t } = useLabels();
+
+  const submit = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      await recruitmentApi.deleteApplicant(target.id);
+      await onDone(t('recruit.applicant.notice.removed', { number: target.applicantNo }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('app.error.remove'));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      title={<T k="recruit.applicant.remove.title" vars={{ number: target.applicantNo }} />}
+      titleText={t('recruit.applicant.remove.title', { number: target.applicantNo })}
+      width="md"
+      onClose={onClose}
+    >
+      <div className="space-y-4">
+        <Feedback error={error} />
+
+        <DetailGrid>
+          <Detail label={<T k="recruit.applicant.column.name" />} value={target.fullName} />
+          <Detail
+            label={<T k="recruit.applicant.column.posting" />}
+            value={`${target.postingCode} — ${target.postingTitle}`}
+          />
+        </DetailGrid>
+
+        {/* The last block before the footer, so it carries the `pb-2`. */}
+        <div className="pb-2">
+          <PanelNote tone="danger" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+            <T k="recruit.applicant.note.delete" />
+          </PanelNote>
+        </div>
+
+        <DialogFooter
+          onClose={onClose}
+          onSubmit={() => void submit()}
+          busy={busy}
+          submitLabel={<T k="app.remove" />}
         />
       </div>
     </Dialog>

@@ -131,7 +131,7 @@ export const EN_LABELS: Partial<Record<LabelKey, string>> = {
   'nav.hr.career': 'Job Postings',
   'nav.hr.applicants': 'Applicants',
   'nav.hr.careerArchive': 'Recruitment Archive',
-  'nav.hr.careerSettings': 'Recruitment Settings',
+  'nav.hr.careerSettings': 'Settings',
 
   'nav.group.kpi': 'KPI & Appraisal',
   'nav.hr.kpiTemplates': 'KPI Forms',
@@ -1521,8 +1521,6 @@ export const EN_LABELS_SCHEDULE: Partial<Record<LabelKey, string>> = {
     'Approval writes the leave days to the work calendar and recomputes attendance — without that, somebody whose leave was approved is still reported absent.',
   'leave.tab.types': 'Leave Types',
 
-  'leave.request.none': 'No applications awaiting a decision',
-  'leave.request.pending': '{count} awaiting a decision',
   /*
    * "surfaces as a complaint, not as a bug" is the whole sentence's purpose — it says why this rule
    * is worth having rather than what the rule is.
@@ -1643,7 +1641,6 @@ export const EN_LABELS_SCHEDULE: Partial<Record<LabelKey, string>> = {
   'leave.type.subtitle':
     'The seeded entitlements are the statutory minimum as a starting point, not policy — every organisation adjusts them.',
   'leave.type.add': 'Add Type',
-  'leave.type.search': 'Search code or name…',
   'leave.type.empty': 'No leave types yet.',
   'leave.type.error.load': 'Could not load leave types',
   'leave.type.removed': 'Leave type “{code}” removed.',
@@ -1666,7 +1663,6 @@ export const EN_LABELS_SCHEDULE: Partial<Record<LabelKey, string>> = {
    */
   'leave.type.row.edit': 'Update leave type',
   'leave.type.row.remove': 'Remove leave type',
-  'leave.type.row.locked': '{count} applications use it — deactivate it instead',
   /*
    * `leave.type.backdatedNote` was here — a banner under the table explaining why sick and emergency
    * leave allow past dates. It repeated the checkbox hint inside the dialog, which is where the
@@ -1702,7 +1698,6 @@ export const EN_LABELS_REQUESTS: Partial<Record<LabelKey, string>> = {
   'overtime.title': 'Overtime Applications',
   'overtime.subtitle':
     'The hours come from scans the attendance engine already measured, not from a typed number. The question a reviewer answers is whether it was authorised, not whether it happened.',
-  'overtime.tab.requests': 'Applications',
   'overtime.tab.rates': 'Rates',
 
   // Malaysian statutory day categories. "Public holiday" is the official English term.
@@ -1725,7 +1720,6 @@ export const EN_LABELS_REQUESTS: Partial<Record<LabelKey, string>> = {
   'overtime.column.rate': 'Rate',
   'overtime.column.amount': 'Amount',
   'overtime.hours.claimed': '{claimed} of {measured}',
-  'overtime.hours.measuredNote': 'Measured from scans: {hours} hours',
   'overtime.empty': 'No overtime applications in this range.',
   'overtime.error.load': 'Could not load the overtime application list.',
   'overtime.action.new': 'Record Overtime',
@@ -1743,8 +1737,6 @@ export const EN_LABELS_REQUESTS: Partial<Record<LabelKey, string>> = {
   'overtime.new.title': 'Record Overtime',
   'overtime.new.description':
     'Choose the staff member and the date first. The claimable hours come from what the engine measured for that day.',
-  'overtime.new.staff': 'Staff',
-  'overtime.new.staffPlaceholder': 'Search name or staff no.',
   'overtime.new.workDate': 'Work date',
   'overtime.new.minutes': 'Minutes claimed',
   'overtime.new.minutesHint':
@@ -1782,7 +1774,6 @@ export const EN_LABELS_REQUESTS: Partial<Record<LabelKey, string>> = {
   'overtime.decide.mismatch':
     'The rate chosen is not for that day type. It is allowed, but it should be deliberate.',
 
-  'overtime.rates.title': 'Overtime Rates',
   /*
    * "silently pay a public holiday at the weekday rate" is the failure this paragraph exists to
    * prevent, and it has to survive translation intact.
@@ -1805,14 +1796,12 @@ export const EN_LABELS_REQUESTS: Partial<Record<LabelKey, string>> = {
   'overtime.rates.shortfallNote':
     'A rate below the Employment Act minimum is stated rather than blocked. An organisation that genuinely pays less must be able to record what it pays — a screen that stays silent is how that shortfall reaches the payslip.',
   'overtime.rates.action.new': 'Add Rate',
-  'overtime.rates.form.title': 'Overtime Rate',
   'overtime.rates.form.code': 'Code',
   'overtime.rates.form.name': 'Name',
   'overtime.rates.form.description': 'Description',
   'overtime.rates.form.dayType': 'Day type',
   'overtime.rates.form.multiplier': 'Multiplier',
   'overtime.rates.form.isDefault': 'Default rate for this day type',
-  'overtime.rates.form.active': 'Active',
   'overtime.rates.form.floorHint': 'The statutory minimum for this day type is {floor}×.',
 
   // ---------------------------------------------------------------------------
@@ -1821,7 +1810,6 @@ export const EN_LABELS_REQUESTS: Partial<Record<LabelKey, string>> = {
   'claim.title': 'Claim Applications',
   'claim.subtitle':
     'A rated category computes its own total from a quantity — the rate is the control. A flat category takes the figure from the receipt.',
-  'claim.tab.requests': 'Claims',
   'claim.tab.types': 'Claim Types',
   'claim.status.pending': 'Pending',
   'claim.status.approved': 'Approved',
@@ -1865,7 +1853,6 @@ export const EN_LABELS_REQUESTS: Partial<Record<LabelKey, string>> = {
   'claim.new.title': 'Record Claim',
   'claim.new.description':
     'Choose the type first — a rated category asks for a quantity, not an amount.',
-  'claim.new.staff': 'Staff (ID)',
   'claim.new.type': 'Claim type',
   'claim.new.incurredOn': 'Date the cost was incurred',
   'claim.new.quantity': 'Quantity ({unit})',
@@ -1918,7 +1905,6 @@ export const EN_LABELS_REQUESTS: Partial<Record<LabelKey, string>> = {
   'claim.types.form.cap': 'Cap per claim (RM)',
   'claim.types.form.cap.hint': 'Leave blank for no cap.',
   'claim.types.form.requiresReceipt': 'Requires a receipt',
-  'claim.types.form.active': 'Active',
 
   // ---------------------------------------------------------------------------
   // Expenses
@@ -1926,7 +1912,6 @@ export const EN_LABELS_REQUESTS: Partial<Record<LabelKey, string>> = {
   'expense.title': 'Expense Applications',
   'expense.subtitle':
     'Money staff paid out of pocket and are claiming back. There are no rates here — the receipt is the basis for the amount, so it is never optional.',
-  'expense.tab.requests': 'Expenses',
   'expense.tab.categories': 'Categories',
   'expense.column.requestNo': 'Application No.',
   'expense.column.payee': 'Paid To',
@@ -1938,19 +1923,17 @@ export const EN_LABELS_REQUESTS: Partial<Record<LabelKey, string>> = {
     'An expense cannot be approved without a receipt. It can be filed first and the receipt attached afterwards — a failed upload should not discard everything already typed.',
   'expense.new.title': 'Record Expense',
   'expense.new.description':
-    'The amount comes from the receipt. Attach the receipt after submitting.',
+    'The amount comes from the receipt. Choose the receipt file here — it is uploaded as soon as the expense is recorded.',
   'expense.new.category': 'Category',
   'expense.new.payee': 'Paid to',
   'expense.new.payee.hint':
     'A receipt with no payee named is hard to check against a bank statement.',
   'expense.decide.noReceipt':
     'No receipt is attached. An expense cannot be approved without one — the receipt is the basis for the amount.',
-  'expense.categories.title': 'Expense Categories',
   'expense.categories.subtitle':
     'A per-application cap only. No rates — an expense category classifies a cost, it does not price it.',
   'expense.categories.empty': 'No categories configured.',
   'expense.categories.action.new': 'Add Category',
-  'expense.categories.form.title': 'Expense Category',
 };
 
 /** Batch 5a: the permission catalogue and the self-service profile. */
@@ -3679,7 +3662,6 @@ export const EN_LABELS_RECRUIT: Partial<Record<LabelKey, string>> = {
   'recruit.posting.title': 'Job Postings',
   'recruit.posting.subtitle':
     'A posting is created as a draft. Publishing is a separate action, and closing is not deleting — applicants still need to name the posting they applied for.',
-  'recruit.posting.tab.list': 'Postings',
   'recruit.posting.status.draft': 'Draft',
   'recruit.posting.status.published': 'Published',
   'recruit.posting.status.closed': 'Closed',
@@ -3708,7 +3690,6 @@ export const EN_LABELS_RECRUIT: Partial<Record<LabelKey, string>> = {
     'A posting’s lifecycle only moves forward: draft → published → closed. A closed posting is not reopened, because that would extend a closing date some candidates have already been told has passed.',
   'recruit.posting.note.locked':
     'A closed posting cannot be edited — candidates applied on the basis of what it said.',
-  'recruit.posting.form.title': 'Job Posting',
   'recruit.posting.form.code': 'Posting code',
   'recruit.posting.form.code.hint':
     'Short and fixed — this is what a candidate quotes on the phone.',
@@ -3875,7 +3856,6 @@ export const EN_LABELS_HR: Partial<Record<LabelKey, string>> = {
   'hr.approval.trail.approved': 'Approved',
   'hr.approval.trail.rejected': 'Rejected',
   'hr.approval.trail.empty': 'No decisions yet.',
-  'hr.approval.awaiting': 'Awaiting level {level} ({name})',
   'hr.approval.progress': 'Level {level} of {total}',
 
   // ---------------------------------------------------------------------------
@@ -6328,4 +6308,93 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
     'Choose a connector for a terminal this server cannot reach directly. Live reads stop working after that — status and clock come from the connector’s reports — and writes are queued rather than immediate.',
   'device.editor.field.agent.isapiOnly':
     'A connector drives Hikvision ISAPI only, so this terminal has to be reached directly by the server.',
+};
+
+/**
+ * Batch 10: the request modules brought to the leave and claim design — overtime, expenses and
+ * recruitment — plus the notices every module with a queue now shares.
+ */
+export const EN_LABELS_HR_SCREENS: Partial<Record<LabelKey, string>> = {
+  // Shared idioms
+  'app.description.hint': 'Shown under the name in this list.',
+  'app.search.codeName': 'Search code or name…',
+
+  // The heading of every request queue, counted across all dates
+  'hr.queue.none': 'No applications awaiting a decision',
+  'hr.queue.pending': '{count} awaiting a decision',
+
+  // Why a bin on a row of master data is disabled
+  'hr.row.locked': '{count} applications use it — deactivate it instead',
+  'hr.row.locked.inactive': '{count} applications use it, so it stays as a record',
+
+  // Notices after an act, shared by every module with a queue
+  'hr.record.created': '{number} recorded.',
+  'hr.request.withdrawn': '{number} withdrawn.',
+  'hr.decision.rejected': '{number} rejected.',
+  'hr.decision.approved': '{number} approved — {amount}.',
+  // The slot carries its own leading space and full stop, exactly as in the source.
+  'hr.decision.signed': '{number}: level {level} of {total} signed.{awaiting}',
+  'hr.decision.signed.awaiting': ' Awaiting level {level} ({name}).',
+
+  // Overtime
+  'overtime.hours.value': '{hours} hours',
+  'overtime.new.staff.hint':
+    'Choosing someone loads the hours the engine measured on the work date, and their hourly rate.',
+  'overtime.rates.count': '{count} overtime rates',
+  'overtime.rates.row.edit': 'Update rate',
+  'overtime.rates.row.remove': 'Remove rate',
+  'overtime.rates.saved': 'Rate “{code}” saved.',
+  'overtime.rates.removed': 'Rate “{code}” removed.',
+  'overtime.rates.form.create': 'Add overtime rate',
+  'overtime.rates.form.edit': 'Update overtime rate',
+  'overtime.rates.form.dayType.option': '{dayType} (min {floor}×)',
+  'overtime.rates.form.isDefault.hint':
+    'Preselected when a reviewer approves an application on this day type. One per day type — ticking it here unticks the others.',
+  'overtime.rates.form.inactiveDefault': 'An inactive rate cannot be the default rate.',
+
+  // Expenses
+  'expense.new.detail.hint': 'What the money was spent on — the reviewer reads it alongside the receipt.',
+  'expense.new.overCap': 'Over the category cap of {cap}. The server will refuse it.',
+  'expense.new.noReceipt': 'Without a receipt this expense can be recorded, but not approved.',
+  'expense.new.receiptNext':
+    'No receipt attached — it cannot be approved until one is uploaded from the list.',
+  'expense.new.uploadFailed':
+    'The receipt failed to upload. The expense is already recorded — attach it again from the list.',
+  'expense.receipt.removed': 'Receipt for {number} removed.',
+  'expense.categories.count': '{count} expense categories',
+  'expense.categories.row.edit': 'Update category',
+  'expense.categories.row.remove': 'Remove category',
+  'expense.categories.saved': 'Category “{code}” saved.',
+  'expense.categories.removed': 'Category “{code}” removed.',
+  'expense.categories.form.create': 'Add expense category',
+  'expense.categories.form.edit': 'Update expense category',
+
+  // Claims
+  'claim.types.saved': 'Claim type “{code}” saved.',
+
+  // Recruitment — postings
+  'recruit.posting.count': '{count} postings',
+  'recruit.posting.search': 'Search code or position…',
+  'recruit.posting.row.locked': '{count} applicants refer to this posting — close it instead',
+  'recruit.posting.row.lockedClosed': '{count} applicants refer to this posting, so it stays as a record',
+  'recruit.posting.notice.saved': 'Posting {code} saved.',
+  'recruit.posting.notice.published': 'Posting {code} published.',
+  'recruit.posting.notice.closed': 'Posting {code} closed.',
+  'recruit.posting.notice.removed': 'Posting {code} removed.',
+  'recruit.posting.form.create': 'New job posting',
+  'recruit.posting.form.edit': 'Update job posting',
+  'recruit.archive.count': '{count} closed postings',
+  'recruit.archive.noAccess':
+    'Your role cannot view postings or applicants. This archive shows both, so it needs View on Job Postings or Applicants.',
+
+  // Recruitment — applicants
+  'recruit.applicant.count': '{count} applicants',
+  'recruit.applicant.search': 'Search applicant no., name, IC no., email or phone…',
+  'recruit.applicant.filter.allPostings': 'All postings',
+  'recruit.applicant.row.locked': 'Already hired as staff — the staff record refers to this application',
+  'recruit.applicant.remove.title': 'Remove applicant {number}',
+  'recruit.applicant.notice.removed': 'Applicant {number} removed.',
+  'recruit.advance.done': '{number}: {status}.',
+  'recruit.decide.done.rejected': '{number} unsuccessful.',
+  'recruit.decide.done.offered': '{number} offered the position.',
 };

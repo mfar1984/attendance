@@ -51,11 +51,19 @@ export interface ExpensePage {
   rows: ExpenseRow[];
   total: number;
   counts: Partial<Record<ClaimStatus, number>>;
+  /** Waiting across every date, for the heading — the chips are scoped to the date window. */
+  pendingTotal: number;
   chainLength: number;
   generatedAt: string;
 }
 
 export const expensesApi = {
+  /** Filtered server-side and gated on expenses: five thousand staff is not a dropdown. */
+  searchStaff: (query: string) =>
+    api.get<Array<{ id: number; employeeNo: string; fullName: string; department: { name: string } | null }>>(
+      `/api/expense-requests/staff-search?q=${encodeURIComponent(query)}`,
+    ),
+
   categories: () => api.get<ExpenseCategory[]>('/api/expense-categories'),
 
   createCategory: (body: {

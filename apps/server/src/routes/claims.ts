@@ -322,7 +322,7 @@ export async function claimRoutes(app: FastifyInstance): Promise<void> {
             }),
       };
 
-      const [rows, total, grouped, chain] = await Promise.all([
+      const [rows, total, grouped, chain, pendingTotal] = await Promise.all([
         db().claimRequest.findMany({
           where,
           orderBy: [{ incurredOn: 'desc' }, { id: 'desc' }],
@@ -369,12 +369,24 @@ export async function claimRoutes(app: FastifyInstance): Promise<void> {
           _count: { _all: true },
         }),
         getChain('claim'),
+        /*
+         * Everything waiting, whatever its date — for the heading, which says how long the queue
+         * is. The chips stay inside the date window because they label the table under them; a
+         * claim back-dated past the window is still waiting, and the heading must not say otherwise.
+         */
+        db().claimRequest.count({
+          where: {
+            status: 'pending',
+            ...(query.staffId === undefined ? {} : { staffId: query.staffId }),
+          },
+        }),
       ]);
 
       return jsonSafe({
         rows: rows.map(serialiseClaim),
         total,
         counts: Object.fromEntries(grouped.map((row) => [row.status, row._count._all])),
+        pendingTotal,
         chainLength: chain.length,
         generatedAt: new Date().toISOString(),
       });
@@ -1095,6 +1107,50 @@ export async function expenseRoutes(app: FastifyInstance): Promise<void> {
   // Expense requests
   // -------------------------------------------------------------------------
 
+  /**
+   * Staff picker for the expense form, scoped to the expense permission.
+   *
+   * Its own endpoint and not the claims one, for the reason the claims one is not the leave one:
+   * whoever records expenses is not necessarily whoever files claims, and borrowing
+   * `/api/claim-requests/staff-search` would make this form depend on a claims grant.
+   */
+  app.get(
+    '/api/expense-requests/staff-search',
+    { preHandler: requirePermission('hr.expenses', 'create') },
+    async (request) => {
+      const query = z
+        .object({
+          q: z.string().trim().max(128).default(''),
+          limit: z.coerce.number().int().min(1).max(50).default(20),
+        })
+        .parse(request.query);
+
+      const rows = await db().staff.findMany({
+        where: {
+          active: true,
+          ...(query.q.length > 0
+            ? {
+                OR: [
+                  { fullName: { contains: query.q } },
+                  { employeeNo: { contains: query.q } },
+                ],
+              }
+            : {}),
+        },
+        orderBy: { fullName: 'asc' },
+        take: query.limit,
+        select: {
+          id: true,
+          employeeNo: true,
+          fullName: true,
+          department: { select: { name: true } },
+        },
+      });
+
+      return jsonSafe(rows);
+    },
+  );
+
   app.get(
     '/api/expense-requests',
     { preHandler: requirePermission('hr.expenses', 'view') },
@@ -1114,7 +1170,7 @@ export async function expenseRoutes(app: FastifyInstance): Promise<void> {
             }),
       };
 
-      const [rows, total, grouped, chain] = await Promise.all([
+      const [rows, total, grouped, chain, pendingTotal] = await Promise.all([
         db().expenseRequest.findMany({
           where,
           orderBy: [{ incurredOn: 'desc' }, { id: 'desc' }],
@@ -1139,12 +1195,20 @@ export async function expenseRoutes(app: FastifyInstance): Promise<void> {
           _count: { _all: true },
         }),
         getChain('expenses'),
+        // Everything waiting, whatever its date — the heading's number, as on the claim list.
+        db().expenseRequest.count({
+          where: {
+            status: 'pending',
+            ...(query.staffId === undefined ? {} : { staffId: query.staffId }),
+          },
+        }),
       ]);
 
       return jsonSafe({
         rows: rows.map(serialiseExpense),
         total,
         counts: Object.fromEntries(grouped.map((row) => [row.status, row._count._all])),
+        pendingTotal,
         chainLength: chain.length,
         generatedAt: new Date().toISOString(),
       });

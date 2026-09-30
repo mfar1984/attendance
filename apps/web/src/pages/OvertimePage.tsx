@@ -2,8 +2,10 @@ import {
   CircleAlert,
   CircleCheck,
   CircleX,
-  Percent,
+  Pencil,
   Plus,
+  Star,
+  Trash2,
   TriangleAlert,
   X,
 } from 'lucide-react';
@@ -12,11 +14,11 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
 import {
   ChipBar,
+  CodePill,
   DateBox,
   Detail,
   DetailGrid,
   ExpandButton,
-  FacetSelect,
   FilterRow,
   PanelBody,
   PanelCard,
@@ -27,10 +29,11 @@ import {
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
-import { Badge, Button, Field } from '../components/ui';
+import { StaffPicker, type PickedStaff } from '../components/StaffPicker';
+import { Badge, Button, CheckCard, Field, SelectField, TextArea } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
-import type { ApprovalTrailEntry } from '../lib/hr-api';
+import { signedNotice, type ApprovalTrailEntry } from '../lib/hr-api';
 import { daysAgoIso, formatDateOnly, formatDateTime, todayIso } from '../lib/operations-api';
 import {
   OVERTIME_DAY_TYPE_LABELS,
@@ -63,13 +66,14 @@ const FLOOR: Record<OvertimeDayType, number> = {
   holidayRestDay: 3,
 };
 
+const SCREEN = 'hr.overtime';
+
 /**
  * Overtime claims, and the rates they are paid at.
  *
- * One entry in the rail, two tabs, following `Konfigurasi Umum` and `Integrasi`: the
- * queue somebody works from, and the rules it is decided by. Deciding a claim and
- * changing the multiplier it is paid at are different jobs, so the second tab is gated
- * on its own action.
+ * The same shape as Leave and Claims, on purpose: an operator who has learned one request module
+ * has learned all of them. The queue lives here; the rates and the three configuration panels
+ * live on the settings screen beside it in the sidebar.
  */
 export function OvertimePage(): ReactNode {
   /*
@@ -95,6 +99,7 @@ export function OvertimePage(): ReactNode {
 function RequestsTab(): ReactNode {
   const [rows, setRows] = useState<OvertimeRequestRow[]>([]);
   const [counts, setCounts] = useState<Partial<Record<OvertimeStatus, number>>>({});
+  const [pendingTotal, setPendingTotal] = useState(0);
   const [total, setTotal] = useState(0);
   const [chainLength, setChainLength] = useState(0);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
@@ -126,6 +131,7 @@ function RequestsTab(): ReactNode {
       });
       setRows(result.rows);
       setCounts(result.counts);
+      setPendingTotal(result.pendingTotal);
       setTotal(result.total);
       setChainLength(result.chainLength);
       setGeneratedAt(result.generatedAt);
@@ -145,11 +151,22 @@ function RequestsTab(): ReactNode {
 
   return (
     <>
+      {/*
+        The queue's size in the heading, the way the leave list heads its own — counted across
+        every date, not inside the 60-day window the table opens on, because a claim filed before
+        that window is still waiting for somebody. The subtitle that used to sit here rendered
+        "Diukur dari scan: — jam" on every visit: a per-row fact with no row to belong to.
+      */}
       <PanelSection
-        title={<T k="overtime.tab.requests" />}
-        subtitle={<T k="overtime.hours.measuredNote" vars={{ hours: '—' }} />}
+        title={
+          pendingTotal === 0 ? (
+            <T k="hr.queue.none" />
+          ) : (
+            <T k="hr.queue.pending" vars={{ count: pendingTotal }} />
+          )
+        }
         action={
-          can('hr.overtime', 'create') ? (
+          can(SCREEN, 'create') ? (
             <Button onClick={() => setCreating(true)}>
               <Plus className="size-4" aria-hidden />
               <T k="overtime.action.new" />
@@ -212,6 +229,7 @@ function RequestsTab(): ReactNode {
       </PanelBody>
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={rows.length}
         empty={<T k="overtime.empty" />}
@@ -223,7 +241,7 @@ function RequestsTab(): ReactNode {
           { header: <T k="overtime.column.hours" />, width: 'w-28', align: 'right' },
           { header: <T k="overtime.column.amount" />, width: 'w-28', align: 'right' },
           { header: <T k="panel.column.status" />, width: 'w-24' },
-          { header: <T k="panel.column.actions" />, width: 'w-28', align: 'right' },
+          { header: <T k="panel.column.actions" />, width: 'w-32', align: 'right' },
         ]}
       >
         {rows.map((row) => (
@@ -235,11 +253,11 @@ function RequestsTab(): ReactNode {
             onToggle={() => setOpen(open === row.id ? null : row.id)}
             onApprove={() => setDeciding({ row, approve: true })}
             onReject={() => setDeciding({ row, approve: false })}
-            onCancel={async () => {
-              await overtimeApi.cancel(row.id);
-              setNotice(`${row.requestNo} ditarik.`);
+            onChanged={async (message) => {
+              setNotice(message);
               await load();
             }}
+            onError={setError}
           />
         ))}
       </RecordTable>
@@ -293,7 +311,8 @@ function RequestRowView({
   onToggle,
   onApprove,
   onReject,
-  onCancel,
+  onChanged,
+  onError,
 }: {
   row: OvertimeRequestRow;
   chainLength: number;
@@ -301,7 +320,8 @@ function RequestRowView({
   onToggle: () => void;
   onApprove: () => void;
   onReject: () => void;
-  onCancel: () => void;
+  onChanged: (message: string) => Promise<void>;
+  onError: (message: string) => void;
 }): ReactNode {
   const [trail, setTrail] = useState<ApprovalTrailEntry[] | null>(null);
   const { t } = useLabels();
@@ -372,6 +392,7 @@ function RequestRowView({
           {row.status === 'approved' ? formatRinggit(row.amount) : '—'}
         </td>
         <td className="px-2 py-2">
+          {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
           <Badge
             tone={
               row.status === 'approved'
@@ -382,10 +403,9 @@ function RequestRowView({
                     ? 'danger'
                     : 'neutral'
             }
+            className="uppercase"
           >
-            <span className="uppercase">
-              <T k={OVERTIME_STATUS_LABELS[row.status]} />
-            </span>
+            <T k={OVERTIME_STATUS_LABELS[row.status]} />
           </Badge>
           {/*
             Chain progress, only where a chain exists. A request signed twice out of three
@@ -403,7 +423,7 @@ function RequestRowView({
         </td>
         <td className="px-2 py-2 pr-4">
           <RowActions>
-            {waiting && can('hr.overtime', 'approve') && (
+            {waiting && can(SCREEN, 'approve') && (
               <>
                 <RowAction
                   icon={<CircleCheck className="size-4" aria-hidden />}
@@ -419,12 +439,23 @@ function RequestRowView({
                 />
               </>
             )}
-            {waiting && can('hr.overtime', 'edit') && (
+            {/*
+              Amber, not rose. Withdrawing changes the request's state — it is still there,
+              marked withdrawn — and rose is for the action that makes something go away.
+            */}
+            {waiting && can(SCREEN, 'edit') && (
               <RowAction
                 icon={<X className="size-4" aria-hidden />}
                 label={t('overtime.action.cancel')}
-                tone="danger"
-                onClick={onCancel}
+                tone="warn"
+                onClick={async () => {
+                  try {
+                    await overtimeApi.cancel(row.id);
+                    await onChanged(t('hr.request.withdrawn', { number: row.requestNo }));
+                  } catch (cause) {
+                    onError(cause instanceof Error ? cause.message : t('app.error.save'));
+                  }
+                }}
               />
             )}
             <ExpandButton expanded={expanded} onClick={onToggle} label={t('overtime.action.view')} />
@@ -438,11 +469,15 @@ function RequestRowView({
             <DetailGrid>
               <Detail
                 label={<T k="overtime.quote.measured" />}
-                value={`${formatHours(row.measuredMinutes)} jam`}
+                value={
+                  <T k="overtime.hours.value" vars={{ hours: formatHours(row.measuredMinutes) }} />
+                }
               />
               <Detail
                 label={<T k="overtime.new.minutes" />}
-                value={`${formatHours(row.requestedMinutes)} jam`}
+                value={
+                  <T k="overtime.hours.value" vars={{ hours: formatHours(row.requestedMinutes) }} />
+                }
               />
               <Detail
                 label={<T k="overtime.quote.hourlyRate" />}
@@ -522,7 +557,7 @@ function NewRequestDialog({
   onClose: () => void;
   onDone: (message: string) => Promise<void>;
 }): ReactNode {
-  const [staffId, setStaffId] = useState('');
+  const [staff, setStaff] = useState<PickedStaff | null>(null);
   const [workDate, setWorkDate] = useState(todayIso());
   const [minutes, setMinutes] = useState('');
   const [task, setTask] = useState('');
@@ -532,26 +567,31 @@ function NewRequestDialog({
   const [error, setError] = useState<string | null>(null);
   const { t } = useLabels();
 
+  const staffId = staff?.id ?? null;
+
   /*
    * The quote is fetched as soon as both halves of the key exist, because the measured
    * minutes are the ceiling on what can be claimed. Without showing them first, somebody
    * types a figure, submits, and is refused against a number they were never shown.
    */
   useEffect(() => {
-    const id = Number(staffId);
-    if (!Number.isInteger(id) || id < 1 || workDate === '') {
+    if (staffId === null || workDate === '') {
       setQuote(null);
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
-        const result = await overtimeApi.quote(id, workDate);
+        const result = await overtimeApi.quote(staffId, workDate);
         if (!cancelled) {
           setQuote(result);
           setError(null);
-          // Default to the whole measured window; trimming it is the exception.
-          setMinutes(String(result.measuredMinutes));
+          /*
+           * Default to the whole measured window; trimming it is the exception. Only into an empty
+           * field — a figure somebody typed while the quote was loading is theirs, and replacing it
+           * with a larger one would file more than they meant to claim.
+           */
+          setMinutes((current) => (current === '' ? String(result.measuredMinutes) : current));
         }
       } catch (cause) {
         if (!cancelled) {
@@ -566,28 +606,35 @@ function NewRequestDialog({
   }, [staffId, workDate]);
 
   const submit = async (): Promise<void> => {
+    if (staff === null) return;
     setBusy(true);
     try {
       const created = await overtimeApi.create({
-        staffId: Number(staffId),
+        staffId: staff.id,
         workDate,
         requestedMinutes: Number(minutes),
-        task,
-        reason,
+        task: task.trim(),
+        reason: reason.trim(),
       });
-      await onDone(`${created.requestNo} direkodkan.`);
+      await onDone(t('hr.record.created', { number: created.requestNo }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Permohonan tidak dapat direkodkan.');
-    } finally {
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
 
+  const measured = quote?.measuredMinutes ?? 0;
+  const claimed = Number(minutes);
+
   const blocked =
+    staff === null ||
     quote === null ||
     !quote.hasSalary ||
-    quote.measuredMinutes <= 0 ||
-    Number(minutes) <= 0 ||
+    measured <= 0 ||
+    minutes === '' ||
+    claimed <= 0 ||
+    // The server refuses more than was measured, so the button says so first.
+    claimed > measured ||
     task.trim() === '' ||
     reason.trim() === '';
 
@@ -596,135 +643,168 @@ function NewRequestDialog({
       title={<T k="overtime.new.title" />}
       titleText={t('overtime.new.title')}
       description={<T k="overtime.new.description" />}
-      width="lg"
+      width="2xl"
       onClose={onClose}
     >
       <div className="space-y-4">
         <Feedback error={error} />
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field
-            label={<T k="overtime.new.staff" />}
-            type="number"
-            inputMode="numeric"
-            value={staffId}
-            placeholder={t('overtime.new.staffPlaceholder')}
-            onChange={(event) => setStaffId(event.target.value)}
-          />
-          <Field
-            label={<T k="overtime.new.workDate" />}
-            type="date"
-            value={workDate}
-            max={todayIso()}
-            onChange={(event) => setWorkDate(event.target.value)}
-          />
-        </div>
+        {/*
+          Name first, then the form — the same two stages as the leave and claim forms. The rest
+          of this form is about one person's day, and none of it can be shown before there is a
+          person to read it for.
+        */}
+        <StaffPicker
+          value={staff}
+          onChange={(next) => {
+            setStaff(next);
+            setQuote(null);
+            setMinutes('');
+          }}
+          search={overtimeApi.searchStaff}
+          hint={<T k="overtime.new.staff.hint" />}
+        />
 
-        {quote !== null && (
-          <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-            <p className="text-xs font-medium text-slate-600">
-              <T k="overtime.quote.heading" />
-              {quote.holidayName !== null && (
-                <span className="ml-2 font-normal text-slate-500">
-                  <T k="overtime.quote.holiday" vars={{ name: quote.holidayName }} />
-                </span>
-              )}
-            </p>
-            <DetailGrid>
-              <Detail
-                label={<T k="overtime.quote.measured" />}
-                value={`${formatHours(quote.measuredMinutes)} jam`}
+        {staff !== null && (
+          <>
+            <div className="grid items-start gap-4 sm:grid-cols-2">
+              <Field
+                label={<T k="overtime.new.workDate" />}
+                type="date"
+                value={workDate}
+                max={todayIso()}
+                onChange={(event) => {
+                  /*
+                    A different day is a different measurement. The previous day's quote would
+                    otherwise keep the submit live against its figure until the new one arrived,
+                    and its minutes would stand in for a day they were never measured on.
+                  */
+                  setWorkDate(event.target.value);
+                  setQuote(null);
+                  setMinutes('');
+                }}
               />
-              <Detail
-                label={<T k="overtime.column.dayType" />}
-                value={
-                  <TEnum k={OVERTIME_DAY_TYPE_LABELS[quote.dayType]} fallback={quote.dayType} />
-                }
+              <Field
+                label={<T k="overtime.new.minutes" />}
+                hint={<T k="overtime.new.minutesHint" />}
+                inputMode="numeric"
+                value={minutes}
+                onChange={(event) => setMinutes(event.target.value.replace(/\D/g, ''))}
               />
-              <Detail
-                label={<T k="overtime.quote.hourlyRate" />}
-                value={formatRinggit(quote.hourlyRate)}
-              />
-              <Detail
-                label={<T k="overtime.quote.multiplier" />}
-                value={`${quote.multiplier}×`}
-              />
-              <Detail
-                label={<T k="overtime.quote.estimate" />}
-                value={formatRinggit(quote.estimate)}
-              />
-              <Detail
-                label={<T k="overtime.quote.monthUsed" />}
-                value={
-                  <T
-                    k="overtime.quote.monthUsedValue"
-                    vars={{
-                      used: formatHours(quote.monthMinutes),
-                      cap: formatHours(quote.monthCapMinutes),
-                    }}
+            </div>
+
+            {quote !== null && (
+              <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-medium text-slate-600">
+                  <T k="overtime.quote.heading" />
+                  {quote.holidayName !== null && (
+                    <span className="ml-2 font-normal text-slate-500">
+                      <T k="overtime.quote.holiday" vars={{ name: quote.holidayName }} />
+                    </span>
+                  )}
+                </p>
+                <DetailGrid>
+                  <Detail
+                    label={<T k="overtime.quote.measured" />}
+                    value={
+                      <T
+                        k="overtime.hours.value"
+                        vars={{ hours: formatHours(quote.measuredMinutes) }}
+                      />
+                    }
                   />
-                }
+                  <Detail
+                    label={<T k="overtime.column.dayType" />}
+                    value={
+                      <TEnum
+                        k={OVERTIME_DAY_TYPE_LABELS[quote.dayType]}
+                        fallback={quote.dayType}
+                      />
+                    }
+                  />
+                  <Detail
+                    label={<T k="overtime.quote.hourlyRate" />}
+                    value={formatRinggit(quote.hourlyRate)}
+                  />
+                  <Detail
+                    label={<T k="overtime.quote.multiplier" />}
+                    value={`${quote.multiplier}×`}
+                  />
+                  <Detail
+                    label={<T k="overtime.quote.estimate" />}
+                    value={formatRinggit(quote.estimate)}
+                  />
+                  <Detail
+                    label={<T k="overtime.quote.monthUsed" />}
+                    value={
+                      <T
+                        k="overtime.quote.monthUsedValue"
+                        vars={{
+                          used: formatHours(quote.monthMinutes),
+                          cap: formatHours(quote.monthCapMinutes),
+                        }}
+                      />
+                    }
+                  />
+                </DetailGrid>
+
+                {!quote.hasSalary && (
+                  <PanelNote
+                    tone="danger"
+                    icon={<TriangleAlert className="size-3.5" aria-hidden />}
+                  >
+                    <T k="overtime.quote.noSalary" />
+                  </PanelNote>
+                )}
+                {quote.hasSalary && quote.measuredMinutes <= 0 && (
+                  <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+                    <T k="overtime.quote.noneMeasured" />
+                  </PanelNote>
+                )}
+                {quote.usingStatutoryFloor && (
+                  <PanelNote tone="warn">
+                    <T k="overtime.quote.statutoryFloor" />
+                  </PanelNote>
+                )}
+
+                {/*
+                  Where the hourly rate came from, and that the figure is an estimate, beside the
+                  figures they qualify. One note rather than two: both are about the same row of
+                  numbers, and a stack of notes is read as none of them.
+                */}
+                <PanelNote>
+                  <T k="overtime.quote.hourlyRateHint" /> <T k="overtime.quote.estimateHint" />
+                </PanelNote>
+              </div>
+            )}
+
+            {/* The last block before the footer, so it carries the `pb-2`. */}
+            <div className="grid gap-4 pb-2 sm:grid-cols-2">
+              <TextArea
+                label={<T k="overtime.new.task" />}
+                rows={3}
+                value={task}
+                maxLength={190}
+                onChange={(event) => setTask(event.target.value)}
               />
-            </DetailGrid>
+              <TextArea
+                label={<T k="overtime.new.reason" />}
+                rows={3}
+                value={reason}
+                maxLength={500}
+                onChange={(event) => setReason(event.target.value)}
+              />
+            </div>
 
-            {!quote.hasSalary && (
-              <PanelNote tone="danger" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-                <T k="overtime.quote.noSalary" />
-              </PanelNote>
-            )}
-            {quote.hasSalary && quote.measuredMinutes <= 0 && (
-              <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-                <T k="overtime.quote.noneMeasured" />
-              </PanelNote>
-            )}
-            {quote.usingStatutoryFloor && (
-              <PanelNote tone="warn">
-                <T k="overtime.quote.statutoryFloor" />
-              </PanelNote>
-            )}
-
-            {/* Where the hourly rate came from, beside the figure it produced. */}
-            <PanelNote>
-              <T k="overtime.quote.hourlyRateHint" />
-            </PanelNote>
-          </div>
+            <DialogFooter
+              onClose={onClose}
+              onSubmit={() => void submit()}
+              busy={busy}
+              disabled={blocked}
+              submitLabel={<T k="overtime.new.submit" />}
+            />
+          </>
         )}
-
-        <Field
-          label={<T k="overtime.new.minutes" />}
-          hint={<T k="overtime.new.minutesHint" />}
-          type="number"
-          inputMode="numeric"
-          min={1}
-          max={quote?.measuredMinutes ?? undefined}
-          value={minutes}
-          onChange={(event) => setMinutes(event.target.value)}
-        />
-
-        <Field
-          label={<T k="overtime.new.task" />}
-          value={task}
-          maxLength={190}
-          onChange={(event) => setTask(event.target.value)}
-        />
-        <Field
-          label={<T k="overtime.new.reason" />}
-          value={reason}
-          maxLength={500}
-          onChange={(event) => setReason(event.target.value)}
-        />
-
-        <PanelNote>
-          <T k="overtime.quote.estimateHint" />
-        </PanelNote>
-
-        <DialogFooter
-          onClose={onClose}
-          onSubmit={() => void submit()}
-          busy={busy}
-          disabled={blocked}
-          submitLabel={<T k="overtime.new.submit" />}
-        />
       </div>
     </Dialog>
   );
@@ -790,23 +870,16 @@ function DecideDialog({
        * people have yet to see it.
        */
       const base = !approve
-        ? `${target.requestNo} ditolak.`
+        ? t('hr.decision.rejected', { number: target.requestNo })
         : result.finalized
-          ? `${target.requestNo} diluluskan — ${formatRinggit(result.amount)}.`
-          : `${target.requestNo}: ${t('hr.approval.progress', {
-              level: result.level,
-              total: result.totalLevels,
-            })}. ${
-              result.awaitingLabel === null
-                ? ''
-                : t('hr.approval.awaiting', {
-                    level: result.awaitingLevel ?? 0,
-                    name: result.awaitingLabel,
-                  })
-            }`.trim();
+          ? t('hr.decision.approved', {
+              number: target.requestNo,
+              amount: formatRinggit(result.amount),
+            })
+          : signedNotice(t, target.requestNo, result);
       await onDone(result.warning === null ? base : `${base} ${result.warning}`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Keputusan tidak dapat disimpan.');
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
@@ -836,7 +909,9 @@ function DecideDialog({
           />
           <Detail
             label={<T k="overtime.column.hours" />}
-            value={`${formatHours(target.requestedMinutes)} jam`}
+            value={
+              <T k="overtime.hours.value" vars={{ hours: formatHours(target.requestedMinutes) }} />
+            }
           />
           <Detail
             label={<T k="overtime.quote.hourlyRate" />}
@@ -847,17 +922,24 @@ function DecideDialog({
         {/*
           The rate picker only exists on the approving path. Rejecting decides nothing
           about money, and offering the choice there would suggest otherwise.
+
+          A form select with a visible label, not a facet. `FacetSelect` inserts an empty option
+          that reads as "no filter"; here the empty option is a prompt, and submitting is
+          disabled until a rate is chosen.
         */}
         {approve && (
-          <FacetSelect
-            label={t('overtime.decide.ratePlaceholder')}
+          <SelectField
+            label={<T k="overtime.column.rate" />}
             value={rateId}
-            onChange={setRateId}
-            options={rates.map((rate) => ({
-              value: String(rate.id),
-              label: `${rate.name} — ${rate.multiplier}×`,
-            }))}
-          />
+            onChange={(event) => setRateId(event.target.value)}
+          >
+            <option value="">{t('overtime.decide.ratePlaceholder')}</option>
+            {rates.map((rate) => (
+              <option key={rate.id} value={String(rate.id)}>
+                {`${rate.name} — ${rate.multiplier}×`}
+              </option>
+            ))}
+          </SelectField>
         )}
 
         {approve && willPay !== null && (
@@ -886,6 +968,7 @@ function DecideDialog({
           {...(approve ? {} : { hint: <T k="overtime.decide.noteRequired" /> })}
           value={note}
           maxLength={500}
+          wrapperClassName="pb-2"
           onChange={(event) => setNote(event.target.value)}
         />
 
@@ -910,14 +993,19 @@ function DecideDialog({
  * Overtime rates, hosted by the overtime settings screen.
  *
  * Exported and left in this file rather than moved: it was written here with its dialog beside it.
+ * Shaped after the leave types tab, which is the reference for every table of master data.
  */
 export function OvertimeRatesPanel(): ReactNode {
   const [rows, setRows] = useState<OvertimeRate[]>([]);
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<OvertimeRate | 'new' | null>(null);
   const { t } = useLabels();
+  const { can } = useAuth();
+  // The settings screen is open to anybody who can view the module; writing needs `configure`.
+  const configurable = can(SCREEN, 'configure');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -935,52 +1023,104 @@ export function OvertimeRatesPanel(): ReactNode {
     void load();
   }, [load]);
 
+  async function remove(row: OvertimeRate): Promise<void> {
+    setError(null);
+    setNotice(null);
+    try {
+      await overtimeApi.deleteRate(row.id);
+      setNotice(t('overtime.rates.removed', { code: row.code }));
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('app.error.remove'));
+    }
+  }
+
+  const needle = search.trim().toLowerCase();
+  const filtered = rows.filter(
+    (row) =>
+      needle.length === 0 ||
+      row.code.toLowerCase().includes(needle) ||
+      row.name.toLowerCase().includes(needle),
+  );
+  const shortfalls = rows.some((row) => row.shortfall !== null);
+
   return (
     <>
+      {/* Count in the title, the way the leave types tab heads its list. */}
       <PanelSection
-        title={<T k="overtime.rates.title" />}
+        title={<T k="overtime.rates.count" vars={{ count: rows.length }} />}
         subtitle={<T k="overtime.rates.subtitle" />}
         action={
-          <Button onClick={() => setEditing('new')}>
-            <Plus className="size-4" aria-hidden />
-            <T k="overtime.rates.action.new" />
-          </Button>
+          configurable ? (
+            <Button onClick={() => setEditing('new')}>
+              <Plus className="size-4" aria-hidden />
+              <T k="overtime.rates.action.new" />
+            </Button>
+          ) : undefined
         }
       />
 
-      <PanelBody className="space-y-2 pb-0">
-        <Feedback error={error} notice={notice} />
-        <PanelNote icon={<CircleAlert className="size-3.5" aria-hidden />}>
-          <T k="overtime.rates.shortfallNote" />
-        </PanelNote>
-      </PanelBody>
+      <FilterRow
+        search={search}
+        onSearch={setSearch}
+        placeholder={t('app.search.codeName')}
+        dirty={search.length > 0}
+        onReset={() => setSearch('')}
+      />
+
+      {/*
+        The shortfall note only when a row is short. It explains the rose rows — that the rate is
+        reported rather than refused — and on a table with none of them it is a paragraph of policy
+        above eight rows somebody opened to scan.
+      */}
+      {(error !== null || notice !== null || shortfalls) && (
+        <PanelBody className="space-y-2 pb-0">
+          <Feedback error={error} notice={notice} />
+          {shortfalls && (
+            <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+              <T k="overtime.rates.shortfallNote" />
+            </PanelNote>
+          )}
+        </PanelBody>
+      )}
 
       <RecordTable
+        framed
         loading={loading}
-        rowCount={rows.length}
+        rowCount={filtered.length}
         empty={<T k="overtime.rates.empty" />}
         columns={[
-          { header: <T k="overtime.rates.column.code" />, width: 'w-36' },
+          { header: <T k="overtime.rates.column.code" />, width: 'w-20' },
           { header: <T k="overtime.rates.column.name" /> },
-          { header: <T k="overtime.rates.column.dayType" />, width: 'w-48' },
-          { header: <T k="overtime.rates.column.multiplier" />, width: 'w-28', align: 'right' },
+          { header: <T k="overtime.rates.column.dayType" />, width: 'w-56' },
+          { header: <T k="overtime.rates.column.multiplier" />, width: 'w-24', align: 'right' },
           { header: <T k="overtime.rates.column.used" />, width: 'w-24', align: 'right' },
+          { header: <T k="panel.column.status" />, width: 'w-24' },
           { header: <T k="panel.column.actions" />, width: 'w-24', align: 'right' },
         ]}
       >
-        {rows.map((row) => (
+        {filtered.map((row) => (
           <tr
             key={row.id}
             className={cn(
               'border-b border-slate-100 hover:bg-slate-50/70',
-              row.shortfall !== null && 'bg-rose-50/40',
+              row.shortfall !== null ? 'bg-rose-50/40' : !row.active && 'bg-slate-50/60',
             )}
           >
-            <td className="px-5 py-2 font-mono text-xs text-slate-700">{row.code}</td>
-            <td className="px-2 py-2">
-              <span className="block text-slate-800">{row.name}</span>
+            <td className="px-5 py-2.5">
+              <CodePill code={row.code} />
+            </td>
+            <td className="px-2 py-2.5">
+              <span
+                className={cn('block font-medium', row.active ? 'text-slate-800' : 'text-slate-400')}
+              >
+                {row.name}
+              </span>
+              {row.description !== null && row.description.length > 0 && (
+                <span className="mt-0.5 block text-xs text-slate-500">{row.description}</span>
+              )}
               {row.shortfall !== null && (
-                <span className="block text-[11px] text-rose-600">
+                <span className="mt-0.5 block text-[11px] text-rose-600">
                   <T
                     k="overtime.rates.shortfall"
                     vars={{ actual: row.shortfall.actual, floor: row.shortfall.floor }}
@@ -988,36 +1128,69 @@ export function OvertimeRatesPanel(): ReactNode {
                 </span>
               )}
             </td>
-            <td className="px-2 py-2 text-xs text-slate-600">
+            <td className="px-2 py-2.5 text-xs text-slate-600">
               <TEnum k={OVERTIME_DAY_TYPE_LABELS[row.dayType]} fallback={row.dayType} />
               {row.isDefault && (
-                <span className="ml-2">
-                  <Badge tone="neutral">
-                    <span className="uppercase">
-                      <T k="overtime.rates.default" />
-                    </span>
-                  </Badge>
-                </span>
+                <Badge tone="info" className="ml-2 uppercase">
+                  <T k="overtime.rates.default" />
+                </Badge>
               )}
             </td>
-            <td className="px-2 py-2 text-right text-xs tabular-nums text-slate-700">
+            <td className="px-2 py-2.5 text-right text-xs tabular-nums text-slate-700">
               {row.multiplier}×
             </td>
-            <td className="px-2 py-2 text-right text-xs tabular-nums text-slate-500">
+            <td className="px-2 py-2.5 text-right text-xs tabular-nums text-slate-500">
               {row.requestCount}
             </td>
-            <td className="px-2 py-2 pr-4">
-              <RowActions>
-                <RowAction
-                  icon={<Percent className="size-4" aria-hidden />}
-                  label={t('action.edit')}
-                  onClick={() => setEditing(row)}
-                />
-              </RowActions>
+            <td className="px-2 py-2.5">
+              <Badge tone={row.active ? 'success' : 'neutral'}>
+                <T k={row.active ? 'app.status.active' : 'app.status.inactive'} />
+              </Badge>
+            </td>
+            <td className="px-2 py-2.5 pr-4">
+              {configurable && (
+                <RowActions>
+                  <RowAction
+                    icon={<Pencil className="size-4" aria-hidden />}
+                    label={t('overtime.rates.row.edit')}
+                    tone="edit"
+                    onClick={() => setEditing(row)}
+                  />
+                  {/*
+                    Disabled with the count in the tooltip rather than live and refused: a decided
+                    claim still has to name the rate it was paid at.
+                  */}
+                  <RowAction
+                    icon={<Trash2 className="size-4" aria-hidden />}
+                    label={
+                      row.requestCount > 0
+                        ? t(row.active ? 'hr.row.locked' : 'hr.row.locked.inactive', {
+                            count: row.requestCount,
+                          })
+                        : t('overtime.rates.row.remove')
+                    }
+                    tone="danger"
+                    disabled={row.requestCount > 0}
+                    onClick={() => void remove(row)}
+                  />
+                </RowActions>
+              )}
             </td>
           </tr>
         ))}
       </RecordTable>
+
+      <PanelFooter
+        shown={filtered.length}
+        total={rows.length}
+        page={1}
+        pageSize={Math.max(1, rows.length)}
+        pageSizes={[Math.max(1, rows.length)]}
+        loading={loading}
+        onPage={() => undefined}
+        onPageSize={() => undefined}
+        onRefresh={() => void load()}
+      />
 
       {editing !== null && (
         <RateDialog
@@ -1056,11 +1229,16 @@ function RateDialog({
 
   const submit = async (): Promise<void> => {
     setBusy(true);
+    setError(null);
     try {
       const body = {
-        code,
-        name,
-        ...(description === '' ? {} : { description }),
+        code: code.trim().toUpperCase(),
+        name: name.trim(),
+        /*
+          Sent even when empty, because empty is what clears it. The route reads `''` as "none"
+          and an absent key as "leave as it was", so omitting it made a cleared box a no-op.
+        */
+        description: description.trim(),
         dayType,
         multiplier: Number(multiplier),
         isDefault,
@@ -1068,30 +1246,68 @@ function RateDialog({
       };
       if (target === null) await overtimeApi.createRate(body);
       else await overtimeApi.updateRate(target.id, body);
-      await onDone(`Kadar ${code.toUpperCase()} disimpan.`);
+      await onDone(t('overtime.rates.saved', { code: body.code }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Kadar tidak dapat disimpan.');
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
 
+  const titleKey = target === null ? 'overtime.rates.form.create' : 'overtime.rates.form.edit';
+  // A fallback rate that cannot be used is not a fallback, so the route refuses the pair.
+  const inactiveDefault = isDefault && !active;
+
   return (
-    <Dialog
-      title={<T k="overtime.rates.form.title" />}
-      titleText={t('overtime.rates.form.title')}
-      width="md"
-      onClose={onClose}
-    >
+    <Dialog title={<T k={titleKey} />} titleText={t(titleKey)} width="2xl" onClose={onClose}>
       <div className="space-y-4">
         <Feedback error={error} />
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        {/* Identity first: the code somebody types, then the name they read. */}
+        <div className="grid gap-4 sm:grid-cols-[7rem_1fr]">
           <Field
             label={<T k="overtime.rates.form.code" />}
             value={code}
             maxLength={16}
+            autoFocus
             onChange={(event) => setCode(event.target.value.toUpperCase())}
           />
+          <Field
+            label={<T k="overtime.rates.form.name" />}
+            value={name}
+            maxLength={120}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </div>
+
+        <TextArea
+          label={<T k="overtime.rates.form.description" />}
+          hint={<T k="app.description.hint" />}
+          rows={2}
+          value={description}
+          maxLength={255}
+          onChange={(event) => setDescription(event.target.value)}
+        />
+
+        {/*
+          The picked values on one row, every label one line so the inputs share a baseline. The
+          day type is widest because each option carries its statutory floor, which is the figure
+          the multiplier beside it is checked against.
+        */}
+        <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr]">
+          <SelectField
+            label={<T k="overtime.rates.form.dayType" />}
+            value={dayType}
+            onChange={(event) => setDayType(event.target.value as OvertimeDayType)}
+          >
+            {DAY_TYPES.map((value) => (
+              <option key={value} value={value}>
+                {t('overtime.rates.form.dayType.option', {
+                  dayType: t(OVERTIME_DAY_TYPE_LABELS[value]),
+                  floor: FLOOR[value],
+                })}
+              </option>
+            ))}
+          </SelectField>
           <Field
             label={<T k="overtime.rates.form.multiplier" />}
             hint={<T k="overtime.rates.form.floorHint" vars={{ floor: FLOOR[dayType] }} />}
@@ -1102,55 +1318,39 @@ function RateDialog({
             value={multiplier}
             onChange={(event) => setMultiplier(event.target.value)}
           />
+          <SelectField
+            label={<T k="panel.column.status" />}
+            value={active ? 'active' : 'inactive'}
+            onChange={(event) => setActive(event.target.value === 'active')}
+          >
+            <option value="active">{t('app.status.active')}</option>
+            <option value="inactive">{t('app.status.inactive')}</option>
+          </SelectField>
         </div>
 
-        <Field
-          label={<T k="overtime.rates.form.name" />}
-          value={name}
-          maxLength={120}
-          onChange={(event) => setName(event.target.value)}
-        />
-        <Field
-          label={<T k="overtime.rates.form.description" />}
-          value={description}
-          maxLength={255}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-
-        <FacetSelect
-          label={t('overtime.rates.form.dayType')}
-          value={dayType}
-          onChange={(value) => setDayType(value as OvertimeDayType)}
-          options={DAY_TYPES.map((value) => ({
-            value,
-            label: `${t(OVERTIME_DAY_TYPE_LABELS[value])} (min ${FLOOR[value]}×)`,
-          }))}
-        />
-
-        <div className="flex flex-wrap gap-4">
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={isDefault}
-              onChange={(event) => setIsDefault(event.target.checked)}
-            />
-            <T k="overtime.rates.form.isDefault" />
-          </label>
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={active}
-              onChange={(event) => setActive(event.target.checked)}
-            />
-            <T k="overtime.rates.form.active" />
-          </label>
+        <div className="space-y-2 pb-2">
+          <CheckCard
+            checked={isDefault}
+            onChange={setIsDefault}
+            icon={<Star className="size-4" aria-hidden />}
+            title={<T k="overtime.rates.form.isDefault" />}
+            hint={<T k="overtime.rates.form.isDefault.hint" />}
+          />
         </div>
 
         <DialogFooter
           onClose={onClose}
           onSubmit={() => void submit()}
           busy={busy}
-          disabled={code.trim() === '' || name.trim() === '' || Number(multiplier) <= 0}
+          disabled={
+            code.trim() === '' ||
+            name.trim() === '' ||
+            multiplier === '' ||
+            !(Number(multiplier) > 0) ||
+            inactiveDefault
+          }
+          // The server refuses an inactive default; the button says why before the round trip.
+          {...(inactiveDefault ? { submitTitle: t('overtime.rates.form.inactiveDefault') } : {})}
           submitLabel={<T k="dialog.save" />}
         />
       </div>

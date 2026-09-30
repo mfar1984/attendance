@@ -103,6 +103,8 @@ export interface ClaimPage {
   rows: ClaimRow[];
   total: number;
   counts: Partial<Record<ClaimStatus, number>>;
+  /** Waiting across every date, for the heading — the chips are scoped to the date window. */
+  pendingTotal: number;
   chainLength: number;
   generatedAt: string;
 }

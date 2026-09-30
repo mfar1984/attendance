@@ -126,18 +126,39 @@ export async function recruitmentRoutes(app: FastifyInstance): Promise<void> {
            * One endpoint over a flag rather than two, because the row shape is identical.
            */
           archived: z.enum(['true', 'false']).optional(),
+          /** Code or title, so the search box on both screens filters the whole list, not a page. */
+          search: z.string().trim().max(120).optional(),
           page: z.coerce.number().int().min(1).default(1),
           pageSize: z.coerce.number().int().min(1).max(200).default(25),
         })
         .parse(request.query);
 
-      const where = {
-        ...(query.status === undefined ? {} : { status: query.status }),
-        ...(query.archived === undefined
+      const search = query.search === undefined || query.search === '' ? null : query.search;
+
+      /*
+       * Two conditions on the same column, so they are ANDed rather than spread.
+       *
+       * Spread into one object, the archive flag's `status` key overwrote the chip's: the live screen
+       * always sends `archived=false`, which meant choosing "Draf" still returned every published
+       * posting as well, and the chips looked decorative.
+       */
+      const archivedWhere =
+        query.archived === undefined
           ? {}
           : query.archived === 'true'
             ? { status: 'closed' }
-            : { status: { not: 'closed' } }),
+            : { status: { not: 'closed' } };
+      const searchWhere =
+        search === null
+          ? {}
+          : { OR: [{ code: { contains: search } }, { title: { contains: search } }] };
+
+      const where = {
+        AND: [
+          query.status === undefined ? {} : { status: query.status },
+          archivedWhere,
+          searchWhere,
+        ],
       };
 
       const [rows, total, grouped] = await Promise.all([
@@ -153,7 +174,16 @@ export async function recruitmentRoutes(app: FastifyInstance): Promise<void> {
           },
         }),
         db().jobPosting.count({ where }),
-        db().jobPosting.groupBy({ by: ['status'], _count: { _all: true } }),
+        /*
+         * Every filter except the chips' own, so choosing a chip cannot zero the others — and the
+         * search narrows the counts with the rows, or the chips would promise rows the table does
+         * not have.
+         */
+        db().jobPosting.groupBy({
+          by: ['status'],
+          where: { AND: [archivedWhere, searchWhere] },
+          _count: { _all: true },
+        }),
       ]);
 
       /*
@@ -174,7 +204,14 @@ export async function recruitmentRoutes(app: FastifyInstance): Promise<void> {
           id: row.id,
           code: row.code,
           title: row.title,
+          /*
+           * The ids as well as the names, so the edit form preselects what is stored. Matching the
+           * name back to an id on the client broke on two departments sharing a name, and on a form
+           * opened before the lookups arrived — which saved the posting with its department cleared.
+           */
+          departmentId: row.departmentId,
           departmentName: row.department?.name ?? null,
+          locationId: row.locationId,
           locationName: row.location?.name ?? null,
           positions: row.positions,
           hired: hiredByPosting.get(row.id) ?? 0,
@@ -420,10 +457,14 @@ export async function recruitmentRoutes(app: FastifyInstance): Promise<void> {
           status: z.enum(APPLICANT_STATUSES).optional(),
           /** The archive screen wants candidates on closed postings. */
           archived: z.enum(['true', 'false']).optional(),
+          /** Number, name, IC, email or phone — whichever the caller on the telephone gives. */
+          search: z.string().trim().max(120).optional(),
           page: z.coerce.number().int().min(1).default(1),
           pageSize: z.coerce.number().int().min(1).max(200).default(25),
         })
         .parse(request.query);
+
+      const search = query.search === undefined || query.search === '' ? null : query.search;
 
       const where = {
         ...(query.postingId === undefined ? {} : { postingId: query.postingId }),
@@ -433,6 +474,17 @@ export async function recruitmentRoutes(app: FastifyInstance): Promise<void> {
           : query.archived === 'true'
             ? { posting: { status: 'closed' } }
             : { posting: { status: { not: 'closed' } } }),
+        ...(search === null
+          ? {}
+          : {
+              OR: [
+                { applicantNo: { contains: search } },
+                { fullName: { contains: search } },
+                { icNo: { contains: search } },
+                { email: { contains: search } },
+                { phone: { contains: search } },
+              ],
+            }),
       };
 
       const [rows, total, grouped, chain] = await Promise.all([

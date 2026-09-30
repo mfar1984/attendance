@@ -377,7 +377,12 @@ export const PERMISSION_SECTIONS: PermissionSection[] = [
       },
       {
         key: 'hr.careerSettings',
-        labelKey: 'nav.hr.careerSettings',
+        /*
+         * The screen's full name, not the sidebar's. The sidebar entry is one word because the group
+         * title beside it names the module, but this label also reaches refusal prose, where
+         * "tiada kebenaran untuk Tetapan" names no module at all.
+         */
+        labelKey: 'recruit.settings.title',
         path: '/hr/pengambilan/tetapan',
         actions: ['view', 'edit'],
       },

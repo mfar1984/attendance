@@ -167,9 +167,9 @@ function RequestsPanel({ onChanged }: { onChanged?: () => void }): ReactNode {
       <PanelSection
         title={
           (data?.statuses.pending ?? 0) === 0 ? (
-            <T k="leave.request.none" />
+            <T k="hr.queue.none" />
           ) : (
-            <T k="leave.request.pending" vars={{ count: data?.statuses.pending ?? 0 }} />
+            <T k="hr.queue.pending" vars={{ count: data?.statuses.pending ?? 0 }} />
           )
         }
         subtitle={<T k="leave.request.subtitle" />}
@@ -1297,7 +1297,7 @@ export function LeaveTypesPanel({ onChanged }: { onChanged?: () => void }): Reac
       <FilterRow
         search={search}
         onSearch={setSearch}
-        placeholder={t('leave.type.search')}
+        placeholder={t('app.search.codeName')}
         dirty={search.length > 0}
         onReset={() => setSearch('')}
       />
@@ -1458,7 +1458,9 @@ export function LeaveTypesPanel({ onChanged }: { onChanged?: () => void }): Reac
                   icon={<Trash2 className="size-4" aria-hidden />}
                   label={
                     row.requestCount > 0
-                      ? t('leave.type.row.locked', { count: row.requestCount })
+                      ? t(row.active ? 'hr.row.locked' : 'hr.row.locked.inactive', {
+                          count: row.requestCount,
+                        })
                       : t('leave.type.row.remove')
                   }
                   tone="danger"

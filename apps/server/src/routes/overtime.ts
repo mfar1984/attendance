@@ -219,6 +219,52 @@ export async function overtimeRoutes(app: FastifyInstance): Promise<void> {
   // Claims
   // -------------------------------------------------------------------------
 
+  /**
+   * Staff picker for the overtime form, scoped to the overtime permission.
+   *
+   * One per module, like leave and claims, because the gate differs: whoever files overtime is
+   * not necessarily whoever files leave, and borrowing another module's search would make this
+   * form depend on that module's grant.
+   *
+   * Filtered on the server: five thousand staff is not a dropdown.
+   */
+  app.get(
+    '/api/overtime-requests/staff-search',
+    { preHandler: requirePermission('hr.overtime', 'create') },
+    async (request) => {
+      const query = z
+        .object({
+          q: z.string().trim().max(128).default(''),
+          limit: z.coerce.number().int().min(1).max(50).default(20),
+        })
+        .parse(request.query);
+
+      const rows = await db().staff.findMany({
+        where: {
+          active: true,
+          ...(query.q.length > 0
+            ? {
+                OR: [
+                  { fullName: { contains: query.q } },
+                  { employeeNo: { contains: query.q } },
+                ],
+              }
+            : {}),
+        },
+        orderBy: { fullName: 'asc' },
+        take: query.limit,
+        select: {
+          id: true,
+          employeeNo: true,
+          fullName: true,
+          department: { select: { name: true } },
+        },
+      });
+
+      return jsonSafe(rows);
+    },
+  );
+
   app.get(
     '/api/overtime-requests',
     { preHandler: requirePermission('hr.overtime', 'view') },
@@ -273,10 +319,23 @@ export async function overtimeRoutes(app: FastifyInstance): Promise<void> {
         _count: { _all: true },
       });
 
+      /*
+       * Everything waiting, whatever its date — for the heading, which says how long the queue is.
+       * The chip counts above stay inside the date window because they label the table under them;
+       * the heading does not, and a claim filed three months back is still waiting.
+       */
+      const pendingTotal = await db().overtimeRequest.count({
+        where: {
+          status: 'pending',
+          ...(query.staffId === undefined ? {} : { staffId: query.staffId }),
+        },
+      });
+
       return jsonSafe({
         rows: rows.map(serialiseRequest),
         total,
         counts: Object.fromEntries(grouped.map((row) => [row.status, row._count._all])),
+        pendingTotal,
         /*
          * Sent once for the page rather than per row: it is a property of the module's
          * configuration, not of any one request, and the list needs it to turn a bare

@@ -50,7 +50,10 @@ export interface PostingRow {
   id: number;
   code: string;
   title: string;
+  /** Sent with the names so the edit form preselects what is stored rather than guessing by name. */
+  departmentId: number | null;
   departmentName: string | null;
+  locationId: number | null;
   locationName: string | null;
   positions: number;
   /** Hires counted against `positions`, so an over-filled post is visible. */
@@ -157,6 +160,8 @@ export const recruitmentApi = {
   postings: (query: {
     status?: PostingStatus;
     archived?: boolean;
+    /** Code or title, matched on the server so it covers every page. */
+    search?: string;
     page?: number;
     pageSize?: number;
   }) => api.get<PostingPage>(`/api/job-postings?${toQuery(query)}`),
@@ -177,6 +182,8 @@ export const recruitmentApi = {
     postingId?: number;
     status?: ApplicantStatus;
     archived?: boolean;
+    /** Number, name, IC, email or phone, matched on the server so it covers every page. */
+    search?: string;
     page?: number;
     pageSize?: number;
   }) => api.get<ApplicantPage>(`/api/job-applicants?${toQuery(query)}`),

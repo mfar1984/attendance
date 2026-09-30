@@ -3,19 +3,19 @@ import {
   CircleCheck,
   CircleX,
   FileText,
-  Loader2,
   Paperclip,
   Plus,
   Tags,
   Trash2,
   TriangleAlert,
   Upload,
-  UserRound,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
+import { DraftReceipt } from '../components/DraftReceipt';
+import { StaffPicker, type PickedStaff } from '../components/StaffPicker';
 import {
   BoolMark,
   ChipBar,
@@ -47,7 +47,7 @@ import {
   type ClaimType,
 } from '../lib/claims-api';
 import { cn } from '../lib/cn';
-import type { ApprovalTrailEntry } from '../lib/hr-api';
+import { signedNotice, type ApprovalTrailEntry } from '../lib/hr-api';
 import { daysAgoIso, formatDateOnly, formatDateTime, todayIso } from '../lib/operations-api';
 import { T, useLabels } from '../lib/translation';
 
@@ -128,8 +128,20 @@ function RequestsTab(): ReactNode {
 
   return (
     <>
+      {/*
+        The queue's size in the heading, the way the leave list heads its own. A heading that
+        repeats the card title above it says nothing; the number waiting is what somebody opened
+        the screen to learn. Counted across every date rather than the 90-day window the table
+        opens on, because a claim back-dated past that window is still waiting.
+      */}
       <PanelSection
-        title={<T k="claim.tab.requests" />}
+        title={
+          (data?.pendingTotal ?? 0) === 0 ? (
+            <T k="hr.queue.none" />
+          ) : (
+            <T k="hr.queue.pending" vars={{ count: data?.pendingTotal ?? 0 }} />
+          )
+        }
         action={
           can(SCREEN, 'create') ? (
             <Button onClick={() => setCreating(true)}>
@@ -428,7 +440,7 @@ function ClaimRowView({
                 onClick={async () => {
                   try {
                     await claimsApi.cancel(row.id);
-                    await onChanged(`${row.requestNo} ditarik.`);
+                    await onChanged(t('hr.request.withdrawn', { number: row.requestNo }));
                   } catch (cause) {
                     onError(cause instanceof Error ? cause.message : '');
                   }
@@ -666,13 +678,6 @@ function ItemReceipt({
 // New claim
 // ---------------------------------------------------------------------------
 
-type PickedStaff = {
-  id: number;
-  employeeNo: string;
-  fullName: string;
-  department: { name: string } | null;
-};
-
 /**
  * One line being typed.
  *
@@ -718,103 +723,10 @@ function blankItem(): DraftItem {
   };
 }
 
-/** Same ceiling the upload route enforces, checked here so a 4 MB photo is refused before submit. */
-const MAX_RECEIPT_BYTES = 4 * 1024 * 1024;
-
-/**
- * The file picker for one draft line.
- *
- * Its own component for the same reason `ItemReceipt` is: each line needs its own hidden input. One
- * input shared across the lines attaches whatever was chosen to whichever line triggered it last,
- * which is a receipt filed against the wrong cost.
- */
-function DraftReceipt({
-  item,
-  required,
-  onPick,
-  onError,
-}: {
-  item: DraftItem;
-  required: boolean;
-  onPick: (file: File | null) => void;
-  onError: (message: string) => void;
-}): ReactNode {
-  const input = useRef<HTMLInputElement>(null);
-  const { t } = useLabels();
-
-  return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-slate-200 pt-2.5">
-      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600">
-        <Paperclip className="size-3.5 text-slate-400" aria-hidden />
-        <T k="claim.new.items.receipt" />
-      </span>
-
-      <input
-        ref={input}
-        type="file"
-        accept="application/pdf,image/png,image/jpeg,image/webp"
-        className="hidden"
-        onChange={(event) => {
-          const file = event.target.files?.[0] ?? null;
-          // Cleared so choosing the same file again still fires a change.
-          event.target.value = '';
-          if (file === null) return;
-          if (file.size > MAX_RECEIPT_BYTES) {
-            onError(t('claim.new.items.receipt.tooBig', { name: file.name }));
-            return;
-          }
-          onPick(file);
-        }}
-      />
-
-      <Button
-        variant="ghost"
-        onClick={() => input.current?.click()}
-        title={t('claim.new.items.receipt.formats')}
-      >
-        <Upload className="size-4" aria-hidden />
-        {item.file === null ? (
-          <T k="claim.new.items.receipt.attach" />
-        ) : (
-          <T k="claim.new.items.receipt.replace" />
-        )}
-      </Button>
-
-      {item.file === null ? (
-        /*
-          Amber only when the category demands one. On a category that asks for no paper an empty
-          slot is a detail, and colouring it would make every mileage line look incomplete.
-        */
-        <span className={cn('text-xs', required ? 'text-amber-700' : 'text-slate-500')}>
-          <T k="claim.new.items.receipt.none" />
-        </span>
-      ) : (
-        <>
-          <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-slate-700">
-            <FileText className="size-3.5 shrink-0 text-slate-400" aria-hidden />
-            <span className="truncate">{item.file.name}</span>
-            <span className="shrink-0 tabular-nums text-slate-400">
-              {Math.max(1, Math.round(item.file.size / 1024))} KB
-            </span>
-          </span>
-          {/*
-            The wording says the upload has not happened yet. A control labelled "attach" that does
-            nothing until submit is a control that lies about what it did.
-          */}
-          <span className="text-[11px] text-slate-500 italic">
-            <T k="claim.new.items.receipt.pending" />
-          </span>
-          <RowAction
-            icon={<Trash2 className="size-4" aria-hidden />}
-            label={t('claim.new.items.receipt.clear')}
-            tone="danger"
-            onClick={() => onPick(null)}
-          />
-        </>
-      )}
-    </div>
-  );
-}
+/*
+  The draft line's file picker moved to `components/DraftReceipt.tsx`, because the expense form
+  needs the same control for its single receipt and two copies of it would drift.
+*/
 
 function NewClaimDialog({
   onClose,
@@ -825,9 +737,6 @@ function NewClaimDialog({
 }): ReactNode {
   const [types, setTypes] = useState<ClaimType[]>([]);
   const [staff, setStaff] = useState<PickedStaff | null>(null);
-  const [query, setQuery] = useState('');
-  const [candidates, setCandidates] = useState<PickedStaff[]>([]);
-  const [searching, setSearching] = useState(false);
   const [typeId, setTypeId] = useState('');
   const [incurredOn, setIncurredOn] = useState(todayIso());
   const [description, setDescription] = useState('');
@@ -853,20 +762,6 @@ function NewClaimDialog({
       }
     })();
   }, []);
-
-  // Same debounce and same shape as the leave form's picker.
-  useEffect(() => {
-    if (staff !== null) return;
-    setSearching(true);
-    const timer = setTimeout(() => {
-      void claimsApi
-        .searchStaff(query)
-        .then(setCandidates)
-        .catch(() => setCandidates([]))
-        .finally(() => setSearching(false));
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [query, staff]);
 
   const chosen = types.find((type) => String(type.id) === typeId) ?? null;
   const rated = chosen?.ratePerUnit != null;
@@ -945,7 +840,7 @@ function NewClaimDialog({
         }
       }
 
-      const parts = [`${created.requestNo} direkodkan.`];
+      const parts = [t('hr.record.created', { number: created.requestNo })];
       if (uploaded > 0) parts.push(t('claim.new.uploaded', { count: uploaded }));
       if (failed > 0) parts.push(t('claim.new.uploadFailed', { count: failed }));
       /*
@@ -991,68 +886,19 @@ function NewClaimDialog({
           a select of five thousand staff is a quarter of a megabyte of options with no way to search
           it. Everything after the picker is one screen.
         */}
-        {staff === null ? (
-          <div>
-            <Field
-              label={<T k="claim.new.staff" />}
-              hint={<T k="claim.new.staff.hint" />}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t('leave.new.searchStaff.placeholder')}
-              autoFocus
-            />
+        {/*
+          The shared picker, so this form, overtime and expenses cannot drift apart. It also drops a
+          slow answer to an older query, which the inline copy that used to live here did not.
+        */}
+        <StaffPicker
+          value={staff}
+          onChange={setStaff}
+          search={claimsApi.searchStaff}
+          hint={<T k="claim.new.staff.hint" />}
+        />
 
-            <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-slate-200">
-              {searching && candidates.length === 0 ? (
-                <div className="flex min-h-24 items-center justify-center">
-                  <Loader2 className="size-4 animate-spin text-slate-400" aria-label={t('app.loading')} />
-                </div>
-              ) : candidates.length === 0 ? (
-                <p className="px-3 py-6 text-center text-sm text-slate-500">
-                  <T k="leave.new.noMatch" />
-                </p>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {candidates.map((candidate) => (
-                    <li key={candidate.id}>
-                      <button
-                        type="button"
-                        onClick={() => setStaff(candidate)}
-                        className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-slate-50"
-                      >
-                        <UserRound className="size-4 shrink-0 text-slate-400" aria-hidden />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium text-slate-800">
-                            {candidate.fullName}
-                          </span>
-                          <span className="block truncate font-mono text-xs text-slate-500">
-                            {candidate.employeeNo}
-                            {candidate.department !== null && ` · ${candidate.department.name}`}
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        ) : (
+        {staff !== null && (
           <>
-            <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-              <UserRound className="size-4 text-slate-400" aria-hidden />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-slate-800">{staff.fullName}</p>
-                <p className="font-mono text-xs text-slate-500">
-                  {staff.employeeNo}
-                  {staff.department !== null && ` · ${staff.department.name}`}
-                </p>
-              </div>
-              <Button variant="ghost" onClick={() => setStaff(null)}>
-                <T k="leave.new.change" />
-              </Button>
-            </div>
-
             <div className="grid items-start gap-4 sm:grid-cols-2">
               {/*
                 Each option carries the category's own pricing rule, so the difference between a rated
@@ -1230,7 +1076,7 @@ function NewClaimDialog({
                     paper belongs to the line above rather than being another value on it.
                   */}
                   <DraftReceipt
-                    item={item}
+                    file={item.file}
                     required={chosen?.requiresReceipt === true}
                     onPick={(file) => setItem(item.key, { file })}
                     onError={setError}
@@ -1323,15 +1169,16 @@ function DecideDialog({
         ...(note.trim() === '' ? {} : { note }),
       });
 
-      const base = !approve
-        ? `${target.requestNo} ditolak.`
-        : result.finalized
-          ? `${target.requestNo} diluluskan — ${formatRinggit(result.approvedAmount)}.`
-          : `${target.requestNo}: ${t('hr.approval.progress', {
-              level: result.level,
-              total: result.totalLevels,
-            })}.`;
-      await onDone(base);
+      await onDone(
+        !approve
+          ? t('hr.decision.rejected', { number: target.requestNo })
+          : result.finalized
+            ? t('hr.decision.approved', {
+                number: target.requestNo,
+                amount: formatRinggit(result.approvedAmount),
+              })
+            : signedNotice(t, target.requestNo, result),
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : null);
       setBusy(false);
@@ -1616,7 +1463,7 @@ function TypeDialog({
       };
       if (target === null) await claimsApi.createType(body);
       else await claimsApi.updateType(target.id, body);
-      await onDone(`Jenis ${code.toUpperCase()} disimpan.`);
+      await onDone(t('claim.types.saved', { code: code.toUpperCase() }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : null);
       setBusy(false);

@@ -3,8 +3,9 @@ import {
   CircleCheck,
   CircleX,
   FileText,
+  Paperclip,
+  Pencil,
   Plus,
-  Tags,
   Trash2,
   TriangleAlert,
   Upload,
@@ -13,13 +14,14 @@ import {
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
+import { DraftReceipt } from '../components/DraftReceipt';
 import {
   ChipBar,
+  CodePill,
   DateBox,
   Detail,
   DetailGrid,
   ExpandButton,
-  FacetSelect,
   FilterRow,
   PanelBody,
   PanelCard,
@@ -30,7 +32,8 @@ import {
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
-import { Badge, Button, Field } from '../components/ui';
+import { StaffPicker, type PickedStaff } from '../components/StaffPicker';
+import { Badge, Button, Field, SelectField, TextArea } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { CLAIM_STATUS_LABELS, formatRinggit, type ClaimStatus } from '../lib/claims-api';
 import { cn } from '../lib/cn';
@@ -40,7 +43,7 @@ import {
   type ExpensePage,
   type ExpenseRow,
 } from '../lib/expenses-api';
-import type { ApprovalTrailEntry } from '../lib/hr-api';
+import { signedNotice, type ApprovalTrailEntry } from '../lib/hr-api';
 import { daysAgoIso, formatDateOnly, formatDateTime, todayIso } from '../lib/operations-api';
 import { T, useLabels } from '../lib/translation';
 
@@ -56,7 +59,7 @@ const SCREEN = 'hr.expenses';
 /**
  * Expenses, and the categories that classify them.
  *
- * The same five tabs as Claims and Overtime. The status labels and the money formatter come
+ * The same shape as Leave, Claims and Overtime. The status labels and the money formatter come
  * from the claims client rather than being redeclared: the two modules move through identical
  * states, and a second copy is a second thing to keep in step.
  */
@@ -117,11 +120,20 @@ function RequestsTab(): ReactNode {
   }, [load]);
 
   const rows = data?.rows ?? [];
+  // Across every date, not the 90-day window: an expense back-dated past it is still waiting.
+  const pending = data?.pendingTotal ?? 0;
 
   return (
     <>
+      {/* The queue's size in the heading, the way the leave list heads its own. */}
       <PanelSection
-        title={<T k="expense.tab.requests" />}
+        title={
+          pending === 0 ? (
+            <T k="hr.queue.none" />
+          ) : (
+            <T k="hr.queue.pending" vars={{ count: pending }} />
+          )
+        }
         action={
           can(SCREEN, 'create') ? (
             <Button onClick={() => setCreating(true)}>
@@ -184,6 +196,7 @@ function RequestsTab(): ReactNode {
       </PanelBody>
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={rows.length}
         empty={<T k="expense.empty" />}
@@ -361,6 +374,7 @@ function ExpenseRowView({
           )}
         </td>
         <td className="px-2 py-2">
+          {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
           <Badge
             tone={
               row.status === 'approved'
@@ -371,10 +385,9 @@ function ExpenseRowView({
                     ? 'danger'
                     : 'neutral'
             }
+            className="uppercase"
           >
-            <span className="uppercase">
-              <T k={CLAIM_STATUS_LABELS[row.status]} />
-            </span>
+            <T k={CLAIM_STATUS_LABELS[row.status]} />
           </Badge>
           {chainLength > 1 && waiting && row.currentLevel > 0 && (
             <span className="mt-0.5 block text-[10px] text-slate-500">
@@ -384,6 +397,10 @@ function ExpenseRowView({
         </td>
         <td className="px-2 py-2 pr-4">
           <RowActions>
+            {/*
+              The upload stays on the row, unlike a claim's. An expense has exactly one receipt, so
+              there is no question which cost the file is evidence for.
+            */}
             {waiting && can(SCREEN, 'create') && (
               <>
                 <input
@@ -438,7 +455,7 @@ function ExpenseRowView({
                 onClick={async () => {
                   try {
                     await expensesApi.cancel(row.id);
-                    await onChanged(`${row.requestNo} ditarik.`);
+                    await onChanged(t('hr.request.withdrawn', { number: row.requestNo }));
                   } catch (cause) {
                     onError(cause instanceof Error ? cause.message : '');
                   }
@@ -472,7 +489,7 @@ function ExpenseRowView({
                   onClick={async () => {
                     try {
                       await expensesApi.removeReceipt(row.id);
-                      await onChanged(`${row.requestNo}: resit dibuang.`);
+                      await onChanged(t('expense.receipt.removed', { number: row.requestNo }));
                     } catch (cause) {
                       onError(cause instanceof Error ? cause.message : '');
                     }
@@ -552,12 +569,19 @@ function NewExpenseDialog({
   onDone: (message: string) => Promise<void>;
 }): ReactNode {
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
-  const [staffId, setStaffId] = useState('');
+  const [staff, setStaff] = useState<PickedStaff | null>(null);
   const [categoryId, setCategoryId] = useState('');
   const [incurredOn, setIncurredOn] = useState(todayIso());
   const [amount, setAmount] = useState('');
   const [payee, setPayee] = useState('');
   const [description, setDescription] = useState('');
+  /**
+   * The receipt, held until the expense exists.
+   *
+   * Collected here rather than only from the list afterwards because the person filing has the
+   * receipt in front of them at this moment — and without it the expense cannot be approved at all.
+   */
+  const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { t } = useLabels();
@@ -574,109 +598,173 @@ function NewExpenseDialog({
   }, []);
 
   const chosen = categories.find((row) => String(row.id) === categoryId) ?? null;
+  // The route refuses an amount over the category's ceiling; the field says so first.
+  const overCap = chosen?.maxAmount != null && amount !== '' && Number(amount) > chosen.maxAmount;
 
   const submit = async (): Promise<void> => {
+    if (staff === null) return;
     setBusy(true);
     try {
       const created = await expensesApi.create({
-        staffId: Number(staffId),
+        staffId: staff.id,
         categoryId: Number(categoryId),
         incurredOn,
         amount: Number(amount),
-        payee,
-        description,
+        payee: payee.trim(),
+        description: description.trim(),
       });
-      await onDone(`${created.requestNo} direkodkan. ${t('claim.new.receiptNext')}`);
+
+      /*
+       * The receipt goes up after the expense exists, because the upload needs a row to attach to.
+       *
+       * A failed upload does not fail the expense. It is already stored — throwing here would leave
+       * the screen reporting an error for a record that exists, which is the reading that makes
+       * somebody file it a second time. The failure is said instead, and the receipt can be
+       * attached from the list.
+       */
+      const parts = [t('hr.record.created', { number: created.requestNo })];
+      if (file === null) {
+        parts.push(t('expense.new.receiptNext'));
+      } else {
+        try {
+          await expensesApi.uploadReceipt(created.id, file);
+          parts.push(t('claim.receipt.uploaded'));
+        } catch (cause) {
+          parts.push(t('expense.new.uploadFailed'));
+          /*
+            The server's own reason as a sentence of its own. With one receipt there is room for it,
+            and without it somebody retries the same file from the list and is refused the same way.
+          */
+          if (cause instanceof Error && cause.message.trim() !== '') parts.push(cause.message);
+        }
+      }
+
+      await onDone(parts.join(' '));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
+
+  const blocked =
+    staff === null ||
+    categoryId === '' ||
+    amount === '' ||
+    !(Number(amount) > 0) ||
+    overCap ||
+    payee.trim() === '' ||
+    description.trim() === '';
 
   return (
     <Dialog
       title={<T k="expense.new.title" />}
       titleText={t('expense.new.title')}
       description={<T k="expense.new.description" />}
-      width="lg"
+      width="2xl"
       onClose={onClose}
     >
       <div className="space-y-4">
         <Feedback error={error} />
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field
-            label={<T k="claim.new.staff" />}
-            type="number"
-            inputMode="numeric"
-            value={staffId}
-            onChange={(event) => setStaffId(event.target.value)}
-          />
-          <Field
-            label={<T k="claim.new.incurredOn" />}
-            type="date"
-            value={incurredOn}
-            max={todayIso()}
-            onChange={(event) => setIncurredOn(event.target.value)}
-          />
-        </div>
-
-        <FacetSelect
-          label={t('expense.new.category')}
-          value={categoryId}
-          onChange={setCategoryId}
-          options={categories.map((row) => ({ value: String(row.id), label: row.name }))}
+        {/* Name first, then the form — the same two stages as the leave and claim forms. */}
+        <StaffPicker
+          value={staff}
+          onChange={setStaff}
+          search={expensesApi.searchStaff}
+          hint={<T k="claim.new.staff.hint" />}
         />
 
-        {chosen?.maxAmount != null && (
-          <PanelNote>
-            <T k="claim.new.cap" vars={{ cap: formatRinggit(chosen.maxAmount) }} />
-          </PanelNote>
+        {staff !== null && (
+          <>
+            <div className="grid items-start gap-4 sm:grid-cols-2">
+              <SelectField
+                label={<T k="expense.new.category" />}
+                value={categoryId}
+                onChange={(event) => setCategoryId(event.target.value)}
+                hint={
+                  chosen?.maxAmount != null ? (
+                    <T k="claim.new.cap" vars={{ cap: formatRinggit(chosen.maxAmount) }} />
+                  ) : undefined
+                }
+              >
+                {/* A prompt, not a choice: submitting stays disabled until a category is picked. */}
+                <option value="">{t('expense.new.category')}</option>
+                {categories.map((row) => (
+                  <option key={row.id} value={String(row.id)}>
+                    {row.maxAmount == null
+                      ? `${row.code} — ${row.name}`
+                      : `${row.code} — ${row.name} (${formatRinggit(row.maxAmount)})`}
+                  </option>
+                ))}
+              </SelectField>
+              <Field
+                label={<T k="claim.new.incurredOn" />}
+                type="date"
+                value={incurredOn}
+                max={todayIso()}
+                onChange={(event) => setIncurredOn(event.target.value)}
+              />
+            </div>
+
+            <div className="grid items-start gap-4 sm:grid-cols-2">
+              <Field
+                label={<T k="claim.new.amount" />}
+                type="number"
+                step="0.01"
+                min={0}
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                {...(overCap && chosen?.maxAmount != null
+                  ? { error: t('expense.new.overCap', { cap: formatRinggit(chosen.maxAmount) }) }
+                  : {})}
+              />
+              <Field
+                label={<T k="expense.new.payee" />}
+                hint={<T k="expense.new.payee.hint" />}
+                value={payee}
+                maxLength={190}
+                onChange={(event) => setPayee(event.target.value)}
+              />
+            </div>
+
+            <TextArea
+              label={<T k="claim.new.detail" />}
+              hint={<T k="expense.new.detail.hint" />}
+              rows={2}
+              value={description}
+              maxLength={500}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+
+            {/* The last block before the footer, so it carries the `pb-2`. */}
+            <div className="space-y-2 pb-2">
+              <DraftReceipt
+                framed
+                file={file}
+                required
+                onPick={(next) => {
+                  setFile(next);
+                  // A valid pick answers a size refusal still on screen from the previous one.
+                  if (next !== null) setError(null);
+                }}
+                onError={setError}
+              />
+              {file === null && (
+                <PanelNote tone="warn" icon={<Paperclip className="size-3.5" aria-hidden />}>
+                  <T k="expense.new.noReceipt" />
+                </PanelNote>
+              )}
+            </div>
+
+            <DialogFooter
+              onClose={onClose}
+              onSubmit={() => void submit()}
+              busy={busy}
+              disabled={blocked}
+              submitLabel={<T k="claim.new.submit" />}
+            />
+          </>
         )}
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field
-            label={<T k="claim.new.amount" />}
-            type="number"
-            step="0.01"
-            min={0}
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
-          />
-          <Field
-            label={<T k="expense.new.payee" />}
-            hint={<T k="expense.new.payee.hint" />}
-            value={payee}
-            maxLength={190}
-            onChange={(event) => setPayee(event.target.value)}
-          />
-        </div>
-
-        <Field
-          label={<T k="claim.new.detail" />}
-          value={description}
-          maxLength={500}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-
-        <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-          <T k="claim.new.receiptNext" /> <T k="claim.receipt.hint" />
-        </PanelNote>
-
-        <DialogFooter
-          onClose={onClose}
-          onSubmit={() => void submit()}
-          busy={busy}
-          disabled={
-            staffId === '' ||
-            categoryId === '' ||
-            amount === '' ||
-            Number(amount) <= 0 ||
-            payee.trim() === '' ||
-            description.trim() === ''
-          }
-          submitLabel={<T k="claim.new.submit" />}
-        />
       </div>
     </Dialog>
   );
@@ -712,17 +800,18 @@ function DecideDialog({
         ...(note.trim() === '' ? {} : { note }),
       });
 
-      const base = !approve
-        ? `${target.requestNo} ditolak.`
-        : result.finalized
-          ? `${target.requestNo} diluluskan — ${formatRinggit(result.approvedAmount)}.`
-          : `${target.requestNo}: ${t('hr.approval.progress', {
-              level: result.level,
-              total: result.totalLevels,
-            })}.`;
-      await onDone(base);
+      await onDone(
+        !approve
+          ? t('hr.decision.rejected', { number: target.requestNo })
+          : result.finalized
+            ? t('hr.decision.approved', {
+                number: target.requestNo,
+                amount: formatRinggit(result.approvedAmount),
+              })
+            : signedNotice(t, target.requestNo, result),
+      );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
@@ -774,6 +863,7 @@ function DecideDialog({
           {...(approve ? {} : { hint: <T k="claim.decide.noteRequired" /> })}
           value={note}
           maxLength={500}
+          wrapperClassName="pb-2"
           onChange={(event) => setNote(event.target.value)}
         />
 
@@ -804,15 +894,19 @@ function DecideDialog({
  * Expense categories, hosted by the expense settings screen.
  *
  * Exported and left in this file rather than moved: it was written here with its dialog beside it.
+ * Shaped after the leave types tab, which is the reference for every table of master data.
  */
 export function ExpenseCategoriesPanel(): ReactNode {
   const [rows, setRows] = useState<ExpenseCategory[]>([]);
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<ExpenseCategory | 'new' | null>(null);
   const { t } = useLabels();
   const { can } = useAuth();
+  // The settings screen is open to anybody who can view the module; writing needs `configure`.
+  const configurable = can(SCREEN, 'configure');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -830,13 +924,34 @@ export function ExpenseCategoriesPanel(): ReactNode {
     void load();
   }, [load]);
 
+  async function remove(row: ExpenseCategory): Promise<void> {
+    setError(null);
+    setNotice(null);
+    try {
+      await expensesApi.deleteCategory(row.id);
+      setNotice(t('expense.categories.removed', { code: row.code }));
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('app.error.remove'));
+    }
+  }
+
+  const needle = search.trim().toLowerCase();
+  const filtered = rows.filter(
+    (row) =>
+      needle.length === 0 ||
+      row.code.toLowerCase().includes(needle) ||
+      row.name.toLowerCase().includes(needle),
+  );
+
   return (
     <>
+      {/* Count in the title, the way the leave types tab heads its list. */}
       <PanelSection
-        title={<T k="expense.categories.title" />}
+        title={<T k="expense.categories.count" vars={{ count: rows.length }} />}
         subtitle={<T k="expense.categories.subtitle" />}
         action={
-          can(SCREEN, 'configure') ? (
+          configurable ? (
             <Button onClick={() => setEditing('new')}>
               <Plus className="size-4" aria-hidden />
               <T k="expense.categories.action.new" />
@@ -845,52 +960,91 @@ export function ExpenseCategoriesPanel(): ReactNode {
         }
       />
 
-      <PanelBody className="pb-0">
-        <Feedback error={error} notice={notice} />
-      </PanelBody>
+      <FilterRow
+        search={search}
+        onSearch={setSearch}
+        placeholder={t('app.search.codeName')}
+        dirty={search.length > 0}
+        onReset={() => setSearch('')}
+      />
+
+      {(error !== null || notice !== null) && (
+        <PanelBody className="pb-0">
+          <Feedback error={error} notice={notice} />
+        </PanelBody>
+      )}
 
       <RecordTable
+        framed
         loading={loading}
-        rowCount={rows.length}
+        rowCount={filtered.length}
         empty={<T k="expense.categories.empty" />}
         columns={[
-          { header: <T k="claim.types.column.code" />, width: 'w-28' },
+          { header: <T k="claim.types.column.code" />, width: 'w-20' },
           { header: <T k="claim.types.column.name" /> },
           { header: <T k="claim.types.column.cap" />, width: 'w-28', align: 'right' },
           { header: <T k="claim.types.column.used" />, width: 'w-24', align: 'right' },
+          { header: <T k="panel.column.status" />, width: 'w-24' },
           { header: <T k="panel.column.actions" />, width: 'w-24', align: 'right' },
         ]}
       >
-        {rows.map((row) => (
+        {filtered.map((row) => (
           <tr
             key={row.id}
             className={cn(
               'border-b border-slate-100 hover:bg-slate-50/70',
-              !row.active && 'bg-slate-50/60 text-slate-400',
+              !row.active && 'bg-slate-50/60',
             )}
           >
-            <td className="px-5 py-2 font-mono text-xs text-slate-700">{row.code}</td>
-            <td className="px-2 py-2">
-              <span className={cn('block', row.active ? 'text-slate-800' : 'text-slate-400')}>
+            <td className="px-5 py-2.5">
+              <CodePill code={row.code} />
+            </td>
+            <td className="px-2 py-2.5">
+              <span
+                className={cn('block font-medium', row.active ? 'text-slate-800' : 'text-slate-400')}
+              >
                 {row.name}
               </span>
-              {row.description !== null && (
-                <span className="block text-[11px] text-slate-400">{row.description}</span>
+              {row.description !== null && row.description.length > 0 && (
+                <span className="mt-0.5 block text-xs text-slate-500">{row.description}</span>
               )}
             </td>
-            <td className="px-2 py-2 text-right text-xs tabular-nums text-slate-600">
+            <td className="px-2 py-2.5 text-right text-xs tabular-nums text-slate-600">
               {row.maxAmount == null ? '—' : formatRinggit(row.maxAmount)}
             </td>
-            <td className="px-2 py-2 text-right text-xs tabular-nums text-slate-500">
+            <td className="px-2 py-2.5 text-right text-xs tabular-nums text-slate-500">
               {row.requestCount}
             </td>
-            <td className="px-2 py-2 pr-4">
-              {can(SCREEN, 'configure') && (
+            <td className="px-2 py-2.5">
+              <Badge tone={row.active ? 'success' : 'neutral'}>
+                <T k={row.active ? 'app.status.active' : 'app.status.inactive'} />
+              </Badge>
+            </td>
+            <td className="px-2 py-2.5 pr-4">
+              {configurable && (
                 <RowActions>
                   <RowAction
-                    icon={<Tags className="size-4" aria-hidden />}
-                    label={t('action.edit')}
+                    icon={<Pencil className="size-4" aria-hidden />}
+                    label={t('expense.categories.row.edit')}
+                    tone="edit"
                     onClick={() => setEditing(row)}
+                  />
+                  {/*
+                    Disabled with the count in the tooltip rather than live and refused: a decided
+                    expense still has to name the category it was filed under.
+                  */}
+                  <RowAction
+                    icon={<Trash2 className="size-4" aria-hidden />}
+                    label={
+                      row.requestCount > 0
+                        ? t(row.active ? 'hr.row.locked' : 'hr.row.locked.inactive', {
+                            count: row.requestCount,
+                          })
+                        : t('expense.categories.row.remove')
+                    }
+                    tone="danger"
+                    disabled={row.requestCount > 0}
+                    onClick={() => void remove(row)}
                   />
                 </RowActions>
               )}
@@ -898,6 +1052,18 @@ export function ExpenseCategoriesPanel(): ReactNode {
           </tr>
         ))}
       </RecordTable>
+
+      <PanelFooter
+        shown={filtered.length}
+        total={rows.length}
+        page={1}
+        pageSize={Math.max(1, rows.length)}
+        pageSizes={[Math.max(1, rows.length)]}
+        loading={loading}
+        onPage={() => undefined}
+        onPageSize={() => undefined}
+        onRefresh={() => void load()}
+      />
 
       {editing !== null && (
         <CategoryDialog
@@ -934,40 +1100,68 @@ function CategoryDialog({
 
   const submit = async (): Promise<void> => {
     setBusy(true);
+    setError(null);
     try {
       const body = {
-        code,
-        name,
-        ...(description === '' ? {} : { description }),
+        code: code.trim().toUpperCase(),
+        name: name.trim(),
+        /*
+          Sent even when empty, because empty is what clears it. The route reads `''` as "none"
+          and an absent key as "leave as it was", so omitting it made a cleared box a no-op.
+        */
+        description: description.trim(),
+        // Empty means no ceiling, sent as an explicit null so an edit can clear one.
         maxAmount: cap === '' ? null : Number(cap),
         active,
       };
       if (target === null) await expensesApi.createCategory(body);
       else await expensesApi.updateCategory(target.id, body);
-      await onDone(`Kategori ${code.toUpperCase()} disimpan.`);
+      await onDone(t('expense.categories.saved', { code: body.code }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
 
+  const titleKey =
+    target === null ? 'expense.categories.form.create' : 'expense.categories.form.edit';
+
   return (
-    <Dialog
-      title={<T k="expense.categories.form.title" />}
-      titleText={t('expense.categories.form.title')}
-      width="md"
-      onClose={onClose}
-    >
+    <Dialog title={<T k={titleKey} />} titleText={t(titleKey)} width="2xl" onClose={onClose}>
       <div className="space-y-4">
         <Feedback error={error} />
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        {/* Identity first: the code somebody types, then the name they read. */}
+        <div className="grid gap-4 sm:grid-cols-[7rem_1fr]">
           <Field
             label={<T k="claim.types.form.code" />}
             value={code}
             maxLength={16}
+            autoFocus
             onChange={(event) => setCode(event.target.value.toUpperCase())}
           />
+          <Field
+            label={<T k="claim.types.form.name" />}
+            value={name}
+            maxLength={120}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </div>
+
+        <TextArea
+          label={<T k="claim.types.form.description" />}
+          hint={<T k="app.description.hint" />}
+          rows={2}
+          value={description}
+          maxLength={255}
+          onChange={(event) => setDescription(event.target.value)}
+        />
+
+        {/*
+          The picked values on one row, in the claim type form's columns so the two settings
+          screens line up. A category classifies and caps; it has no rate, so the row is shorter.
+        */}
+        <div className="grid items-start gap-4 pb-2 sm:grid-cols-2 lg:grid-cols-4">
           <Field
             label={<T k="claim.types.form.cap" />}
             hint={<T k="claim.types.form.cap.hint" />}
@@ -977,29 +1171,15 @@ function CategoryDialog({
             value={cap}
             onChange={(event) => setCap(event.target.value)}
           />
+          <SelectField
+            label={<T k="panel.column.status" />}
+            value={active ? 'active' : 'inactive'}
+            onChange={(event) => setActive(event.target.value === 'active')}
+          >
+            <option value="active">{t('app.status.active')}</option>
+            <option value="inactive">{t('app.status.inactive')}</option>
+          </SelectField>
         </div>
-
-        <Field
-          label={<T k="claim.types.form.name" />}
-          value={name}
-          maxLength={120}
-          onChange={(event) => setName(event.target.value)}
-        />
-        <Field
-          label={<T k="claim.types.form.description" />}
-          value={description}
-          maxLength={255}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-
-        <label className="flex items-center gap-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            checked={active}
-            onChange={(event) => setActive(event.target.checked)}
-          />
-          <T k="claim.types.form.active" />
-        </label>
 
         <DialogFooter
           onClose={onClose}

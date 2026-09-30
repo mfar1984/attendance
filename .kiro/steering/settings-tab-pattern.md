@@ -222,10 +222,12 @@ bukan tahun *dipapar*, kedua-duanya boleh bercanggah terus.
 
 ## Rollout `framed` masih berperingkat
 
-`RecordTable framed` ialah opt-in. Setakat ini: `LeaveTypesPanel`, `ApprovalWorkflow`,
-`EmailTemplates`, senarai cuti umum dalam Integrasi. **59 jadual lain masih penuh lebar.** Tukar
-dengan sengaja, satu skrin satu masa, dan padankan keseluruhan corak pada skrin itu — bukan hanya
-propnya. Grep untuk mencari yang belum:
+`RecordTable framed` ialah opt-in. Setakat ini **14 jadual**: `ApprovalWorkflow`, `EmailTemplates`,
+senarai cuti umum dalam Integrasi, tab Connector pada Senarai Peranti, dan setiap modul permohonan
+HR sepenuhnya — senarai dan jadual induk Cuti, Tuntutan, Lebih Masa dan Perbelanjaan, serta Iklan
+Jawatan dan Pemohon (termasuk kedua-dua tab Arkib Pengambilan, yang memakai panel yang sama).
+**51 jadual lain masih penuh lebar.** Tukar dengan sengaja, satu skrin satu masa, dan padankan
+keseluruhan corak pada skrin itu — bukan hanya propnya. Grep untuk mencari yang belum:
 
 ```powershell
 $f = Get-ChildItem 'apps\web\src' -Recurse -Include *.tsx
@@ -368,9 +370,20 @@ peringkat 1: Field carian + senarai calon (debounce 250ms, ditapis di PELAYAN)
 peringkat 2: jalur staf terpilih + butang Tukar, kemudian borang penuh
 ```
 
-Rujukan: `LeaveRequestsPage`. `ClaimsPage` menyalinnya. Endpoint carian **satu per modul**
-(`/api/leave-requests/staff-search`, `/api/claim-requests/staff-search`) sebab pintunya berbeza —
-sesiapa yang memfailkan tuntutan bukan semestinya sesiapa yang memfailkan cuti.
+Rujukan: `LeaveRequestsPage`. `ClaimsPage` menyalinnya. Lebih Masa dan Perbelanjaan guna
+**`components/StaffPicker.tsx`** — markup yang sama, diangkat keluar supaya salinannya tidak
+menyimpang. Skrin baharu guna komponen itu, bukan salinan ketiga. Label medannya sentiasa
+`leave.new.searchStaff` ('Cari staf'); hanya `hint` yang berbeza per modul, kerana ia menyatakan
+apa yang dimuatkan oleh pilihan itu.
+
+Endpoint carian **satu per modul** (`/api/leave-requests/staff-search`,
+`/api/claim-requests/staff-search`, `/api/overtime-requests/staff-search`,
+`/api/expense-requests/staff-search`) sebab pintunya berbeza — sesiapa yang memfailkan tuntutan bukan
+semestinya sesiapa yang memfailkan cuti. Setiap satu diperlukan kebenaran `create` modulnya sendiri.
+
+`search` dalam `StaffPicker` dipegang dalam ref. Fungsi anak panah sebaris yang diberi sebagai prop
+bertukar identiti setiap render, dan sebagai kebergantungan kesan ia akan memulakan semula debounce
+tanpa henti.
 
 **Memilih staf memuatkan fakta yang bergantung padanya.** Cuti memuatkan baki dan kelayakan setiap
 jenis; jangan tunjukkan medan yang jawapannya belum boleh dikira.
@@ -389,6 +402,11 @@ bukan nilai dalam borang. Urutannya:
 **Satu input dikongsi merentas baris akan melampirkan fail kepada baris yang mencetuskannya
 terakhir** — itu resit yang difailkan terhadap kos yang salah. Sebab itu `DraftReceipt` dan
 `ItemReceipt` ialah komponen sendiri.
+
+`DraftReceipt` tinggal dalam **`components/DraftReceipt.tsx`**, dikongsi borang tuntutan (jalur
+di bawah setiap baris) dan borang perbelanjaan (`framed`, satu resit sebagai bloknya sendiri). Dua
+salinan kawalan yang sama akan menyimpang, dan yang menyimpang ialah yang berkata "dimuat naik"
+sebelum ia berlaku.
 
 **Perkataan mesti menyatakan urutan itu.** `'Akan dimuat naik selepas hantar'` — butang berlabel
 "Lampirkan" yang tidak memuat naik apa-apa sampai Hantar ditekan ialah kawalan yang menipu.

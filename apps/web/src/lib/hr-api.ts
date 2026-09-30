@@ -1,4 +1,42 @@
+import type { LabelKey } from '@attendance/shared';
+
 import { api } from './api';
+import type { LabelVars } from './translation';
+
+/**
+ * The notice for a signature that did not settle the request.
+ *
+ * "Approved — RM 45.00" on rung 1 of 3 would tell the approver money is owed when two more people
+ * have yet to see it, so a rung that leaves the chain climbing says which rung it was and who is
+ * next. Shared because every module with a chain answers `decide` with the same fields, and the
+ * sentence is the same in all of them.
+ *
+ * The awaiting clause is a slot carrying its own space and full stop, so a chain whose next rung
+ * has no name does not leave a dangling separator behind.
+ */
+export function signedNotice(
+  t: (key: LabelKey, vars?: LabelVars) => string,
+  number: string,
+  result: {
+    level: number;
+    totalLevels: number;
+    awaitingLevel: number | null;
+    awaitingLabel: string | null;
+  },
+): string {
+  return t('hr.decision.signed', {
+    number,
+    level: result.level,
+    total: result.totalLevels,
+    awaiting:
+      result.awaitingLabel === null
+        ? ''
+        : t('hr.decision.signed.awaiting', {
+            level: result.awaitingLevel ?? result.level + 1,
+            name: result.awaitingLabel,
+          }),
+  });
+}
 
 /**
  * Approval chains and per-module preferences.

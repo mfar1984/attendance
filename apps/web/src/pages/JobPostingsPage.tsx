@@ -1,32 +1,26 @@
-import {
-  Archive,
-  CircleAlert,
-  Megaphone,
-  Plus,
-  Send,
-  SquarePen,
-  Trash2,
-} from 'lucide-react';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Archive, CircleAlert, Megaphone, Pencil, Plus, Send, Trash2, UserPlus } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
 import {
   ChipBar,
+  CodePill,
   Detail,
   DetailGrid,
   ExpandButton,
-  FacetSelect,
   FilterRow,
   PanelBody,
   PanelCard,
   PanelFooter,
   PanelNote,
   PanelSection,
+  PanelTabs,
   RecordTable,
   RowAction,
   RowActions,
+  type PanelTab,
 } from '../components/RecordPanel';
-import { Badge, Button, Field } from '../components/ui';
+import { Badge, Button, Field, SelectField, TextArea } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import { formatDateOnly, lookupsApi, todayIso, type Lookups } from '../lib/operations-api';
@@ -41,6 +35,7 @@ import {
   type PostingStatus,
 } from '../lib/recruitment-api';
 import { T, useLabels } from '../lib/translation';
+import { ArchivedApplicantsPanel } from './ApplicantsPage';
 
 const STATUS_DOT: Record<PostingStatus, string> = {
   draft: 'bg-slate-400',
@@ -57,19 +52,83 @@ const EMPLOYMENT_TYPES: EmploymentType[] = ['permanent', 'contract', 'temporary'
  *
  * Live postings only — closed ones live on the archive screen, because a list mixing a vacancy
  * somebody is recruiting for with one closed two years ago is a list nobody can scan.
+ *
+ * The card belongs to the page and not to the panel, so the archive can put two panels under one
+ * card with a tab bar between them. A panel that draws its own card cannot be a tab.
  */
 export function JobPostingsPage(): ReactNode {
-  return <PostingsPanel archived={false} />;
+  return (
+    <PanelCard
+      title={<T k="recruit.posting.title" />}
+      subtitle={<T k="recruit.posting.subtitle" />}
+    >
+      <PostingsPanel archived={false} />
+    </PanelCard>
+  );
 }
 
 /**
- * The archive.
+ * The archive: closed postings, and the candidates who applied to them.
  *
- * The same table over closed postings. One component rather than two, so a column added to one
- * cannot go missing from the other.
+ * Two subjects on one screen, so a tab bar — the same shape as every settings screen. The
+ * applicants half existed as a panel for a long time with nothing mounting it, which meant the
+ * candidates of a closed posting could only be found by knowing the posting's code.
+ *
+ * Each tab is offered only to somebody who can read it. The two lists sit behind different
+ * grants, and a tab that opens onto a refusal teaches people the archive is broken.
  */
 export function RecruitmentArchivePage(): ReactNode {
-  return <PostingsPanel archived />;
+  const { t } = useLabels();
+  const { can } = useAuth();
+
+  const tabs: PanelTab[] = [
+    ...(can(SCREEN, 'view')
+      ? [
+          {
+            id: 'postings',
+            label: <T k="recruit.archive.tab.postings" />,
+            labelText: t('recruit.archive.tab.postings'),
+            icon: <Megaphone className="size-4" aria-hidden />,
+          },
+        ]
+      : []),
+    ...(can('hr.applicants', 'view')
+      ? [
+          {
+            id: 'applicants',
+            label: <T k="recruit.archive.tab.applicants" />,
+            labelText: t('recruit.archive.tab.applicants'),
+            icon: <UserPlus className="size-4" aria-hidden />,
+          },
+        ]
+      : []),
+  ];
+  const [tab, setTab] = useState(tabs[0]?.id ?? 'postings');
+
+  return (
+    <PanelCard title={<T k="recruit.archive.title" />} subtitle={<T k="recruit.archive.subtitle" />}>
+      {/* A one-tab bar is a control that cannot do anything, so it only appears with two. */}
+      {tabs.length > 1 && (
+        <PanelTabs label={t('recruit.archive.title')} active={tab} onChange={setTab} tabs={tabs} />
+      )}
+
+      {/*
+        Neither grant: say so, rather than mount a panel whose first request is refused. The entry
+        itself is gated on the archive screen, which a role can hold without either list behind it.
+      */}
+      {tabs.length === 0 ? (
+        <PanelBody>
+          <PanelNote tone="warn" icon={<CircleAlert className="size-3.5" aria-hidden />}>
+            <T k="recruit.archive.noAccess" />
+          </PanelNote>
+        </PanelBody>
+      ) : tab === 'applicants' ? (
+        <ArchivedApplicantsPanel />
+      ) : (
+        <PostingsPanel archived />
+      )}
+    </PanelCard>
+  );
 }
 
 function PostingsPanel({ archived }: { archived: boolean }): ReactNode {
@@ -78,6 +137,8 @@ function PostingsPanel({ archived }: { archived: boolean }): ReactNode {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [status, setStatus] = useState<PostingStatus | undefined>(undefined);
+  const [search, setSearch] = useState('');
+  const [debounced, setDebounced] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -85,31 +146,49 @@ function PostingsPanel({ archived }: { archived: boolean }): ReactNode {
   const [editing, setEditing] = useState<PostingRow | 'new' | null>(null);
   const { t } = useLabels();
   const { can } = useAuth();
+  /*
+   * Which load is the latest. A search answered out of order would otherwise leave the table
+   * showing the rows for the previous term under the box that now holds the next one.
+   */
+  const latest = useRef(0);
+
+  // Same debounce as the leave list: one request per pause in typing, not one per key.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebounced(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const load = useCallback(async () => {
+    const mine = ++latest.current;
     setLoading(true);
     try {
-      setData(
-        await recruitmentApi.postings({
-          page,
-          pageSize,
-          archived,
-          ...(status === undefined ? {} : { status }),
-        }),
-      );
+      const result = await recruitmentApi.postings({
+        page,
+        pageSize,
+        archived,
+        ...(status === undefined ? {} : { status }),
+        ...(debounced === '' ? {} : { search: debounced }),
+      });
+      if (mine !== latest.current) return;
+      setData(result);
       setError(null);
     } catch (cause) {
+      if (mine !== latest.current) return;
       setError(cause instanceof Error ? cause.message : t('recruit.posting.error.load'));
     } finally {
-      setLoading(false);
+      if (mine === latest.current) setLoading(false);
     }
-  }, [page, pageSize, status, archived, t]);
+  }, [page, pageSize, status, debounced, archived, t]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
+    if (archived) return;
     void (async () => {
       try {
         setLookups(await lookupsApi.load());
@@ -117,24 +196,24 @@ function PostingsPanel({ archived }: { archived: boolean }): ReactNode {
         // The form falls back to no department or location, which is a valid posting.
       }
     })();
-  }, []);
+  }, [archived]);
 
   const rows = data?.rows ?? [];
+  /*
+   * The heading counts what this screen holds, ignoring the chip: live postings are drafts plus
+   * published ones, the archive is the closed ones. Counted from the chip totals so choosing a
+   * chip does not make the heading shrink with the table.
+   */
+  const count = archived
+    ? (data?.counts.closed ?? 0)
+    : (data?.counts.draft ?? 0) + (data?.counts.published ?? 0);
 
   return (
-    <PanelCard
-      title={<T k={archived ? 'recruit.archive.title' : 'recruit.posting.title'} />}
-      subtitle={<T k={archived ? 'recruit.archive.subtitle' : 'recruit.posting.subtitle'} />}
-    >
+    <>
       <PanelSection
-        icon={
-          archived ? (
-            <Archive className="size-4" aria-hidden />
-          ) : (
-            <Megaphone className="size-4" aria-hidden />
-          )
+        title={
+          <T k={archived ? 'recruit.archive.count' : 'recruit.posting.count'} vars={{ count }} />
         }
-        title={<T k={archived ? 'recruit.archive.tab.postings' : 'recruit.posting.tab.list'} />}
         action={
           !archived && can(SCREEN, 'create') ? (
             <Button onClick={() => setEditing('new')}>
@@ -163,23 +242,30 @@ function PostingsPanel({ archived }: { archived: boolean }): ReactNode {
       )}
 
       <FilterRow
-        dirty={status !== undefined}
+        search={search}
+        onSearch={setSearch}
+        placeholder={t('recruit.posting.search')}
+        dirty={status !== undefined || search.length > 0}
         onReset={() => {
           setStatus(undefined);
+          setSearch('');
           setPage(1);
         }}
       />
 
-      <PanelBody className="space-y-2 pb-0">
-        <Feedback error={error} notice={notice} />
-        {!archived && (
-          <PanelNote icon={<CircleAlert className="size-3.5" aria-hidden />}>
-            <T k="recruit.posting.note.forward" />
-          </PanelNote>
-        )}
-      </PanelBody>
+      {(error !== null || notice !== null || !archived) && (
+        <PanelBody className="space-y-2 pb-0">
+          <Feedback error={error} notice={notice} />
+          {!archived && (
+            <PanelNote icon={<CircleAlert className="size-3.5" aria-hidden />}>
+              <T k="recruit.posting.note.forward" />
+            </PanelNote>
+          )}
+        </PanelBody>
+      )}
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={rows.length}
         empty={<T k="recruit.posting.empty" />}
@@ -238,7 +324,7 @@ function PostingsPanel({ archived }: { archived: boolean }): ReactNode {
           }}
         />
       )}
-    </PanelCard>
+    </>
   );
 }
 
@@ -271,12 +357,14 @@ function PostingRowView({
           closed && 'text-slate-400',
         )}
       >
-        <td className="px-5 py-2 font-mono text-xs text-slate-700">{row.code}</td>
+        <td className="px-5 py-2">
+          <CodePill code={row.code} />
+        </td>
         <td className="px-2 py-2">
-          <span className={cn('block', closed ? 'text-slate-400' : 'text-slate-800')}>
+          <span className={cn('block font-medium', closed ? 'text-slate-400' : 'text-slate-800')}>
             {row.title}
           </span>
-          <span className="block text-[11px] text-slate-400">
+          <span className="mt-0.5 block text-xs text-slate-500">
             <T k={EMPLOYMENT_TYPE_LABELS[row.employmentType]} /> ·{' '}
             {formatSalaryRange(row.salaryMin, row.salaryMax)}
           </span>
@@ -297,14 +385,14 @@ function PostingRowView({
           {row.closesOn === null ? '—' : formatDateOnly(row.closesOn)}
         </td>
         <td className="px-2 py-2">
+          {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
           <Badge
             tone={
               row.status === 'published' ? 'success' : row.status === 'draft' ? 'warning' : 'neutral'
             }
+            className="uppercase"
           >
-            <span className="uppercase">
-              <T k={POSTING_STATUS_LABELS[row.status]} />
-            </span>
+            <T k={POSTING_STATUS_LABELS[row.status]} />
           </Badge>
         </td>
         <td className="px-2 py-2 pr-4">
@@ -317,7 +405,7 @@ function PostingRowView({
                 onClick={async () => {
                   try {
                     await recruitmentApi.setPostingStatus(row.id, 'published');
-                    await onChanged(`${row.code} diterbitkan.`);
+                    await onChanged(t('recruit.posting.notice.published', { code: row.code }));
                   } catch (cause) {
                     onError(cause instanceof Error ? cause.message : '');
                   }
@@ -332,7 +420,7 @@ function PostingRowView({
                 onClick={async () => {
                   try {
                     await recruitmentApi.setPostingStatus(row.id, 'closed');
-                    await onChanged(`${row.code} ditutup.`);
+                    await onChanged(t('recruit.posting.notice.closed', { code: row.code }));
                   } catch (cause) {
                     onError(cause instanceof Error ? cause.message : '');
                   }
@@ -341,23 +429,32 @@ function PostingRowView({
             )}
             {!closed && can(SCREEN, 'edit') && (
               <RowAction
-                icon={<SquarePen className="size-4" aria-hidden />}
+                icon={<Pencil className="size-4" aria-hidden />}
                 label={t('recruit.posting.action.edit')}
+                tone="edit"
                 onClick={onEdit}
               />
             )}
+            {/*
+              Disabled with the count in the tooltip rather than hidden or refused: applicants must
+              be able to name the post they applied for, and the reason belongs on the control.
+            */}
             {can(SCREEN, 'delete') && (
               <RowAction
                 icon={<Trash2 className="size-4" aria-hidden />}
-                label={t('recruit.posting.action.delete')}
+                label={
+                  row.applicantCount > 0
+                    ? t(closed ? 'recruit.posting.row.lockedClosed' : 'recruit.posting.row.locked', {
+                        count: row.applicantCount,
+                      })
+                    : t('recruit.posting.action.delete')
+                }
                 tone="danger"
-                // Applicants must be able to name the post they applied for; the server
-                // refuses and says so, but disabling states it before the click.
                 disabled={row.applicantCount > 0}
                 onClick={async () => {
                   try {
                     await recruitmentApi.deletePosting(row.id);
-                    await onChanged(`${row.code} dibuang.`);
+                    await onChanged(t('recruit.posting.notice.removed', { code: row.code }));
                   } catch (cause) {
                     onError(cause instanceof Error ? cause.message : '');
                   }
@@ -422,11 +519,12 @@ function PostingDialog({
   const [employmentType, setEmploymentType] = useState<EmploymentType>(
     target?.employmentType ?? 'permanent',
   );
+  // From the stored ids, not matched back from the names — see `departmentId` on `PostingRow`.
   const [departmentId, setDepartmentId] = useState(
-    target === null ? '' : String(lookups?.departments.find((d) => d.name === target.departmentName)?.id ?? ''),
+    target?.departmentId == null ? '' : String(target.departmentId),
   );
   const [locationId, setLocationId] = useState(
-    target === null ? '' : String(lookups?.locations.find((l) => l.name === target.locationName)?.id ?? ''),
+    target?.locationId == null ? '' : String(target.locationId),
   );
   const [salaryMin, setSalaryMin] = useState(
     target?.salaryMin == null ? '' : String(target.salaryMin),
@@ -444,14 +542,19 @@ function PostingDialog({
 
   const submit = async (): Promise<void> => {
     setBusy(true);
+    setError(null);
     try {
       const body = {
-        code,
-        title,
+        code: code.trim().toUpperCase(),
+        title: title.trim(),
         departmentId: departmentId === '' ? null : Number(departmentId),
         locationId: locationId === '' ? null : Number(locationId),
-        ...(summary === '' ? {} : { summary }),
-        ...(requirements === '' ? {} : { requirements }),
+        /*
+          Sent even when empty, because empty is what clears them. The route reads `''` as "none"
+          and an absent key as "leave as it was".
+        */
+        summary: summary.trim(),
+        requirements: requirements.trim(),
         positions: Number(positions),
         employmentType,
         salaryMin: salaryMin === '' ? null : Number(salaryMin),
@@ -461,80 +564,109 @@ function PostingDialog({
       };
       if (target === null) await recruitmentApi.createPosting(body);
       else await recruitmentApi.updatePosting(target.id, body);
-      await onDone(`${code.toUpperCase()} disimpan.`);
+      await onDone(t('recruit.posting.notice.saved', { code: body.code }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
 
+  const titleKey = target === null ? 'recruit.posting.form.create' : 'recruit.posting.form.edit';
+
   return (
-    <Dialog
-      title={<T k="recruit.posting.form.title" />}
-      titleText={t('recruit.posting.form.title')}
-      width="lg"
-      onClose={onClose}
-    >
+    <Dialog title={<T k={titleKey} />} titleText={t(titleKey)} width="2xl" onClose={onClose}>
       <div className="space-y-4">
         <Feedback error={error} />
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        {/*
+          Identity first: the code a candidate quotes on the telephone, then the title they read.
+          The code column is wider than a leave type's because a posting code runs to twenty-four
+          characters and its hint is a sentence, not an example.
+        */}
+        <div className="grid gap-4 sm:grid-cols-[12rem_1fr]">
           <Field
             label={<T k="recruit.posting.form.code" />}
             hint={<T k="recruit.posting.form.code.hint" />}
             value={code}
             maxLength={24}
+            autoFocus
             onChange={(event) => setCode(event.target.value.toUpperCase())}
           />
           <Field
-            label={<T k="recruit.posting.form.positions" />}
-            type="number"
-            min={1}
-            max={500}
-            value={positions}
-            onChange={(event) => setPositions(event.target.value)}
+            label={<T k="recruit.posting.form.jobTitle" />}
+            value={title}
+            maxLength={190}
+            onChange={(event) => setTitle(event.target.value)}
           />
         </div>
 
-        <Field
-          label={<T k="recruit.posting.form.jobTitle" />}
-          value={title}
-          maxLength={190}
-          onChange={(event) => setTitle(event.target.value)}
-        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <TextArea
+            label={<T k="recruit.posting.form.summary" />}
+            rows={4}
+            value={summary}
+            maxLength={4000}
+            onChange={(event) => setSummary(event.target.value)}
+          />
+          <TextArea
+            label={<T k="recruit.posting.form.requirements" />}
+            rows={4}
+            value={requirements}
+            maxLength={4000}
+            onChange={(event) => setRequirements(event.target.value)}
+          />
+        </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <FacetSelect
-            label={t('recruit.posting.form.department')}
+        {/*
+          Form selects with visible labels, not facets. A facet's empty option means "no filter";
+          here "none" is a real answer — a posting open to any department — so it is written out.
+        */}
+        <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <SelectField
+            label={<T k="recruit.posting.form.department" />}
             value={departmentId}
-            onChange={setDepartmentId}
-            options={(lookups?.departments ?? []).map((row) => ({
-              value: String(row.id),
-              label: row.name,
-            }))}
-          />
-          <FacetSelect
-            label={t('recruit.posting.form.location')}
+            onChange={(event) => setDepartmentId(event.target.value)}
+          >
+            <option value="">{t('staffForm.none')}</option>
+            {(lookups?.departments ?? []).map((row) => (
+              <option key={row.id} value={String(row.id)}>
+                {row.name}
+              </option>
+            ))}
+          </SelectField>
+          <SelectField
+            label={<T k="recruit.posting.form.location" />}
             value={locationId}
-            onChange={setLocationId}
-            options={(lookups?.locations ?? []).map((row) => ({
-              value: String(row.id),
-              label: row.name,
-            }))}
+            onChange={(event) => setLocationId(event.target.value)}
+          >
+            <option value="">{t('staffForm.none')}</option>
+            {(lookups?.locations ?? []).map((row) => (
+              <option key={row.id} value={String(row.id)}>
+                {row.name}
+              </option>
+            ))}
+          </SelectField>
+          <SelectField
+            label={<T k="recruit.posting.form.employmentType" />}
+            value={employmentType}
+            onChange={(event) => setEmploymentType(event.target.value as EmploymentType)}
+          >
+            {EMPLOYMENT_TYPES.map((value) => (
+              <option key={value} value={value}>
+                {t(EMPLOYMENT_TYPE_LABELS[value])}
+              </option>
+            ))}
+          </SelectField>
+          <Field
+            label={<T k="recruit.posting.form.positions" />}
+            inputMode="numeric"
+            value={positions}
+            onChange={(event) => setPositions(event.target.value.replace(/\D/g, ''))}
           />
         </div>
 
-        <FacetSelect
-          label={t('recruit.posting.form.employmentType')}
-          value={employmentType}
-          onChange={(value) => setEmploymentType(value as EmploymentType)}
-          options={EMPLOYMENT_TYPES.map((value) => ({
-            value,
-            label: t(EMPLOYMENT_TYPE_LABELS[value]),
-          }))}
-        />
-
-        <div className="grid gap-3 sm:grid-cols-2">
+        {/* The last block before the footer, so it carries the `pb-2`. */}
+        <div className="grid items-start gap-4 pb-2 sm:grid-cols-2 lg:grid-cols-4">
           <Field
             label={<T k="recruit.posting.form.salaryMin" />}
             hint={<T k="recruit.posting.form.salary.hint" />}
@@ -552,9 +684,6 @@ function PostingDialog({
             value={salaryMax}
             onChange={(event) => setSalaryMax(event.target.value)}
           />
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
           <Field
             label={<T k="recruit.posting.form.openedOn" />}
             type="date"
@@ -570,44 +699,14 @@ function PostingDialog({
           />
         </div>
 
-        <div>
-          <label htmlFor="posting-summary" className="block text-sm font-medium text-slate-700">
-            <T k="recruit.posting.form.summary" />
-          </label>
-          <textarea
-            id="posting-summary"
-            rows={4}
-            value={summary}
-            maxLength={4000}
-            onChange={(event) => setSummary(event.target.value)}
-            className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="posting-requirements" className="block text-sm font-medium text-slate-700">
-            <T k="recruit.posting.form.requirements" />
-          </label>
-          <textarea
-            id="posting-requirements"
-            rows={4}
-            value={requirements}
-            maxLength={4000}
-            onChange={(event) => setRequirements(event.target.value)}
-            className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
-        </div>
-
         <DialogFooter
           onClose={onClose}
           onSubmit={() => void submit()}
           busy={busy}
-          disabled={code.trim() === '' || title.trim() === '' || Number(positions) < 1}
+          disabled={code.trim() === '' || title.trim() === '' || !(Number(positions) >= 1)}
           submitLabel={<T k="dialog.save" />}
         />
       </div>
     </Dialog>
   );
 }
-
-

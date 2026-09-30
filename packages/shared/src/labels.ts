@@ -138,6 +138,20 @@ export const LABELS = {
   'app.error.remove': 'Gagal membuang',
 
   /**
+   * The hint under the description box of a master-data dialog whose description is shown only
+   * in its own list — overtime rates and expense categories. Leave and claim types say more,
+   * because theirs also appears on the application form.
+   */
+  'app.description.hint': 'Dipaparkan di bawah nama dalam senarai ini.',
+
+  /**
+   * The search box over a table of master data — leave types, overtime rates, expense categories.
+   * Began as `leave.type.search`; moved here once three screens rendered it, so a translator
+   * working through the leave group cannot make it name leave on the other two.
+   */
+  'app.search.codeName': 'Cari kod atau nama…',
+
+  /**
    * The state badge, wherever a row is either in use or not.
    *
    * Staff, roles, languages and accounts all carry it, and it is the same two words meaning
@@ -252,7 +266,8 @@ export const LABELS = {
   'nav.hr.career': 'Iklan Jawatan',
   'nav.hr.applicants': 'Pemohon',
   'nav.hr.careerArchive': 'Arkib Pengambilan',
-  'nav.hr.careerSettings': 'Tetapan Pengambilan',
+  // One word, for the reason the request modules' entries are: the group title already names it.
+  'nav.hr.careerSettings': 'Tetapan',
 
   'nav.group.kpi': 'KPI & Penilaian',
   'nav.hr.kpiTemplates': 'Templat KPI',
@@ -1750,8 +1765,6 @@ export const LABELS = {
     'Kelulusan menulis hari cuti ke kalendar kerja dan mengira semula kehadiran — tanpa itu, orang yang diluluskan cutinya masih dilaporkan tidak hadir.',
   'leave.tab.types': 'Jenis Cuti',
 
-  'leave.request.none': 'Tiada permohonan menunggu keputusan',
-  'leave.request.pending': '{count} menunggu keputusan',
   'leave.request.subtitle':
     'Hari rehat dan cuti umum tidak dikira terhadap kelayakan — mengenakan cuti tahunan untuk hari Ahad adalah ralat yang muncul sebagai rungutan, bukan sebagai pepijat.',
   'leave.request.add': 'Permohonan Baharu',
@@ -1894,7 +1907,6 @@ export const LABELS = {
   'leave.type.subtitle':
     'Kelayakan yang diseed adalah minimum statutori sebagai titik permulaan, bukan polisi — setiap organisasi menyesuaikannya.',
   'leave.type.add': 'Tambah Jenis',
-  'leave.type.search': 'Cari kod atau nama…',
   'leave.type.empty': 'Belum ada jenis cuti.',
   'leave.type.error.load': 'Gagal memuatkan jenis cuti',
   'leave.type.removed': 'Jenis cuti "{code}" dibuang.',
@@ -1944,7 +1956,6 @@ export const LABELS = {
 
   'leave.type.row.edit': 'Kemas kini jenis cuti',
   'leave.type.row.remove': 'Buang jenis cuti',
-  'leave.type.row.locked': '{count} permohonan menggunakannya — nyahaktifkan sebaliknya',
 
   'leave.type.dialog.edit': 'Kemas kini jenis cuti',
   'leave.type.dialog.create': 'Tambah jenis cuti',
@@ -2539,8 +2550,40 @@ export const LABELS = {
   'hr.approval.trail.approved': 'Diluluskan',
   'hr.approval.trail.rejected': 'Ditolak',
   'hr.approval.trail.empty': 'Belum ada keputusan.',
-  'hr.approval.awaiting': 'Menunggu aras {level} ({name})',
   'hr.approval.progress': 'Aras {level} daripada {total}',
+
+  /**
+   * The notices the request modules raise after an act, shared because every module with a queue
+   * says the same sentence about the same act. `{number}` is the record's own number — a request,
+   * or an applicant.
+   *
+   * `signed` is a rung that did not settle the request, and it must not read as one that did.
+   * Its `{awaiting}` slot carries its own leading space and full stop, so a chain whose next rung
+   * has no name leaves no dangling separator.
+   */
+  /**
+   * The heading of every request queue — leave, claims, overtime, expenses. It counts what is
+   * waiting across all dates, not inside the list's date window: a request filed three months back
+   * is still waiting, and a heading that says nothing is would be the line an approver trusts.
+   * Began as `leave.request.*`; moved here once four modules rendered it.
+   */
+  'hr.queue.none': 'Tiada permohonan menunggu keputusan',
+  'hr.queue.pending': '{count} menunggu keputusan',
+
+  /**
+   * Why the bin on a row of master data is disabled: applications refer to it. Two wordings,
+   * because the advice differs — an active row can be deactivated instead, an inactive one
+   * already has been and simply stays as the record those applications name.
+   */
+  'hr.row.locked': '{count} permohonan menggunakannya — nyahaktifkan sebaliknya',
+  'hr.row.locked.inactive': '{count} permohonan menggunakannya, jadi ia kekal sebagai rekod',
+
+  'hr.record.created': '{number} direkodkan.',
+  'hr.request.withdrawn': '{number} ditarik.',
+  'hr.decision.rejected': '{number} ditolak.',
+  'hr.decision.approved': '{number} diluluskan — {amount}.',
+  'hr.decision.signed': '{number}: aras {level} daripada {total} ditandatangani.{awaiting}',
+  'hr.decision.signed.awaiting': ' Menunggu aras {level} ({name}).',
 
   'hr.notify.title': 'Notifikasi',
   'hr.notify.subtitle':
@@ -2958,7 +3001,12 @@ export const LABELS = {
   'recruit.posting.title': 'Iklan Jawatan',
   'recruit.posting.subtitle':
     'Iklan dicipta sebagai draf. Menerbitkan ialah tindakan berasingan, dan menutup bukan membuang — pemohon masih perlu menamakan iklan yang mereka pohon.',
-  'recruit.posting.tab.list': 'Iklan',
+  /*
+    `recruit.posting.tab.list` ('Iklan') dibuang: tajuk seksyen mengulang tajuk kad di atasnya.
+    Tajuk seksyen ialah kiraan, seperti setiap senarai lain.
+  */
+  'recruit.posting.count': '{count} iklan',
+  'recruit.posting.search': 'Cari kod atau jawatan…',
 
   'recruit.posting.status.draft': 'Draf',
   'recruit.posting.status.published': 'Diterbitkan',
@@ -2982,13 +3030,22 @@ export const LABELS = {
   'recruit.posting.action.edit': 'Ubah iklan',
   'recruit.posting.action.delete': 'Buang iklan',
   'recruit.posting.action.view': 'Lihat',
+  'recruit.posting.row.locked': '{count} pemohon merujuk iklan ini — tutup iklan itu sebaliknya',
+  // The same refusal on a posting that is already closed, where "close it instead" is advice already taken.
+  'recruit.posting.row.lockedClosed': '{count} pemohon merujuk iklan ini, jadi ia kekal sebagai rekod',
+
+  'recruit.posting.notice.saved': 'Iklan {code} disimpan.',
+  'recruit.posting.notice.published': 'Iklan {code} diterbitkan.',
+  'recruit.posting.notice.closed': 'Iklan {code} ditutup.',
+  'recruit.posting.notice.removed': 'Iklan {code} dibuang.',
 
   'recruit.posting.note.forward':
     'Kitaran hayat iklan bergerak ke hadapan sahaja: draf → diterbitkan → ditutup. Iklan yang ditutup tidak dibuka semula, kerana itu akan memanjangkan tarikh tutup yang sebahagian calon sudah diberitahu telah berlalu.',
   'recruit.posting.note.locked':
     'Iklan yang ditutup tidak boleh disunting — calon memohon berdasarkan apa yang tertulis padanya.',
 
-  'recruit.posting.form.title': 'Iklan Jawatan',
+  'recruit.posting.form.create': 'Iklan jawatan baharu',
+  'recruit.posting.form.edit': 'Kemas kini iklan jawatan',
   'recruit.posting.form.code': 'Kod iklan',
   'recruit.posting.form.code.hint': 'Pendek dan tetap — ini yang calon sebut di telefon.',
   'recruit.posting.form.jobTitle': 'Jawatan',
@@ -3029,6 +3086,9 @@ export const LABELS = {
   'recruit.applicant.column.interview': 'Temuduga',
   'recruit.applicant.column.staff': 'Rekod Staf',
 
+  'recruit.applicant.count': '{count} pemohon',
+  'recruit.applicant.search': 'Cari no. pemohon, nama, no. KP, emel atau telefon…',
+  'recruit.applicant.filter.allPostings': 'Semua iklan',
   'recruit.applicant.empty': 'Tiada pemohon.',
   'recruit.applicant.error.load': 'Senarai pemohon tidak dapat dimuatkan.',
   'recruit.applicant.action.new': 'Rekod Pemohon',
@@ -3036,6 +3096,10 @@ export const LABELS = {
   'recruit.applicant.action.hire': 'Ambil sebagai staf',
   'recruit.applicant.action.delete': 'Buang pemohon',
   'recruit.applicant.action.view': 'Lihat',
+  'recruit.applicant.row.locked': 'Sudah diambil sebagai staf — rekod staf merujuk permohonan ini',
+
+  'recruit.applicant.remove.title': 'Buang pemohon {number}',
+  'recruit.applicant.notice.removed': 'Pemohon {number} dibuang.',
 
   'recruit.applicant.note.offer':
     'Tawaran dibuat melalui aliran kelulusan, bukan dengan menukar peringkat. Sehingga aras terakhir menandatangani, calon kekal pada peringkat temuduga — memberitahu mereka "ditawarkan" sebelum itu ialah tawaran yang belum dibuat.',
@@ -3061,12 +3125,15 @@ export const LABELS = {
   'recruit.advance.interviewAt': 'Tarikh dan masa temuduga',
   'recruit.advance.note': 'Catatan',
   'recruit.advance.note.required': 'Penolakan memerlukan sebab bertulis.',
+  'recruit.advance.done': '{number}: {status}.',
 
   'recruit.decide.title': 'Keputusan tawaran — {applicantNo}',
   'recruit.decide.description':
     'Meluluskan bermakna menawarkan jawatan. Kekosongan disemak dahulu, kerana menawarkan jawatan yang sudah penuh ialah janji yang seseorang perlu tarik balik.',
   'recruit.decide.approve': 'Luluskan tawaran',
   'recruit.decide.reject': 'Tolak',
+  'recruit.decide.done.rejected': '{number} tidak berjaya.',
+  'recruit.decide.done.offered': '{number} ditawarkan jawatan.',
 
   'recruit.hire.title': 'Ambil {name} sebagai staf',
   'recruit.hire.description':
@@ -3085,6 +3152,9 @@ export const LABELS = {
     'Iklan yang sudah ditutup berserta pemohonnya, disimpan berasingan supaya senarai aktif kekal boleh dibaca.',
   'recruit.archive.tab.postings': 'Iklan Ditutup',
   'recruit.archive.tab.applicants': 'Pemohon',
+  'recruit.archive.count': '{count} iklan ditutup',
+  'recruit.archive.noAccess':
+    'Peranan anda tidak boleh melihat iklan atau pemohon. Arkib ini memaparkan kedua-duanya, jadi ia memerlukan kebenaran Lihat pada Iklan Jawatan atau Pemohon.',
 
   /**
    * Headings for the four request-module settings screens.
@@ -3117,7 +3187,6 @@ export const LABELS = {
   'expense.subtitle':
     'Wang yang staf keluarkan sendiri dan tuntut balik. Tiada kadar di sini — resit itulah asas jumlahnya, jadi ia tidak pernah pilihan.',
 
-  'expense.tab.requests': 'Perbelanjaan',
   'expense.tab.categories': 'Kategori',
 
   'expense.column.requestNo': 'No. Permohonan',
@@ -3132,20 +3201,39 @@ export const LABELS = {
     'Perbelanjaan tidak boleh diluluskan tanpa resit. Ia boleh difailkan dahulu, kemudian resit dilampirkan — muat naik yang gagal tidak patut membuang segala yang sudah ditaip.',
 
   'expense.new.title': 'Rekod Perbelanjaan',
-  'expense.new.description': 'Jumlah diambil dari resit. Lampirkan resit selepas dihantar.',
+  'expense.new.description':
+    'Jumlah diambil dari resit. Pilih fail resit di sini — ia dimuat naik sebaik perbelanjaan direkodkan.',
   'expense.new.category': 'Kategori',
   'expense.new.payee': 'Dibayar kepada',
   'expense.new.payee.hint': 'Resit tanpa nama penerima sukar disemak terhadap penyata bank.',
+  'expense.new.detail.hint': 'Untuk apa wang itu dibelanjakan — penyemak membacanya bersama resit.',
+  'expense.new.overCap': 'Melebihi had kategori {cap}. Pelayan akan menolaknya.',
+  /*
+    Dua ayat berasingan dan bukan satu: yang pertama nota dalam borang sebelum dihantar, yang kedua
+    notis selepasnya. Kedua-duanya menyatakan akibat yang sama pada dua saat yang berbeza.
+  */
+  'expense.new.noReceipt':
+    'Tanpa resit, perbelanjaan ini boleh direkodkan tetapi tidak boleh diluluskan.',
+  'expense.new.receiptNext':
+    'Tiada resit dilampirkan — ia tidak boleh diluluskan sehingga resit dimuat naik dari senarai.',
+  'expense.new.uploadFailed':
+    'Resit gagal dimuat naik. Perbelanjaan sudah direkodkan — lampirkan semula dari senarai.',
+  'expense.receipt.removed': 'Resit {number} dibuang.',
 
   'expense.decide.noReceipt':
     'Tiada resit dilampirkan. Perbelanjaan tidak boleh diluluskan tanpanya — resit itulah asas jumlahnya.',
 
-  'expense.categories.title': 'Kategori Perbelanjaan',
+  'expense.categories.count': '{count} kategori perbelanjaan',
   'expense.categories.subtitle':
     'Had per permohonan sahaja. Tiada kadar — kategori perbelanjaan mengelaskan kos, ia tidak menetapkan harganya.',
   'expense.categories.empty': 'Tiada kategori dikonfigurasikan.',
   'expense.categories.action.new': 'Tambah Kategori',
-  'expense.categories.form.title': 'Kategori Perbelanjaan',
+  'expense.categories.row.edit': 'Kemas kini kategori',
+  'expense.categories.row.remove': 'Buang kategori',
+  'expense.categories.saved': 'Kategori "{code}" disimpan.',
+  'expense.categories.removed': 'Kategori "{code}" dibuang.',
+  'expense.categories.form.create': 'Tambah kategori perbelanjaan',
+  'expense.categories.form.edit': 'Kemas kini kategori perbelanjaan',
 
   // -------------------------------------------------------------------------
   // Permohonan › Tuntutan
@@ -3154,7 +3242,6 @@ export const LABELS = {
   'claim.subtitle':
     'Kategori berkadar mengira jumlahnya sendiri daripada kuantiti — kadar itulah kawalannya. Kategori rata mengambil angka dari resit.',
 
-  'claim.tab.requests': 'Tuntutan',
   'claim.tab.types': 'Jenis Tuntutan',
 
   'claim.status.pending': 'Menunggu',
@@ -3210,7 +3297,6 @@ export const LABELS = {
   'claim.new.title': 'Rekod Tuntutan',
   'claim.new.description':
     'Pilih jenis dahulu — kategori berkadar akan meminta kuantiti, bukan jumlah.',
-  'claim.new.staff': 'Staf (ID)',
   'claim.new.type': 'Jenis tuntutan',
   'claim.new.incurredOn': 'Tarikh kos ditanggung',
   'claim.new.quantity': 'Kuantiti ({unit})',
@@ -3327,7 +3413,7 @@ export const LABELS = {
   'claim.types.form.requiresApproval': 'Perlukan kelulusan',
   'claim.types.form.requiresApproval.hint':
     'Jika dimatikan, tuntutan direkodkan sebagai lulus semasa dihantar. Ia tetap BELUM dibayar — pembayaran direkodkan berasingan sama ada cara pun.',
-  'claim.types.form.active': 'Aktif',
+  'claim.types.saved': 'Jenis tuntutan "{code}" disimpan.',
 
   // -------------------------------------------------------------------------
   // Permohonan › Lebih Masa
@@ -3336,7 +3422,6 @@ export const LABELS = {
   'overtime.subtitle':
     'Jam datang dari scan yang enjin kehadiran sudah ukur, bukan dari nombor yang ditaip. Soalan yang penyemak jawab ialah sama ada ia dibenarkan, bukan sama ada ia berlaku.',
 
-  'overtime.tab.requests': 'Permohonan',
   'overtime.tab.rates': 'Kadar',
 
   'overtime.dayType.weekday': 'Hari bekerja biasa',
@@ -3359,7 +3444,8 @@ export const LABELS = {
 
   /** The claimed figure beside what the engine measured, so the gap is readable. */
   'overtime.hours.claimed': '{claimed} drpd {measured}',
-  'overtime.hours.measuredNote': 'Diukur dari scan: {hours} jam',
+  /** A figure of hours with its unit, in the detail grids. The unit is a word and is translated. */
+  'overtime.hours.value': '{hours} jam',
 
   'overtime.empty': 'Tiada permohonan lebih masa dalam julat ini.',
   'overtime.error.load': 'Senarai permohonan lebih masa tidak dapat dimuatkan.',
@@ -3377,8 +3463,8 @@ export const LABELS = {
   'overtime.new.title': 'Rekod Lebih Masa',
   'overtime.new.description':
     'Pilih staf dan tarikh dahulu. Jam yang boleh dituntut datang dari ukuran enjin untuk hari itu.',
-  'overtime.new.staff': 'Staf',
-  'overtime.new.staffPlaceholder': 'Cari nama atau no. pekerja',
+  'overtime.new.staff.hint':
+    'Memilih staf memuatkan jam yang enjin ukur pada tarikh kerja, dan kadar sejam orang itu.',
   'overtime.new.workDate': 'Tarikh kerja',
   'overtime.new.minutes': 'Minit dituntut',
   'overtime.new.minutesHint':
@@ -3418,7 +3504,7 @@ export const LABELS = {
     'Kadar yang dipilih bukan untuk jenis hari itu. Ia dibenarkan, tetapi patut disengajakan.',
 
   // Tab kadar
-  'overtime.rates.title': 'Kadar Lebih Masa',
+  'overtime.rates.count': '{count} kadar lebih masa',
   'overtime.rates.subtitle':
     'Satu kadar per jenis hari memberi jawapan lalai. Jenis hari bukan hiasan — kadar dicari dengannya, jadi kadar tanpa jenis hari yang betul akan senyap membayar hari kelepasan pada kadar hari biasa.',
   'overtime.rates.column.code': 'Kod',
@@ -3432,14 +3518,23 @@ export const LABELS = {
   'overtime.rates.shortfallNote':
     'Kadar di bawah minimum Akta Kerja dinyatakan dan tidak dihalang. Organisasi yang benar-benar membayar kurang mesti boleh merekodkan apa yang dibayarnya — skrin yang berdiam ialah cara kekurangan itu sampai ke penyata gaji.',
   'overtime.rates.action.new': 'Tambah Kadar',
-  'overtime.rates.form.title': 'Kadar Lebih Masa',
+  'overtime.rates.row.edit': 'Kemas kini kadar',
+  'overtime.rates.row.remove': 'Buang kadar',
+  'overtime.rates.saved': 'Kadar "{code}" disimpan.',
+  'overtime.rates.removed': 'Kadar "{code}" dibuang.',
+  'overtime.rates.form.create': 'Tambah kadar lebih masa',
+  'overtime.rates.form.edit': 'Kemas kini kadar lebih masa',
   'overtime.rates.form.code': 'Kod',
   'overtime.rates.form.name': 'Nama',
   'overtime.rates.form.description': 'Keterangan',
   'overtime.rates.form.dayType': 'Jenis hari',
+  /** One option of the day-type select: the day, and the statutory floor its multiplier is held to. */
+  'overtime.rates.form.dayType.option': '{dayType} (min {floor}×)',
   'overtime.rates.form.multiplier': 'Pengganda',
   'overtime.rates.form.isDefault': 'Kadar lalai untuk jenis hari ini',
-  'overtime.rates.form.active': 'Aktif',
+  'overtime.rates.form.isDefault.hint':
+    'Dipilih dahulu apabila penyemak meluluskan permohonan pada jenis hari ini. Satu sahaja per jenis hari — menandanya di sini menanggalkan tanda pada kadar yang lain.',
+  'overtime.rates.form.inactiveDefault': 'Kadar tidak aktif tidak boleh menjadi kadar lalai.',
   'overtime.rates.form.floorHint': 'Minimum statutori untuk jenis hari ini ialah {floor}×.',
 
   // -------------------------------------------------------------------------
