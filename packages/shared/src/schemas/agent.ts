@@ -195,14 +195,6 @@ export const agentCommandOutcomeSchema = z.strictObject({
 export type AgentCommandOutcome = z.infer<typeof agentCommandOutcomeSchema>;
 
 /**
- * What a connector reports about one terminal's own settings.
- *
- * Keyed by editor tab rather than by ISAPI endpoint, because the tab is what an operator opens
- * and what has to be either populated or honestly empty. One tab can need several vendor reads,
- * and grouping by endpoint would leave the screen assembling a picture from parts that arrived at
- * different times.
- */
-/**
  * The connector build this repository contains.
  *
  * Shared rather than declared in `apps/agent`, because both sides need it and for different
@@ -216,9 +208,22 @@ export type AgentCommandOutcome = z.infer<typeof agentCommandOutcomeSchema>;
  *
  * Raise it when a change to `apps/agent` is worth pushing out. Leaving it alone means the update
  * button stays grey, which is correct for a cloud-only change.
+ *
+ * 0.2.0 — the connector updates itself when the cloud asks (3e3550d). A site running a build from
+ * before that commit cannot read the request and needs one manual update. A site already on it
+ * reports 0.1.0 too, because the constant was not raised with it, but it can read the request and
+ * the button updates it like any other.
  */
-export const AGENT_VERSION = '0.1.0';
+export const AGENT_VERSION = '0.2.0';
 
+/**
+ * What a connector reports about one terminal's own settings.
+ *
+ * Keyed by editor tab rather than by ISAPI endpoint, because the tab is what an operator opens
+ * and what has to be either populated or honestly empty. One tab can need several vendor reads,
+ * and grouping by endpoint would leave the screen assembling a picture from parts that arrived at
+ * different times.
+ */
 export const SnapshotKind = {
   identity: 'identity',
   clock: 'clock',
