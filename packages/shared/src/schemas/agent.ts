@@ -213,8 +213,11 @@ export type AgentCommandOutcome = z.infer<typeof agentCommandOutcomeSchema>;
  * before that commit cannot read the request and needs one manual update. A site already on it
  * reports 0.1.0 too, because the constant was not raised with it, but it can read the request and
  * the button updates it like any other.
+ *
+ * 0.2.1 — undici 7.30.0, the HTTP client the connector reaches its terminals with. No behaviour
+ * change; raised so every site shows as behind until it has the patched client.
  */
-export const AGENT_VERSION = '0.2.0';
+export const AGENT_VERSION = '0.2.1';
 
 /**
  * What a connector reports about one terminal's own settings.
