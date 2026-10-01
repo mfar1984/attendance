@@ -23,9 +23,10 @@
 import type { Prisma } from '@prisma/client';
 
 import { db } from '../db.js';
+import { loadEnv } from '../env.js';
 import { approvedOvertime, summarise } from '../reports/aggregate.js';
 import type { Period, StaffSummary } from '../reports/aggregate.js';
-import { asDateOnly } from '../time.js';
+import { zonedDateOnly } from '../time.js';
 import { toSen } from './money.js';
 import {
   allowanceValue,
@@ -35,6 +36,17 @@ import {
   type PayrollSettings,
   type StatutoryRates,
 } from './payroll.js';
+
+/**
+ * The calendar date a loan or advance is closed on: today in the organisation's zone.
+ *
+ * `asDateOnly(new Date())` read the UTC date, so a run started before 08:00 in Malaysia closed a
+ * repaid loan "yesterday", while a cancellation at the same moment was stamped today — one column,
+ * two conventions.
+ */
+function closedToday(): Date {
+  return zonedDateOnly(new Date(), loadEnv().ORG_TIMEZONE);
+}
 
 /** A line as it will be written, before it has a payslip id. */
 interface DraftLine {
@@ -556,7 +568,7 @@ async function writePayslip(
         paidInstalments: loanState.paidInstalments + 1,
         // A hundredth of a sen of slack: the balance is arrived at by subtraction, and demanding
         // exactly zero would leave a loan open on a rounding artefact nobody can pay off.
-        ...(remaining <= 0.009 ? { status: 'completed', closedOn: asDateOnly(new Date()) } : {}),
+        ...(remaining <= 0.009 ? { status: 'completed', closedOn: closedToday() } : {}),
       },
     });
   }
@@ -568,7 +580,7 @@ async function writePayslip(
       data: {
         remainingBalance: Math.max(0, remaining),
         paidMonths: advanceState.paidMonths + 1,
-        ...(remaining <= 0.009 ? { status: 'completed', closedOn: asDateOnly(new Date()) } : {}),
+        ...(remaining <= 0.009 ? { status: 'completed', closedOn: closedToday() } : {}),
       },
     });
   }

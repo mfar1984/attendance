@@ -1,10 +1,11 @@
 import type { LabelKey } from '@attendance/shared';
 import {
   Banknote,
-  CircleAlert,
   CircleCheck,
   Download,
+  Eye,
   FileText,
+  Pencil,
   Play,
   Plus,
   SquareCheck,
@@ -12,13 +13,13 @@ import {
   TriangleAlert,
   Wallet,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
-import { SelectControl } from '../components/ChannelForm';
 import {
   ChipBar,
+  CodePill,
   Detail,
   DetailGrid,
   FacetSelect,
@@ -33,7 +34,7 @@ import {
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
-import { Badge, Button, Field, StatTile } from '../components/ui';
+import { Badge, Field, SelectField, StatTile, TextArea, Button } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import { formatRinggit } from '../lib/claims-api';
@@ -49,6 +50,7 @@ import {
   type PayslipDetail,
   type PayslipPage,
   type PeriodPage,
+  type PeriodStatus,
   type RunResult,
 } from '../lib/payroll-api';
 import { T, TEnum, useLabels } from '../lib/translation';
@@ -64,7 +66,7 @@ const SCREEN = 'hr.payrollPeriods';
  *
  * The status ladder is one way. A draft may be processed as often as needed — that is what makes
  * a corrected terminal clock or a repaired identity mapping reachable — and from `approved`
- * onwards the figures are the record. Stated on the screen, not only enforced in the route.
+ * onwards the figures are the record. Each transition says so in the dialog that makes it.
  */
 export function PayrollPeriodsPage(): ReactNode {
   const [tab, setTab] = useState<'periods' | 'payslips'>('periods');
@@ -81,11 +83,13 @@ export function PayrollPeriodsPage(): ReactNode {
             id: 'periods',
             label: <T k="pay.period.tab.periods" />,
             labelText: t('pay.period.tab.periods'),
+            icon: <Banknote className="size-4" aria-hidden />,
           },
           {
             id: 'payslips',
             label: <T k="pay.period.tab.payslips" />,
             labelText: t('pay.period.tab.payslips'),
+            icon: <FileText className="size-4" aria-hidden />,
           },
         ]}
       />
@@ -100,15 +104,37 @@ export function PayrollPeriodsPage(): ReactNode {
 
 type Action = 'process' | 'approve' | 'pay' | 'close' | 'remove';
 
+const STATUSES: PeriodStatus[] = ['draft', 'processing', 'approved', 'paid', 'closed'];
+
+const STATUS_DOT: Record<PeriodStatus, string> = {
+  draft: 'bg-amber-500',
+  processing: 'bg-orange-500',
+  approved: 'bg-sky-500',
+  paid: 'bg-emerald-600',
+  closed: 'bg-slate-400',
+};
+
+/** Amber while the figures can still change, blue once signed, green once money has moved. */
+const STATUS_TONE: Record<PeriodStatus, 'warning' | 'info' | 'success' | 'neutral'> = {
+  draft: 'warning',
+  processing: 'warning',
+  approved: 'info',
+  paid: 'success',
+  closed: 'neutral',
+};
+
+/** The export link wears the row action's blue, since it reads rather than changes anything. */
+const EXPORT_LINK =
+  'rounded-md border border-transparent p-1.5 text-sky-500 transition-colors hover:bg-sky-50 hover:text-sky-700';
+
 function PeriodsTab(): ReactNode {
   const [data, setData] = useState<PeriodPage | null>(null);
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState<PeriodStatus | undefined>(undefined);
   const [year, setYear] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState<PayrollPeriod | null>(null);
+  const [editing, setEditing] = useState<PayrollPeriod | 'new' | null>(null);
   const [acting, setActing] = useState<{ row: PayrollPeriod; action: Action } | null>(null);
   const { t } = useLabels();
   const { can } = useAuth();
@@ -118,8 +144,8 @@ function PeriodsTab(): ReactNode {
     try {
       setData(
         await payrollApi.periods({
-          status: status === '' ? undefined : status,
-          year: year === '' ? undefined : Number(year),
+          ...(status === undefined ? {} : { status }),
+          ...(year === '' ? {} : { year: Number(year) }),
         }),
       );
       setError(null);
@@ -134,56 +160,17 @@ function PeriodsTab(): ReactNode {
     void load();
   }, [load]);
 
+  const done = async (message: string): Promise<void> => {
+    setEditing(null);
+    setActing(null);
+    setNotice(message);
+    await load();
+  };
+
   const rows = data?.rows ?? [];
   const counts = data?.counts ?? {};
-
-  /*
-   * Chip counts ignore the status filter.
-   *
-   * Otherwise picking one chip zeroes every other and the rows that remain look like they went
-   * missing. A chip at zero is information; the chip bar disables it rather than hiding it.
-   */
-  const chips = useMemo(
-    () => [
-      {
-        id: '',
-        label: <T k="pay.chip.all" />,
-        count: Object.values(counts).reduce((sum, value) => sum + value, 0),
-        dot: 'bg-slate-300',
-      },
-      {
-        id: 'draft',
-        label: <T k="pay.status.draft" />,
-        count: counts.draft ?? 0,
-        dot: 'bg-amber-400',
-      },
-      {
-        id: 'processing',
-        label: <T k="pay.status.processing" />,
-        count: counts.processing ?? 0,
-        dot: 'bg-orange-400',
-      },
-      {
-        id: 'approved',
-        label: <T k="pay.status.approved" />,
-        count: counts.approved ?? 0,
-        dot: 'bg-sky-400',
-      },
-      {
-        id: 'paid',
-        label: <T k="pay.status.paid" />,
-        count: counts.paid ?? 0,
-        dot: 'bg-emerald-400',
-      },
-      {
-        id: 'closed',
-        label: <T k="pay.status.closed" />,
-        count: counts.closed ?? 0,
-        dot: 'bg-slate-400',
-      },
-    ],
-    [counts],
-  );
+  // Counts every status for the year, so choosing a chip does not make the heading shrink.
+  const count = Object.values(counts).reduce((sum, value) => sum + value, 0);
 
   const totals = rows.reduce(
     (running, row) => ({
@@ -205,11 +192,10 @@ function PeriodsTab(): ReactNode {
   return (
     <>
       <PanelSection
-        icon={<Banknote className="size-4" aria-hidden />}
-        title={<T k="pay.period.title" />}
+        title={<T k="pay.period.count" vars={{ count }} />}
         action={
           can(SCREEN, 'create') ? (
-            <Button onClick={() => setCreating(true)}>
+            <Button onClick={() => setEditing('new')}>
               <Plus className="size-4" aria-hidden />
               <T k="pay.period.action.add" />
             </Button>
@@ -217,6 +203,52 @@ function PeriodsTab(): ReactNode {
         }
       />
 
+      <ChipBar
+        active={status}
+        onChange={(id) => setStatus(id as PeriodStatus | undefined)}
+        chips={STATUSES.map((key) => ({
+          id: key,
+          label: <T k={PERIOD_STATUS_LABELS[key]} />,
+          count: counts[key] ?? 0,
+          dot: STATUS_DOT[key],
+        }))}
+      />
+
+      <FilterRow
+        dirty={status !== undefined || year !== ''}
+        onReset={() => {
+          setStatus(undefined);
+          setYear('');
+        }}
+      >
+        <FacetSelect
+          label={t('pay.period.filter.year')}
+          value={year}
+          onChange={setYear}
+          options={years}
+        />
+      </FilterRow>
+
+      {(error !== null || notice !== null || (data !== null && !data.ratesReviewed)) && (
+        <PanelBody className="space-y-2 pb-0">
+          <Feedback error={error} notice={notice} />
+          {/*
+            The unverified-rates warning, in amber and actionable: seeded statutory rates look
+            identical to rates finance signed off, and the difference is every deduction in the
+            period. It links to where the confirmation happens.
+          */}
+          {data !== null && !data.ratesReviewed && (
+            <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+              <T k="pay.period.note.unreviewed" />{' '}
+              <Link className="font-medium underline" to="/hr/payroll/tetapan">
+                <T k="pay.period.note.reviewLink" />
+              </Link>
+            </PanelNote>
+          )}
+        </PanelBody>
+      )}
+
+      {/* The totals of the rows shown, so a year filter reads as that year's cost. */}
       <PanelBody className="grid gap-3 pb-0 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label={<T k="pay.period.stat.periods" />}
@@ -240,54 +272,22 @@ function PeriodsTab(): ReactNode {
         />
       </PanelBody>
 
-      <PanelBody className="space-y-2 pb-0">
-        <Feedback error={error} notice={notice} />
-
-        {/*
-          The unverified-rates warning, first and in amber.
-          Seeded statutory rates look identical to rates finance signed off, and the difference
-          is every deduction in the period. It links to where the confirmation happens.
-        */}
-        {data !== null && !data.ratesReviewed && (
-          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-            <T k="pay.period.note.unreviewed" />{' '}
-            <Link className="font-medium underline" to="/hr/payroll/tetapan">
-              <T k="pay.period.note.reviewLink" />
-            </Link>
-          </PanelNote>
-        )}
-
-        <PanelNote icon={<CircleAlert className="size-3.5" aria-hidden />}>
-          <T k="pay.period.note.oneWay" />
-        </PanelNote>
-      </PanelBody>
-
-      <ChipBar chips={chips} active={status} onChange={(id) => setStatus(id ?? '')} />
-
-      <FilterRow dirty={status !== '' || year !== ''} onReset={() => { setStatus(''); setYear(''); }}>
-        <FacetSelect
-          label={t('pay.period.filter.year')}
-          value={year}
-          onChange={setYear}
-          options={years}
-        />
-      </FilterRow>
-
       <RecordTable
+        framed
         loading={loading}
         rowCount={rows.length}
         empty={<T k="pay.period.empty" />}
         columns={[
-          { header: <T k="pay.period.column.code" />, width: 'w-24' },
+          { header: <T k="pay.period.column.code" />, width: 'w-28' },
           { header: <T k="pay.period.form.name" /> },
-          { header: <T k="pay.period.column.range" />, width: 'w-48' },
+          { header: <T k="pay.period.column.range" />, width: 'w-52' },
           { header: <T k="pay.period.column.payment" />, width: 'w-28' },
           { header: <T k="pay.period.column.staff" />, width: 'w-16', align: 'right' },
           { header: <T k="pay.period.column.gross" />, width: 'w-28', align: 'right' },
           { header: <T k="pay.period.column.deductions" />, width: 'w-28', align: 'right' },
           { header: <T k="pay.period.column.net" />, width: 'w-28', align: 'right' },
           { header: <T k="panel.column.status" />, width: 'w-28' },
-          { header: <T k="panel.column.actions" />, width: 'w-44', align: 'right' },
+          { header: <T k="panel.column.actions" />, width: 'w-36', align: 'right' },
         ]}
       >
         {rows.map((row) => (
@@ -300,7 +300,9 @@ function PeriodsTab(): ReactNode {
               row.status === 'draft' && 'bg-amber-50/40',
             )}
           >
-            <td className="px-5 py-2 font-mono text-xs text-slate-700">{row.code}</td>
+            <td className="px-5 py-2">
+              <CodePill code={row.code} />
+            </td>
             <td className="px-2 py-2 text-slate-800">{row.name}</td>
             <td className="px-2 py-2 text-xs whitespace-nowrap tabular-nums text-slate-600">
               <T
@@ -324,66 +326,59 @@ function PeriodsTab(): ReactNode {
               {row.totalNet.toFixed(2)}
             </td>
             <td className="px-2 py-2">
-              <Badge tone={badgeTone(row.status)}>
-                <span className="uppercase">
-                  <T k={PERIOD_STATUS_LABELS[row.status]} />
-                </span>
+              {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
+              <Badge tone={STATUS_TONE[row.status]} className="uppercase">
+                <T k={PERIOD_STATUS_LABELS[row.status]} />
               </Badge>
             </td>
             <td className="px-2 py-2 pr-4">
               <RowActions>
                 {/*
-                  Each transition appears only on the status that permits it, and a destructive
-                  or irreversible one is disabled with the reason in its tooltip rather than
-                  offered and refused by the server.
+                  Each transition appears only on the status that permits it, and one the server
+                  would refuse is disabled with the reason in its tooltip rather than offered.
                 */}
-                {can(SCREEN, 'approve') && (
-                  <>
-                    {row.status === 'draft' && (
-                      <RowAction
-                        icon={<Play className="size-4" aria-hidden />}
-                        label={t('pay.period.action.process')}
-                        tone="success"
-                        onClick={() => setActing({ row, action: 'process' })}
-                      />
-                    )}
-                    {row.status === 'processing' && (
-                      <RowAction
-                        icon={<SquareCheck className="size-4" aria-hidden />}
-                        // Disabled controls carry the reason as their name, so the tooltip
-                        // says why rather than repeating an action that will not happen.
-                        label={
-                          row.payslipCount === 0
-                            ? t('pay.period.note.processFirst')
-                            : t('pay.period.action.approve')
-                        }
-                        tone="warn"
-                        disabled={row.payslipCount === 0}
-                        onClick={() => setActing({ row, action: 'approve' })}
-                      />
-                    )}
-                    {row.status === 'approved' && (
-                      <RowAction
-                        icon={<Wallet className="size-4" aria-hidden />}
-                        label={t('pay.period.action.pay')}
-                        tone="warn"
-                        onClick={() => setActing({ row, action: 'pay' })}
-                      />
-                    )}
-                    {row.status === 'paid' && (
-                      <RowAction
-                        icon={<CircleCheck className="size-4" aria-hidden />}
-                        label={t('pay.period.action.close')}
-                        tone="warn"
-                        onClick={() => setActing({ row, action: 'close' })}
-                      />
-                    )}
-                  </>
+                {can(SCREEN, 'approve') && row.status === 'draft' && (
+                  <RowAction
+                    icon={<Play className="size-4" aria-hidden />}
+                    label={t('pay.period.action.process')}
+                    tone="success"
+                    onClick={() => setActing({ row, action: 'process' })}
+                  />
+                )}
+                {can(SCREEN, 'approve') && row.status === 'processing' && (
+                  <RowAction
+                    icon={<SquareCheck className="size-4" aria-hidden />}
+                    label={
+                      row.payslipCount === 0
+                        ? t('pay.period.note.processFirst')
+                        : t('pay.period.action.approve')
+                    }
+                    tone="warn"
+                    disabled={row.payslipCount === 0}
+                    onClick={() => setActing({ row, action: 'approve' })}
+                  />
+                )}
+                {can(SCREEN, 'approve') && row.status === 'approved' && (
+                  <RowAction
+                    icon={<Wallet className="size-4" aria-hidden />}
+                    label={t('pay.period.action.pay')}
+                    tone="warn"
+                    onClick={() => setActing({ row, action: 'pay' })}
+                  />
+                )}
+                {can(SCREEN, 'approve') && row.status === 'paid' && (
+                  <RowAction
+                    icon={<CircleCheck className="size-4" aria-hidden />}
+                    label={t('pay.period.action.close')}
+                    tone="warn"
+                    onClick={() => setActing({ row, action: 'close' })}
+                  />
                 )}
 
+                {/* Hidden without the grant: an export that answers 403 teaches that it is broken. */}
                 {can(SCREEN, 'export') && row.payslipCount > 0 && (
                   <a
-                    className="inline-flex size-7 items-center justify-center rounded-md text-blue-600 hover:bg-blue-50"
+                    className={EXPORT_LINK}
                     href={payrollApi.exportUrl(row.id)}
                     title={t('pay.period.action.export')}
                     aria-label={t('pay.period.action.export')}
@@ -394,8 +389,9 @@ function PeriodsTab(): ReactNode {
 
                 {can(SCREEN, 'edit') && row.status === 'draft' && (
                   <RowAction
-                    icon={<FileText className="size-4" aria-hidden />}
+                    icon={<Pencil className="size-4" aria-hidden />}
                     label={t('pay.action.edit')}
+                    tone="edit"
                     onClick={() => setEditing(row)}
                   />
                 )}
@@ -419,13 +415,14 @@ function PeriodsTab(): ReactNode {
         ))}
       </RecordTable>
 
-      {/* Not paginated: a payroll cycle is monthly, so a year is twelve rows and the year
-          filter is the only narrowing that helps. */}
+      {/* Not paginated: a payroll cycle is monthly, so a year is twelve rows and the year filter
+          is the only narrowing that helps. */}
       <PanelFooter
         shown={rows.length}
         total={rows.length}
         page={1}
-        pageSize={rows.length === 0 ? 1 : rows.length}
+        pageSize={Math.max(1, rows.length)}
+        pageSizes={[Math.max(1, rows.length)]}
         generatedAt={data?.generatedAt}
         loading={loading}
         onPage={() => undefined}
@@ -433,28 +430,12 @@ function PeriodsTab(): ReactNode {
         onRefresh={() => void load()}
       />
 
-      {creating && (
-        <PeriodDialog
-          payDay={data?.payDay ?? 25}
-          onClose={() => setCreating(false)}
-          onDone={async (message) => {
-            setCreating(false);
-            setNotice(message);
-            await load();
-          }}
-        />
-      )}
-
       {editing !== null && (
         <PeriodDialog
           payDay={data?.payDay ?? 25}
-          target={editing}
+          target={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
-          onDone={async (message) => {
-            setEditing(null);
-            setNotice(message);
-            await load();
-          }}
+          onDone={done}
         />
       )}
 
@@ -463,22 +444,11 @@ function PeriodsTab(): ReactNode {
           row={acting.row}
           action={acting.action}
           onClose={() => setActing(null)}
-          onDone={async (message) => {
-            setActing(null);
-            setNotice(message);
-            await load();
-          }}
+          onDone={done}
         />
       )}
     </>
   );
-}
-
-function badgeTone(status: string): 'success' | 'warning' | 'neutral' | 'danger' {
-  if (status === 'paid') return 'success';
-  if (status === 'draft') return 'warning';
-  if (status === 'processing' || status === 'approved') return 'warning';
-  return 'neutral';
 }
 
 /**
@@ -495,7 +465,7 @@ function PeriodDialog({
   onDone,
 }: {
   payDay: number;
-  target?: PayrollPeriod;
+  target: PayrollPeriod | null;
   onClose: () => void;
   onDone: (message: string) => Promise<void>;
 }): ReactNode {
@@ -520,10 +490,10 @@ function PeriodDialog({
    * is separate from the month is that not every cycle follows one.
    */
   useEffect(() => {
-    if (target !== undefined) return;
+    if (target !== null) return;
     const year = Number(periodYear);
     const month = Number(periodMonth);
-    if (!Number.isInteger(year) || !Number.isInteger(month)) return;
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return;
     const pad = (value: number): string => String(value).padStart(2, '0');
     const last = new Date(year, month, 0).getDate();
     setFromDate(`${String(year)}-${pad(month)}-01`);
@@ -531,57 +501,65 @@ function PeriodDialog({
     setPaymentDate(`${String(year)}-${pad(month)}-${pad(Math.min(payDay, last))}`);
   }, [periodYear, periodMonth, payDay, target]);
 
+  const endsEarly = fromDate !== '' && toDate !== '' && toDate < fromDate;
+
   const submit = async (): Promise<void> => {
     setBusy(true);
+    setError(null);
     try {
       const input = {
-        name,
+        name: name.trim(),
         periodYear: Number(periodYear),
         periodMonth: Number(periodMonth),
         fromDate,
         toDate,
         paymentDate,
-        note,
+        note: note.trim(),
       };
-      if (target === undefined) {
+      if (target === null) {
         const created = await payrollApi.createPeriod(input);
-        await onDone(`${created.code} disimpan.`);
+        await onDone(t('pay.period.notice.saved', { code: created.code }));
       } else {
         await payrollApi.updatePeriod(target.id, input);
-        await onDone(`${target.code} dikemas kini.`);
+        await onDone(t('pay.period.notice.saved', { code: target.code }));
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
 
-  const titleKey: LabelKey =
-    target === undefined ? 'pay.period.form.title' : 'pay.period.form.edit';
+  const titleKey: LabelKey = target === null ? 'pay.period.form.title' : 'pay.period.form.edit';
 
   return (
     <Dialog
       title={<T k={titleKey} />}
       titleText={t(titleKey)}
-      width="lg"
+      // The one-way ladder, said where a period is made rather than as a strip over the list.
+      description={<T k="pay.period.note.oneWay" />}
+      width="2xl"
       onClose={onClose}
     >
       <div className="space-y-4">
         <Feedback error={error} />
 
+        {/* Identity first: what people call the cycle, then the month it sorts under. */}
         <Field
           label={<T k="pay.period.form.name" />}
           hint={<T k="pay.period.form.name.hint" />}
           value={name}
           maxLength={120}
+          autoFocus
           onChange={(event) => setName(event.target.value)}
         />
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid items-start gap-4 sm:grid-cols-2">
           <Field
             label={<T k="pay.period.form.year" />}
             type="number"
             inputMode="numeric"
+            min={2000}
+            max={2100}
             value={periodYear}
             onChange={(event) => setPeriodYear(event.target.value)}
           />
@@ -597,7 +575,7 @@ function PeriodDialog({
           />
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid items-start gap-4 sm:grid-cols-3">
           <Field
             label={<T k="pay.period.form.from" />}
             hint={<T k="pay.period.form.range.hint" />}
@@ -607,33 +585,44 @@ function PeriodDialog({
           />
           <Field
             label={<T k="pay.period.form.to" />}
+            {...(endsEarly ? { error: t('pay.form.endBeforeStart') } : {})}
             type="date"
             value={toDate}
+            min={fromDate === '' ? undefined : fromDate}
             onChange={(event) => setToDate(event.target.value)}
+          />
+          <Field
+            label={<T k="pay.period.form.payment" />}
+            type="date"
+            value={paymentDate}
+            onChange={(event) => setPaymentDate(event.target.value)}
           />
         </div>
 
-        <Field
-          label={<T k="pay.period.form.payment" />}
-          type="date"
-          value={paymentDate}
-          onChange={(event) => setPaymentDate(event.target.value)}
-        />
-
-        <Field
-          label={<T k="pay.period.form.note" />}
-          value={note}
-          maxLength={500}
-          onChange={(event) => setNote(event.target.value)}
-        />
+        {/* The last block before the footer, so it carries the `pb-2`. */}
+        <div className="pb-2">
+          <TextArea
+            label={<T k="pay.period.form.note" />}
+            rows={2}
+            value={note}
+            maxLength={500}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </div>
 
         <DialogFooter
           onClose={onClose}
           onSubmit={() => void submit()}
           busy={busy}
-          disabled={name.trim() === '' || fromDate === '' || toDate === '' || paymentDate === ''}
+          disabled={
+            name.trim() === '' ||
+            fromDate === '' ||
+            toDate === '' ||
+            paymentDate === '' ||
+            endsEarly
+          }
           submitLabel={
-            target === undefined ? <T k="pay.period.form.submit" /> : <T k="dialog.save" />
+            target === null ? <T k="pay.period.form.submit" /> : <T k="dialog.save" />
           }
         />
       </div>
@@ -712,9 +701,17 @@ function ActionDialog({
   const { t } = useLabels();
 
   const copy = ACTION_COPY[action];
+  const processed = (run: RunResult): string =>
+    t('pay.period.notice.processed', {
+      code: row.code,
+      count: run.staffCount,
+      net: run.totalNet.toFixed(2),
+    });
 
   const submit = async (): Promise<void> => {
     setBusy(true);
+    setError(null);
+    const trimmed = note.trim();
     try {
       if (action === 'process') {
         const run = await payrollApi.process(row.id);
@@ -729,43 +726,43 @@ function ActionDialog({
           setBusy(false);
           return;
         }
-        await onDone(
-          `${String(run.staffCount)} slip dibina. Bersih RM${run.totalNet.toFixed(2)}.`,
-        );
+        await onDone(processed(run));
         return;
       }
       if (action === 'approve') {
-        const done = await payrollApi.approvePeriod(row.id, note);
-        await onDone(t('pay.period.approve.done', { count: done.payslipCount }));
+        const approved = await payrollApi.approvePeriod(row.id, trimmed === '' ? undefined : trimmed);
+        await onDone(t('pay.period.approve.done', { count: approved.payslipCount }));
         return;
       }
       if (action === 'pay') {
         await payrollApi.payPeriod(row.id, {
           paymentMethod: method,
-          paymentReference: reference,
-          note,
+          paymentReference: reference.trim(),
+          ...(trimmed === '' ? {} : { note: trimmed }),
         });
-        await onDone(`${row.code} ditanda dibayar.`);
+        await onDone(t('pay.period.notice.paid', { code: row.code }));
         return;
       }
       if (action === 'close') {
-        await payrollApi.closePeriod(row.id, note);
-        await onDone(`${row.code} ditutup.`);
+        await payrollApi.closePeriod(row.id, trimmed === '' ? undefined : trimmed);
+        await onDone(t('pay.period.notice.closed', { code: row.code }));
         return;
       }
       await payrollApi.removePeriod(row.id);
-      await onDone(`${row.code} dibuang.`);
+      await onDone(t('pay.period.notice.removed', { code: row.code }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
 
+  const takesNote = action === 'approve' || action === 'pay' || action === 'close';
+
   return (
     <Dialog
       title={<T k={copy.title} vars={{ code: row.code }} />}
-      titleText={`${t(copy.title)} ${row.code}`}
-      width="md"
+      titleText={t(copy.title, { code: row.code })}
+      width={action === 'pay' ? 'lg' : 'md'}
       onClose={onClose}
     >
       <div className="space-y-4">
@@ -773,31 +770,43 @@ function ActionDialog({
 
         {result === null ? (
           <>
-            <PanelNote
-              tone={action === 'remove' ? 'danger' : 'info'}
-              icon={<CircleAlert className="size-3.5" aria-hidden />}
-            >
-              <T k={copy.body} />
-            </PanelNote>
+            <DetailGrid>
+              <Detail
+                label={<T k="pay.period.column.range" />}
+                value={
+                  <T
+                    k="pay.period.range"
+                    vars={{ from: formatDateOnly(row.fromDate), to: formatDateOnly(row.toDate) }}
+                  />
+                }
+              />
+              <Detail label={<T k="pay.period.column.staff" />} value={String(row.payslipCount)} />
+              <Detail label={<T k="pay.period.column.net" />} value={row.totalNet.toFixed(2)} />
+            </DetailGrid>
+
+            {/* What this does and what it cannot undo, at the moment of deciding. */}
+            <div className={cn(!takesNote && 'pb-2')}>
+              <PanelNote
+                tone={action === 'remove' ? 'danger' : 'warn'}
+                icon={<TriangleAlert className="size-3.5" aria-hidden />}
+              >
+                <T k={copy.body} />
+              </PanelNote>
+            </div>
 
             {action === 'pay' && (
-              <>
-                <div className="space-y-1">
-                  <p className="text-sm font-medium text-slate-700">
-                    <T k="pay.period.pay.method" />
-                  </p>
-                  <SelectControl
-                    label={t('pay.period.pay.method')}
-                    value={method}
-                    onChange={(event) => setMethod(event.target.value as PaymentMethod)}
-                  >
-                    {(['bank_transfer', 'cash', 'cheque'] as const).map((value) => (
-                      <option key={value} value={value}>
-                        {t(PAYMENT_METHOD_LABELS[value])}
-                      </option>
-                    ))}
-                  </SelectControl>
-                </div>
+              <div className="grid items-start gap-4 sm:grid-cols-2">
+                <SelectField
+                  label={<T k="pay.period.pay.method" />}
+                  value={method}
+                  onChange={(event) => setMethod(event.target.value as PaymentMethod)}
+                >
+                  {(['bank_transfer', 'cash', 'cheque'] as const).map((value) => (
+                    <option key={value} value={value}>
+                      {t(PAYMENT_METHOD_LABELS[value])}
+                    </option>
+                  ))}
+                </SelectField>
                 <Field
                   label={<T k="pay.period.pay.reference" />}
                   value={reference}
@@ -805,16 +814,20 @@ function ActionDialog({
                   placeholder={t('pay.period.pay.reference.placeholder')}
                   onChange={(event) => setReference(event.target.value)}
                 />
-              </>
+              </div>
             )}
 
-            {action !== 'remove' && action !== 'process' && (
-              <Field
-                label={<T k="pay.period.form.note" />}
-                value={note}
-                maxLength={500}
-                onChange={(event) => setNote(event.target.value)}
-              />
+            {takesNote && (
+              // The last block before the footer, so it carries the `pb-2`.
+              <div className="pb-2">
+                <TextArea
+                  label={<T k="pay.period.form.note" />}
+                  rows={2}
+                  value={note}
+                  maxLength={500}
+                  onChange={(event) => setNote(event.target.value)}
+                />
+              </div>
             )}
 
             <DialogFooter
@@ -830,19 +843,22 @@ function ActionDialog({
             <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
               <T k="pay.period.process.skipped" vars={{ count: result.withoutSalary }} />
             </PanelNote>
-            <PanelNote>
-              <T
-                k="pay.period.process.done"
-                vars={{
-                  staff: result.staffCount,
-                  gross: result.totalGross.toFixed(2),
-                  deductions: result.totalDeductions.toFixed(2),
-                  net: result.totalNet.toFixed(2),
-                }}
-              />
-            </PanelNote>
+            {/* The last block before the footer, so it carries the `pb-2`. */}
+            <div className="pb-2">
+              <PanelNote>
+                <T
+                  k="pay.period.process.done"
+                  vars={{
+                    staff: result.staffCount,
+                    gross: result.totalGross.toFixed(2),
+                    deductions: result.totalDeductions.toFixed(2),
+                    net: result.totalNet.toFixed(2),
+                  }}
+                />
+              </PanelNote>
+            </div>
             <DialogFooter
-              onClose={() => void onDone(`${row.code} diproses.`)}
+              onClose={() => void onDone(processed(result))}
               closeLabel={<T k="dialog.close" />}
             />
           </>
@@ -857,18 +873,22 @@ function ActionDialog({
 // ---------------------------------------------------------------------------
 
 function PayslipsTab(): ReactNode {
-  const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
+  const [periods, setPeriods] = useState<PayrollPeriod[] | null>(null);
   const [periodId, setPeriodId] = useState('');
   const [data, setData] = useState<PayslipPage | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [search, setSearch] = useState('');
+  const [debounced, setDebounced] = useState('');
   const [departmentId, setDepartmentId] = useState('');
   const [lookups, setLookups] = useState<Lookups | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [opened, setOpened] = useState<number | null>(null);
   const { t } = useLabels();
+  // Which load is the latest, so a search answered out of order cannot replace the current rows.
+  const latest = useRef(0);
 
   useEffect(() => {
     void lookupsApi.load().then(setLookups).catch(() => undefined);
@@ -883,31 +903,42 @@ function PayslipsTab(): ReactNode {
         const first = result.rows[0];
         if (first !== undefined) setPeriodId(String(first.id));
       })
-      .catch(() => undefined);
+      .catch(() => setPeriods([]));
   }, []);
+
+  // One request per pause in typing, not one per key — the same debounce as the request lists.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebounced(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const load = useCallback(async () => {
     if (periodId === '') {
       setData(null);
       return;
     }
+    const mine = ++latest.current;
     setLoading(true);
     try {
-      setData(
-        await payrollApi.payslips(Number(periodId), {
-          page,
-          pageSize,
-          search: search === '' ? undefined : search,
-          departmentId: departmentId === '' ? undefined : Number(departmentId),
-        }),
-      );
+      const result = await payrollApi.payslips(Number(periodId), {
+        page,
+        pageSize,
+        ...(debounced === '' ? {} : { search: debounced }),
+        ...(departmentId === '' ? {} : { departmentId: Number(departmentId) }),
+      });
+      if (mine !== latest.current) return;
+      setData(result);
       setError(null);
     } catch (cause) {
+      if (mine !== latest.current) return;
       setError(cause instanceof Error ? cause.message : t('pay.payslip.error.load'));
     } finally {
-      setLoading(false);
+      if (mine === latest.current) setLoading(false);
     }
-  }, [periodId, page, pageSize, search, departmentId, t]);
+  }, [periodId, page, pageSize, debounced, departmentId, t]);
 
   useEffect(() => {
     void load();
@@ -918,40 +949,43 @@ function PayslipsTab(): ReactNode {
   return (
     <>
       <PanelSection
-        icon={<FileText className="size-4" aria-hidden />}
-        title={<T k="pay.payslip.title" />}
+        title={<T k="pay.payslip.count" vars={{ count: data?.total ?? 0 }} />}
         subtitle={<T k="pay.payslip.subtitle" />}
       />
 
-      <PanelBody className="pb-0">
-        <Feedback error={error} />
-      </PanelBody>
-
       <FilterRow
         search={search}
-        onSearch={(value) => {
-          setSearch(value);
-          setPage(1);
-        }}
-        dirty={search !== '' || departmentId !== ''}
+        onSearch={setSearch}
+        placeholder={t('pay.payslip.search')}
+        dirty={search.length > 0 || departmentId !== ''}
         onReset={() => {
           setSearch('');
           setDepartmentId('');
           setPage(1);
         }}
       >
-        <FacetSelect
-          label={t('pay.payslip.filter.period')}
+        {/*
+          Not a facet: there is always a period, because a payslip list across every cycle would
+          mix figures nobody adds together. A facet's empty option would be a choice that empties
+          the table.
+        */}
+        <select
+          aria-label={t('pay.payslip.filter.period')}
           value={periodId}
-          onChange={(value) => {
-            setPeriodId(value);
+          disabled={periods === null || periods.length === 0}
+          onChange={(event) => {
+            setPeriodId(event.target.value);
             setPage(1);
           }}
-          options={periods.map((row) => ({
-            value: String(row.id),
-            label: `${row.code} — ${row.name}`,
-          }))}
-        />
+          className="min-w-44 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700"
+        >
+          {(periods ?? []).length === 0 && <option value="">{t('pay.payslip.filter.period')}</option>}
+          {(periods ?? []).map((row) => (
+            <option key={row.id} value={String(row.id)}>
+              {`${row.code} — ${row.name}`}
+            </option>
+          ))}
+        </select>
         {/* Five thousand staff in one period is a hundred pages, so the department facet is
             what makes the list usable rather than merely correct. */}
         <FacetSelect
@@ -968,6 +1002,12 @@ function PayslipsTab(): ReactNode {
         />
       </FilterRow>
 
+      {(error !== null || notice !== null) && (
+        <PanelBody className="pb-0">
+          <Feedback error={error} notice={notice} />
+        </PanelBody>
+      )}
+
       {periodId === '' ? (
         <PanelBody>
           <p className="py-8 text-center text-sm text-slate-500">
@@ -977,6 +1017,7 @@ function PayslipsTab(): ReactNode {
       ) : (
         <>
           <RecordTable
+            framed
             loading={loading}
             rowCount={rows.length}
             empty={<T k="pay.payslip.empty" />}
@@ -990,7 +1031,7 @@ function PayslipsTab(): ReactNode {
               { header: <T k="pay.payslip.column.gross" />, width: 'w-28', align: 'right' },
               { header: <T k="pay.payslip.column.deductions" />, width: 'w-28', align: 'right' },
               { header: <T k="pay.payslip.column.net" />, width: 'w-28', align: 'right' },
-              { header: <T k="panel.column.status" />, width: 'w-24' },
+              { header: <T k="panel.column.status" />, width: 'w-28' },
               { header: <T k="panel.column.actions" />, width: 'w-16', align: 'right' },
             ]}
           >
@@ -998,8 +1039,10 @@ function PayslipsTab(): ReactNode {
               <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50/70">
                 <td className="px-5 py-2 font-mono text-xs text-slate-700">{row.payslipNo}</td>
                 <td className="px-2 py-2">
-                  <p className="text-slate-800">{row.fullName}</p>
-                  <p className="text-xs text-slate-500">{row.employeeNo}</p>
+                  <span className="block text-slate-800">{row.fullName}</span>
+                  <span className="block font-mono text-[11px] text-slate-400">
+                    {row.employeeNo}
+                  </span>
                 </td>
                 <td className="px-2 py-2 text-xs text-slate-600">{row.department ?? '—'}</td>
                 <td className="px-2 py-2 text-right text-xs tabular-nums text-slate-700">
@@ -1021,17 +1064,17 @@ function PayslipsTab(): ReactNode {
                   {row.netPay.toFixed(2)}
                 </td>
                 <td className="px-2 py-2">
-                  <Badge tone={row.status === 'paid' ? 'success' : 'neutral'}>
-                    <span className="uppercase">
-                      <TEnum k={RECORD_STATE_LABELS[row.status]} fallback={row.status} />
-                    </span>
+                  {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
+                  <Badge tone={row.status === 'paid' ? 'success' : 'neutral'} className="uppercase">
+                    <TEnum k={RECORD_STATE_LABELS[row.status]} fallback={row.status} />
                   </Badge>
                 </td>
                 <td className="px-2 py-2 pr-4">
                   <RowActions>
                     <RowAction
-                      icon={<FileText className="size-4" aria-hidden />}
+                      icon={<Eye className="size-4" aria-hidden />}
                       label={t('pay.payslip.action.open')}
+                      tone="view"
                       onClick={() => setOpened(row.id)}
                     />
                   </RowActions>
@@ -1061,8 +1104,9 @@ function PayslipsTab(): ReactNode {
         <PayslipDialog
           id={opened}
           onClose={() => setOpened(null)}
-          onSaved={async () => {
+          onSaved={async (message) => {
             setOpened(null);
+            setNotice(message);
             await load();
           }}
         />
@@ -1075,7 +1119,8 @@ function PayslipsTab(): ReactNode {
  * One payslip, its lines, and the two deductions a person enters.
  *
  * The lines are the reason this is not just the totals. "RM540 of allowances" is not an answer to
- * somebody asking why their pay changed; three named rows are.
+ * somebody asking why their pay changed; three named rows are. Earnings and deductions sit side
+ * by side so a line can be read against the one it offsets.
  */
 function PayslipDialog({
   id,
@@ -1084,7 +1129,7 @@ function PayslipDialog({
 }: {
   id: number;
   onClose: () => void;
-  onSaved: () => Promise<void>;
+  onSaved: (message: string) => Promise<void>;
 }): ReactNode {
   const [row, setRow] = useState<PayslipDetail | null>(null);
   const [tax, setTax] = useState('');
@@ -1105,9 +1150,9 @@ function PayslipDialog({
         setNote(result.note ?? '');
       })
       .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : null);
+        setError(cause instanceof Error ? cause.message : t('pay.payslip.error.load'));
       });
-  }, [id]);
+  }, [id, t]);
 
   // Editable only while the period is still open to change. Past that, the payslip is the record.
   const mayEdit =
@@ -1116,37 +1161,42 @@ function PayslipDialog({
     (row.period.status === 'draft' || row.period.status === 'processing');
 
   const submit = async (): Promise<void> => {
+    if (row === null) return;
     setBusy(true);
+    setError(null);
     try {
       await payrollApi.updatePayslip(id, {
         taxDeduction: Number(tax),
         otherDeductions: Number(other),
-        note,
+        note: note.trim(),
       });
-      await onSaved();
+      await onSaved(t('pay.payslip.notice.saved', { no: row.payslipNo }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
 
   const earnings = (row?.lines ?? []).filter((line) => line.kind === 'earning');
   const deductions = (row?.lines ?? []).filter((line) => line.kind === 'deduction');
+  const titleVars = { no: row?.payslipNo ?? '' };
 
   return (
     <Dialog
-      title={<T k="pay.payslip.detail.title" vars={{ no: row?.payslipNo ?? '' }} />}
-      titleText={`${t('pay.payslip.detail.title')} ${row?.payslipNo ?? ''}`}
-      width="lg"
+      title={<T k="pay.payslip.detail.title" vars={titleVars} />}
+      titleText={t('pay.payslip.detail.title', titleVars)}
+      width="2xl"
       onClose={onClose}
     >
       <div className="space-y-4">
         <Feedback error={error} />
 
         {row === null ? (
-          <p className="py-8 text-center text-sm text-slate-500">
-            <T k="app.loading" />
-          </p>
+          error === null && (
+            <p className="py-8 text-center text-sm text-slate-500">
+              <T k="app.loading" />
+            </p>
+          )
         ) : (
           <>
             {row.balanceFault !== null && (
@@ -1160,146 +1210,168 @@ function PayslipDialog({
               </PanelNote>
             )}
 
-            <div className="rounded-lg border border-slate-200">
-              <p className="border-b border-slate-100 px-3 py-2 text-xs font-medium text-slate-600">
-                <T k="pay.payslip.detail.earnings" />
-              </p>
-              {earnings.map((line) => (
-                <div
-                  key={line.id}
-                  className="flex items-center justify-between border-b border-slate-50 px-3 py-1.5 text-sm last:border-b-0"
-                >
-                  <span className="text-slate-700">{line.label}</span>
-                  <span className="tabular-nums text-slate-800">{line.amount.toFixed(2)}</span>
+            <div className="grid items-start gap-4 sm:grid-cols-2">
+              <div className="overflow-hidden rounded-lg border border-slate-200">
+                <p className="border-b border-slate-200 bg-slate-50/70 px-3 py-2 text-[11px] font-medium tracking-wide text-slate-500 uppercase">
+                  <T k="pay.payslip.detail.earnings" />
+                </p>
+                {earnings.map((line) => (
+                  <div
+                    key={line.id}
+                    className="flex items-center justify-between border-b border-slate-100 px-3 py-1.5 text-sm"
+                  >
+                    <span className="text-slate-700">{line.label}</span>
+                    <span className="tabular-nums text-slate-800">{line.amount.toFixed(2)}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-3 py-2 text-sm font-medium">
+                  <span className="text-slate-700">
+                    <T k="pay.payslip.detail.gross" />
+                  </span>
+                  <span className="tabular-nums text-slate-900">{row.gross.toFixed(2)}</span>
                 </div>
-              ))}
-              <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/70 px-3 py-2 text-sm font-medium">
-                <span className="text-slate-700">
-                  <T k="pay.payslip.detail.gross" />
-                </span>
-                <span className="tabular-nums text-slate-900">{row.gross.toFixed(2)}</span>
               </div>
-            </div>
 
-            <div className="rounded-lg border border-slate-200">
-              <p className="border-b border-slate-100 px-3 py-2 text-xs font-medium text-slate-600">
-                <T k="pay.payslip.detail.deductions" />
-              </p>
-              {deductions.map((line) => (
-                <div
-                  key={line.id}
-                  className="flex items-center justify-between border-b border-slate-50 px-3 py-1.5 text-sm last:border-b-0"
-                >
-                  <span className="text-slate-700">{line.label}</span>
-                  <span className="tabular-nums text-rose-700">{line.amount.toFixed(2)}</span>
+              <div className="overflow-hidden rounded-lg border border-slate-200">
+                <p className="border-b border-slate-200 bg-slate-50/70 px-3 py-2 text-[11px] font-medium tracking-wide text-slate-500 uppercase">
+                  <T k="pay.payslip.detail.deductions" />
+                </p>
+                {deductions.map((line) => (
+                  <div
+                    key={line.id}
+                    className="flex items-center justify-between border-b border-slate-100 px-3 py-1.5 text-sm"
+                  >
+                    <span className="text-slate-700">{line.label}</span>
+                    <span className="tabular-nums text-rose-700">{line.amount.toFixed(2)}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-3 py-2 text-sm font-medium">
+                  <span className="text-slate-700">
+                    <T k="pay.payslip.detail.totalDeductions" />
+                  </span>
+                  <span className="tabular-nums text-rose-700">
+                    {row.totalDeductions.toFixed(2)}
+                  </span>
                 </div>
-              ))}
-              <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/70 px-3 py-2 text-sm font-medium">
-                <span className="text-slate-700">
-                  <T k="pay.payslip.detail.totalDeductions" />
-                </span>
-                <span className="tabular-nums text-rose-700">
-                  {row.totalDeductions.toFixed(2)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between border-t border-slate-200 px-3 py-2 text-sm font-semibold">
-                <span className="text-slate-800">
-                  <T k="pay.payslip.detail.net" />
-                </span>
-                <span className="tabular-nums text-slate-900">{row.netPay.toFixed(2)}</span>
               </div>
             </div>
 
-            <div>
-              <p className="mb-1 text-xs font-medium text-slate-600">
-                <T k="pay.payslip.detail.employer" />
-              </p>
-              <DetailGrid>
-                <Detail label="KWSP" value={row.epfEmployer.toFixed(2)} />
-                <Detail label="PERKESO" value={row.socsoEmployer.toFixed(2)} />
-                <Detail label="SIP" value={row.eisEmployer.toFixed(2)} />
-                <Detail
-                  label={<T k="pay.payslip.detail.epfWages" />}
-                  value={row.epfWages.toFixed(2)}
-                />
-                <Detail
-                  label={<T k="pay.payslip.detail.contributoryWages" />}
-                  value={row.contributoryWages.toFixed(2)}
-                />
-              </DetailGrid>
-              <p className="mt-1 text-xs text-slate-500">
-                <T k="pay.payslip.detail.wages.hint" />
-              </p>
+            {/* The figure that is paid, on a tinted strip of its own. */}
+            <div className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-emerald-900">
+              <span className="text-sm font-medium">
+                <T k="pay.payslip.detail.net" />
+              </span>
+              <span className="text-lg font-semibold tabular-nums">{row.netPay.toFixed(2)}</span>
             </div>
 
-            <div>
-              <p className="mb-1 text-xs font-medium text-slate-600">
-                <T k="pay.payslip.detail.attendance" />
-              </p>
-              <DetailGrid>
-                <Detail
-                  label={<T k="pay.payslip.detail.scheduledDays" />}
-                  value={String(row.scheduledDays)}
-                />
-                <Detail
-                  label={<T k="pay.payslip.detail.presentDays" />}
-                  value={String(row.presentDays)}
-                />
-                <Detail
-                  label={<T k="pay.payslip.detail.absentDays" />}
-                  value={String(row.absentDays)}
-                />
-                <Detail
-                  label={<T k="pay.payslip.detail.leaveDays" />}
-                  value={String(row.leaveDays)}
-                />
-                <Detail
-                  label={<T k="pay.payslip.detail.overtimeHours" />}
-                  value={(row.overtimeMinutes / 60).toFixed(2)}
-                />
-              </DetailGrid>
-              <p className="mt-1 text-xs text-slate-500">
-                <T k="pay.payslip.detail.attendance.hint" />
-              </p>
+            <div className="grid items-start gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <p className="text-[11px] font-medium tracking-wide text-slate-500 uppercase">
+                  <T k="pay.payslip.detail.employer" />
+                </p>
+                <DetailGrid>
+                  <Detail
+                    label={<T k="pay.payslip.detail.epfEmployer" />}
+                    value={row.epfEmployer.toFixed(2)}
+                  />
+                  <Detail
+                    label={<T k="pay.payslip.detail.socsoEmployer" />}
+                    value={row.socsoEmployer.toFixed(2)}
+                  />
+                  <Detail
+                    label={<T k="pay.payslip.detail.eisEmployer" />}
+                    value={row.eisEmployer.toFixed(2)}
+                  />
+                  <Detail
+                    label={<T k="pay.payslip.detail.epfWages" />}
+                    value={row.epfWages.toFixed(2)}
+                  />
+                  <Detail
+                    label={<T k="pay.payslip.detail.contributoryWages" />}
+                    value={row.contributoryWages.toFixed(2)}
+                  />
+                </DetailGrid>
+                <p className="text-xs text-slate-500">
+                  <T k="pay.payslip.detail.wages.hint" />
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-[11px] font-medium tracking-wide text-slate-500 uppercase">
+                  <T k="pay.payslip.detail.attendance" />
+                </p>
+                <DetailGrid>
+                  <Detail
+                    label={<T k="pay.payslip.detail.scheduledDays" />}
+                    value={String(row.scheduledDays)}
+                  />
+                  <Detail
+                    label={<T k="pay.payslip.detail.presentDays" />}
+                    value={String(row.presentDays)}
+                  />
+                  <Detail
+                    label={<T k="pay.payslip.detail.absentDays" />}
+                    value={String(row.absentDays)}
+                  />
+                  <Detail
+                    label={<T k="pay.payslip.detail.leaveDays" />}
+                    value={String(row.leaveDays)}
+                  />
+                  <Detail
+                    label={<T k="pay.payslip.detail.overtimeHours" />}
+                    value={(row.overtimeMinutes / 60).toFixed(2)}
+                  />
+                </DetailGrid>
+                <p className="text-xs text-slate-500">
+                  <T k="pay.payslip.detail.attendance.hint" />
+                </p>
+              </div>
             </div>
 
             {mayEdit && (
-              <>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field
-                    label={<T k="pay.payslip.form.tax" />}
-                    hint={<T k="pay.payslip.form.tax.hint" />}
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={tax}
-                    onChange={(event) => setTax(event.target.value)}
-                  />
-                  <Field
-                    label={<T k="pay.payslip.form.other" />}
-                    hint={<T k="pay.payslip.form.other.hint" />}
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={other}
-                    onChange={(event) => setOther(event.target.value)}
-                  />
-                </div>
+              // The last block before the footer, so it carries the `pb-2`.
+              <div className="grid items-start gap-4 border-t border-slate-200 pt-4 pb-2 sm:grid-cols-3">
                 <Field
+                  label={<T k="pay.payslip.form.tax" />}
+                  hint={<T k="pay.payslip.form.tax.hint" />}
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min={0}
+                  value={tax}
+                  onChange={(event) => setTax(event.target.value)}
+                />
+                <Field
+                  label={<T k="pay.payslip.form.other" />}
+                  hint={<T k="pay.payslip.form.other.hint" />}
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min={0}
+                  value={other}
+                  onChange={(event) => setOther(event.target.value)}
+                />
+                <TextArea
                   label={<T k="pay.payslip.form.note" />}
+                  rows={2}
                   value={note}
                   maxLength={500}
                   onChange={(event) => setNote(event.target.value)}
                 />
-              </>
+              </div>
             )}
 
-            <DialogFooter
-              onClose={onClose}
-              onSubmit={mayEdit ? () => void submit() : undefined}
-              busy={busy}
-              submitLabel={<T k="dialog.save" />}
-            />
+            {mayEdit ? (
+              <DialogFooter
+                onClose={onClose}
+                onSubmit={() => void submit()}
+                busy={busy}
+                disabled={!(Number(tax) >= 0) || !(Number(other) >= 0)}
+                submitLabel={<T k="dialog.save" />}
+              />
+            ) : (
+              <DialogFooter onClose={onClose} closeLabel={<T k="dialog.close" />} />
+            )}
           </>
         )}
       </div>

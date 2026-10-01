@@ -108,6 +108,19 @@ Empat yang perlu diketahui sebelum memburunya:
   (verify-security) atau `Sement4raProfil!` (verify-profile) — log masuk dengannya dan tukar
   semula di Profil Saya. Larian seterusnya akan gagal pada `logged in` sampai itu dibetulkan.
 
+### `tsc` tidak menolak medan yang tiada dalam `select` Prisma
+
+Hasil query bertaip — `row.email` ialah `string` — tetapi `select: { fullName: true }` pada model
+yang tiada lajur itu **lulus `tsc --noEmit`** dan hanya gagal semasa permintaan, sebagai
+`PrismaClientValidationError` yang dijawab 500. Itu yang menjadikan setiap penugasan KPI menjawab
+500 sementara notifikasi penilai hidup — *selepas* baris penugasan sudah ditulis, jadi skrin
+melaporkan kegagalan bagi rekod yang wujud dan cubaan kedua ditolak sebagai pendua.
+
+Jadi laluan yang menambah atau mengubah `select`/`include` mesti **dijalankan sekali**, bukan hanya
+dikompil: melalui skrip verifikasi, atau `buildApp()` + `app.inject()` dalam proses seperti
+`test-agent-routes`. Cabang yang hanya berjalan bila satu tetapan hidup (notifikasi, mod tertentu)
+perlu dijalankan dengan tetapan itu hidup.
+
 ## Persekitaran
 
 Peranti `https://192.168.1.250`. Zon waktu organisasi datang daripada `ORG_TIMEZONE`, bukan

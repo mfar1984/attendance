@@ -296,7 +296,15 @@ console.log('\nPotongan pendahuluan diterbitkan');
 // ---------------------------------------------------------------------------
 
 check('1200 atas 12 bulan', monthlyRecovery(1200, 12), 100);
-check('1000 atas 3 bulan dibundarkan', monthlyRecovery(1000, 3), 333.33);
+/*
+ * Rounded up, so the months chosen clear the amount. 333.33 left a cent owing after three months
+ * and a fourth deduction collected it; for a loan, 83.33 × 12 fell short and the route refused the
+ * instalment it had derived itself.
+ */
+check('1000 atas 3 bulan dibundarkan ke atas', monthlyRecovery(1000, 3), 333.34);
+check('1000 atas 12 bulan melunaskan pokok', monthlyRecovery(1000, 12) * 12 >= 1000, true);
+check('pembahagian tepat kekal tepat', monthlyRecovery(110, 100), 1.1);
+check('ansuran terakhir mengambil baki selepas pembundaran', instalmentDue(333.34, 1000 - 333.34 * 2), 333.32);
 check('bulan sifar ditolak', monthlyRecovery(1200, 0), 0);
 check('bulan pecahan ditolak', monthlyRecovery(1200, 2.5), 0);
 check('pokok sifar ditolak', monthlyRecovery(0, 12), 0);

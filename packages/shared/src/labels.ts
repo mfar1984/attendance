@@ -2677,7 +2677,6 @@ export const LABELS = {
    * made it necessary: "Komunikasi" became ten spellings of itself, and two questions became
    * unanswerable — what does this competency average across everybody, and which forms ask about it.
    */
-  'kpi.competency.title': 'Katalog Kompetensi',
   'kpi.competency.subtitle':
     'Perkataan yang setiap borang penilaian pilih daripadanya. Satu kompetensi, satu ejaan — tanpa katalog, "Komunikasi" ditaip sepuluh kali dengan sepuluh ejaan dan tiada siapa boleh bertanya purata markahnya.',
   'kpi.competency.category.core': 'Teras',
@@ -2697,9 +2696,26 @@ export const LABELS = {
   'kpi.competency.action.new': 'Kompetensi Baharu',
   'kpi.competency.action.edit': 'Ubah kompetensi',
   'kpi.competency.action.delete': 'Buang kompetensi',
-  'kpi.competency.action.deactivate': 'Nyahaktifkan',
-  'kpi.competency.action.activate': 'Aktifkan semula',
-  'kpi.competency.form.title': 'Kompetensi',
+  'kpi.competency.count': '{count} kompetensi',
+  'kpi.competency.search': 'Cari kompetensi…',
+  /** Why the bin is grey, on the bin. Deactivating is done in the dialog's status field. */
+  'kpi.competency.row.locked': '{count} borang bertanya tentangnya — nyahaktifkan sebaliknya',
+  'kpi.competency.row.locked.inactive':
+    '{count} borang bertanya tentangnya, jadi ia kekal sebagai rekod',
+  'kpi.competency.notice.saved': 'Kompetensi "{name}" disimpan.',
+  'kpi.competency.notice.removed': 'Kompetensi "{name}" dibuang.',
+  'kpi.competency.form.create': 'Kompetensi baharu',
+  'kpi.competency.form.edit': 'Kemas kini kompetensi',
+  'kpi.competency.form.inUse':
+    '{count} borang bertanya tentang kompetensi ini. Menamakannya semula mengemas kini borang itu; penilaian yang sudah dicipta kekal dengan perkataan yang dipersoalkan kepada mereka.',
+  /**
+   * What deactivating does, on the field that does it.
+   *
+   * It used to be a strip above the table — "deactivate, do not delete" — read by somebody scanning
+   * rows rather than by the person choosing the status.
+   */
+  'kpi.competency.form.status.hint':
+    'Tidak aktif: hilang dari pilihan borang baharu, tetapi kekal pada borang yang sudah bertanya tentangnya.',
   'kpi.competency.form.name': 'Nama',
   'kpi.competency.form.name.hint':
     'Ruang di hujung dan ruang berganda dibuang sebelum disimpan — jika tidak, satu ruang tambahan menghasilkan kompetensi kedua yang membaca serupa.',
@@ -2709,16 +2725,8 @@ export const LABELS = {
   'kpi.competency.form.description': 'Keterangan',
   'kpi.competency.form.description.hint':
     'Apa yang penilai patut fikirkan ketika memberi markah baris ini.',
-  'kpi.competency.form.active': 'Aktif',
-  'kpi.competency.saved': 'Kompetensi disimpan.',
-  'kpi.competency.removed': 'Kompetensi dibuang.',
   'kpi.competency.renamed':
     'Dinamakan semula. {count} borang yang bertanya tentangnya turut dikemas kini; penilaian yang sudah dicipta kekal dengan perkataan yang dipersoalkan kepada mereka.',
-  'kpi.competency.note.retire':
-    'Nyahaktifkan, jangan buang. Kompetensi yang dinyahaktifkan hilang dari senarai pilihan borang baharu tetapi perkataannya kekal pada borang yang sudah menggunakannya — itulah sebab jawapan "borang mana menggunakan ini" masih boleh dijawab tahun hadapan.',
-  'kpi.competency.note.inUse':
-    'Kompetensi yang sedang digunakan oleh borang tidak boleh dibuang. Nyahaktifkan ia sebagai ganti.',
-  'kpi.competency.inactive': 'Tidak aktif',
 
   'kpi.template.title': 'Borang Penilaian',
   'kpi.template.subtitle':
@@ -2735,6 +2743,14 @@ export const LABELS = {
   'kpi.template.action.delete': 'Buang borang',
   'kpi.template.action.view': 'Lihat',
   'kpi.template.weightOff': 'Berjumlah {total}, bukan 100',
+  /** The section heading is the count, as on every master-data list (see `leave.type.count`). */
+  'kpi.template.count': '{count} borang penilaian',
+  /** Why the bin is grey, on the bin itself. Two wordings because the remedy differs. */
+  'kpi.template.row.locked': '{count} penilaian menggunakannya — nyahaktifkan sebaliknya',
+  'kpi.template.row.locked.inactive':
+    '{count} penilaian menggunakannya, jadi ia kekal sebagai rekod',
+  'kpi.template.saved': 'Borang "{code}" disimpan.',
+  'kpi.template.removed': 'Borang "{code}" dibuang.',
   /**
    * Why editing a form in use is now allowed.
    *
@@ -2750,7 +2766,8 @@ export const LABELS = {
   'kpi.template.retiredItem':
     'Kompetensi ini sudah dinyahaktifkan dalam katalog. Perkataannya kekal di sini; ia tidak boleh dipilih pada borang baharu.',
 
-  'kpi.template.form.title': 'Borang Penilaian',
+  'kpi.template.form.create': 'Borang penilaian baharu',
+  'kpi.template.form.edit': 'Kemas kini borang penilaian',
   'kpi.template.form.code': 'Kod',
   'kpi.template.form.name': 'Nama',
   'kpi.template.form.description': 'Keterangan',
@@ -2760,12 +2777,15 @@ export const LABELS = {
   'kpi.template.form.item.weight': 'Pemberat (%)',
   'kpi.template.form.item.add': 'Tambah kompetensi',
   'kpi.template.form.item.remove': 'Buang',
+  'kpi.template.form.item.lastRow': 'Borang perlukan sekurang-kurangnya satu kompetensi',
+  /** The same refusal the server gives, said on the line before the save is pressed. */
+  'kpi.template.form.retired':
+    '"{name}" sudah dinyahaktifkan dalam katalog. Buang baris itu atau pilih kompetensi lain sebelum menyimpan.',
   'kpi.template.form.equalise': 'Pemberat sama rata',
   'kpi.template.form.equalise.hint':
     'Baki dibundarkan pada baris terakhir, jadi jumlahnya tepat 100.',
   'kpi.template.form.total': 'Jumlah: {total}%',
   'kpi.template.form.total.ok': 'Jumlah: {total}% — betul',
-  'kpi.template.form.active': 'Aktif',
   'kpi.template.form.catalogueEmpty':
     'Katalog kompetensi masih kosong. Tambah kompetensi di Tetapan KPI › Kompetensi dahulu — borang dibina daripada katalog, bukan daripada teks bebas.',
 
@@ -2800,20 +2820,29 @@ export const LABELS = {
   'kpi.period.action.new': 'Tempoh Baharu',
   'kpi.period.action.close': 'Tutup tempoh',
   'kpi.period.action.delete': 'Buang tempoh',
+  'kpi.period.count': '{count} tempoh penilaian',
+  'kpi.period.delete.closed': 'Tempoh yang ditutup ialah rekod sejarah dan tidak boleh dibuang',
+  'kpi.period.notice.saved': 'Tempoh {code} disimpan.',
+  'kpi.period.notice.closed': 'Tempoh {code} ditutup.',
+  'kpi.period.notice.removed': 'Tempoh {code} dibuang.',
   /**
-   * Why there is no draft state, stated on the screen.
+   * Why there is no draft state, stated where a period is made.
    *
    * There was one, and every period sat in it until somebody remembered to press Open — a state
-   * whose only behaviour was to refuse the thing the screen was for.
+   * whose only behaviour was to refuse the thing the screen was for. This used to be a strip under
+   * the list; it is a caveat about creating one, so it is the create dialog's description.
    */
-  'kpi.period.note.forward':
-    'Tempoh dicipta terus dibuka, dan bergerak ke hadapan sahaja: dibuka → ditutup. Tiada keadaan draf, kerana tempoh yang tidak boleh ditugaskan ialah baris yang tiada siapa boleh gunakan. Tempoh yang ditutup tidak dibuka semula: gred di dalamnya sudah dibaca, dan mungkin sudah memacu bonus.',
+  'kpi.period.form.create.description':
+    'Tempoh dicipta terus dibuka, jadi penilaian boleh ditugaskan serta-merta. Ia bergerak ke hadapan sahaja: dibuka → ditutup.',
+  'kpi.period.close.title': 'Tutup tempoh {code}',
+  'kpi.period.close.final':
+    'Tempoh yang ditutup tidak dibuka semula: gred di dalamnya sudah dibaca, dan mungkin sudah memacu bonus.',
   'kpi.period.close.outstanding':
     '{count} penilaian belum dihantar. Menutup tempoh sekarang meninggalkan mereka tanpa gred secara kekal.',
   'kpi.period.close.confirm': 'Saya faham — tutup juga',
   'kpi.period.delete.hasAssignments':
     'Tempoh ini mengandungi {count} penilaian. Membuangnya akan membuang penilaian itu juga.',
-  'kpi.period.form.title': 'Tempoh Penilaian',
+  'kpi.period.form.create': 'Tempoh penilaian baharu',
   'kpi.period.form.code': 'Kod',
   'kpi.period.form.name': 'Nama',
   'kpi.period.form.from': 'Tempoh dinilai dari',
@@ -2841,11 +2870,34 @@ export const LABELS = {
   'kpi.assignment.action.new': 'Tugaskan Penilaian',
   'kpi.assignment.action.open': 'Buka borang',
   'kpi.assignment.action.delete': 'Buang penugasan',
-  'kpi.assignment.form.title': 'Penugasan KPI',
+  'kpi.assignment.count': '{count} penilaian',
+  'kpi.assignment.search': 'Cari nama atau no. staf…',
+  'kpi.assignment.filter.allPeriods': 'Semua tempoh',
+  'kpi.assignment.column.reviewer': 'Penilai',
+  'kpi.assignment.delete.finalised':
+    'Penilaian yang dimuktamadkan ialah rekod gred dan tidak boleh dibuang',
+  'kpi.assignment.notice.removed': 'Penilaian {name} dibuang.',
+  'kpi.assignment.notice.created': 'Penilaian {name} ditugaskan kepada {reviewer}.',
+  'kpi.assignment.form.create': 'Tugaskan penilaian',
   'kpi.assignment.form.period': 'Tempoh',
-  'kpi.assignment.form.staff': 'Staf dinilai (ID)',
+  'kpi.assignment.form.staff.hint':
+    'Taip nama atau no. staf. Seorang hanya boleh dinilai sekali dalam satu tempoh.',
   'kpi.assignment.form.template': 'Borang',
   'kpi.assignment.form.reviewer': 'Penilai',
+  'kpi.assignment.form.nothingToAssign':
+    'Tiada tempoh yang dibuka atau borang yang aktif. Cipta tempoh di Tempoh Penilaian dan borang di Templat KPI dahulu.',
+  'kpi.assignment.form.reviewer.none':
+    'Tiada akaun yang boleh mengisi penilaian. Beri satu peranan kebenaran Ubah pada Semakan Penilaian dahulu.',
+  'kpi.assignment.form.selfReview':
+    'Seseorang tidak boleh menilai dirinya sendiri. Pilih penilai lain.',
+  /**
+   * The second step of removing an appraisal somebody has started scoring.
+   *
+   * Only asked when there are scores to lose; an untouched appraisal is removed at once.
+   */
+  'kpi.assignment.remove.title': 'Buang penilaian {name}',
+  'kpi.assignment.remove.body':
+    '{count} markah yang sudah diisi akan dibuang bersama penilaian ini. Ia tidak boleh dikembalikan.',
   /**
    * One reviewer, and why.
    *
@@ -2857,8 +2909,6 @@ export const LABELS = {
     'Seorang, dinamakan. Penilaian tiada rantaian aras kelulusan: ia disemak oleh orang yang dinamakan di sini, bukan oleh sesiapa yang memegang aras tertentu.',
   'kpi.assignment.note.snapshot':
     'Menugaskan penilaian menyalin soalan dan pemberat borang ke penilaian itu, di situ dan ketika itu. Menyunting borang selepas ini tidak mengubah penilaian yang sudah ditugaskan.',
-  'kpi.assignment.note.oneReviewer':
-    'Kebenaran skrin membenarkan seseorang mengisi penilaian; ia tidak menetapkan penilaian yang mana. Hanya penilai yang dinamakan pada penugasan boleh mengisi borangnya.',
 
   'kpi.review.title': 'Semakan Penilaian',
   'kpi.review.subtitle':
@@ -2867,11 +2917,17 @@ export const LABELS = {
   'kpi.review.filter.all': 'Semua penilaian',
   'kpi.review.form.title': 'Penilaian — {staffName}',
   'kpi.review.form.item': 'Kompetensi',
-  'kpi.review.form.weight': 'Pemberat',
+  'kpi.review.form.items.hint':
+    'Markah 0–100 bagi setiap kompetensi. Simpan bila-bila masa; semua mesti dijawab sebelum dihantar.',
+  'kpi.review.form.weightOf': 'Pemberat {weight}%',
   'kpi.review.form.score': 'Markah (0–100)',
+  'kpi.review.form.score.range': 'Antara 0 dan {max}.',
   'kpi.review.form.comment': 'Catatan',
-  'kpi.review.form.running': 'Jumlah berpemberat: {total}%',
-  'kpi.review.form.running.partial': 'Setakat dijawab: {total}% ({scored} drpd {total_items})',
+  'kpi.review.form.total': 'Jumlah berpemberat',
+  /** Shown once submitted: the grade on the row is the one resolved then, not a live reading. */
+  'kpi.review.form.gradeFrozen': 'Gred {grade}, dibekukan semasa dihantar.',
+  'kpi.review.form.reopenedBecause': 'Dibuka semula: {note}',
+  'kpi.review.form.decisionNote': 'Catatan keputusan: {note}',
   /**
    * Why the running total ignores what is not yet answered.
    *
@@ -2885,16 +2941,41 @@ export const LABELS = {
   'kpi.review.action.submit': 'Hantar',
   'kpi.review.action.reopen': 'Buka semula',
   'kpi.review.action.finalise': 'Muktamadkan',
-  'kpi.review.saved': 'Markah disimpan.',
-  'kpi.review.submitted': 'Dihantar: {total}% — gred {grade}.',
-  'kpi.review.finalised': 'Penilaian dimuktamadkan.',
-  'kpi.review.reopened': 'Penilaian dibuka semula.',
+  /** One row action, two readings: amber to fill in, blue to read. */
+  'kpi.review.action.fill': 'Isi borang',
+  'kpi.review.action.view': 'Lihat borang',
+  'kpi.review.notice.saved': 'Markah {name} disimpan — {scored} drpd {total} dijawab.',
+  'kpi.review.notice.submitted': 'Penilaian {name} dihantar: {total}% — gred {grade}.',
+  'kpi.review.notice.finalised': 'Penilaian {name} dimuktamadkan — gred {grade}.',
+  'kpi.review.notice.reopened': 'Penilaian {name} dibuka semula untuk penilainya.',
+  'kpi.review.finalise.title': 'Muktamadkan penilaian {name}',
+  'kpi.review.finalise.warning':
+    'Selepas dimuktamadkan, gred ini menjadi rekod: ia tidak boleh dibuka semula atau dibuang, dan ia muncul dalam Keputusan KPI.',
+  'kpi.review.finalise.note': 'Catatan keputusan',
+  'kpi.review.finalise.note.hint':
+    'Pilihan. Disimpan bersama gred, dan dihantar kepada staf yang dinilai jika notifikasi dihidupkan.',
+  'kpi.review.reopen.title': 'Buka semula penilaian {name}',
   'kpi.review.reopen.note': 'Sebab dibuka semula',
+  'kpi.review.reopen.note.hint':
+    'Penilai membaca sebab ini pada borang. Sekurang-kurangnya 3 aksara.',
+  'kpi.review.reopen.closed':
+    'Tempoh sudah ditutup — penilaian ini hanya boleh dimuktamadkan, bukan dibuka semula',
   'kpi.review.reopen.hint':
     'Markah dan gred dikosongkan, kerana memaparkan angka bagi penilaian yang sedang diubah akan mengelirukan. Jawapan yang sudah diisi kekal — penilai diminta melihat semula, bukan bermula dari kosong.',
   'kpi.review.note.reviewerOnly':
     'Hanya penilai yang ditugaskan boleh mengisi borang ini. Kebenaran skrin membenarkan mengisi penilaian; ia tidak menetapkan penilaian yang mana.',
   'kpi.review.note.locked': 'Penilaian yang dimuktamadkan tidak boleh diubah — ia rekod gred.',
+  /**
+   * Why the form is read-only, in the order the server checks. Exactly one shows.
+   *
+   * `submitted` was missing from that order: a reviewer could save scores after submission, under a
+   * total and grade frozen from the earlier answers, and the person finalising signed a grade the
+   * form beside it contradicted.
+   */
+  'kpi.review.note.periodClosed': 'Tempoh {code} sudah ditutup — markah tidak boleh ditulis lagi.',
+  'kpi.review.note.submitted':
+    'Penilaian ini sudah dihantar dan menunggu dimuktamadkan. Markah hanya boleh diubah selepas ia dibuka semula.',
+  'kpi.review.note.noEdit': 'Peranan anda boleh membaca penilaian tetapi tidak mengisinya.',
   'kpi.review.note.snapshot':
     'Soalan dan pemberat pada borang ini ialah salinan yang diambil ketika penilaian ditugaskan. Ia tidak berubah walaupun borang asalnya disunting.',
   'kpi.review.incomplete':
@@ -2925,8 +3006,7 @@ export const LABELS = {
    */
   'kpi.result.bonusMonths': '{months} bulan gaji asas',
   'kpi.result.bonusNone': 'Tiada bonus',
-  'kpi.result.note.bonus':
-    'Bonus dinyatakan dalam bulan gaji asas, bukan amaun. Ia menjadi wang hanya apabila tempoh payroll membekukannya ke baris bonus — sampai itu, amaun akan berubah setiap kali gaji asas orang itu berubah.',
+  'kpi.result.count': '{count} keputusan',
 
   'kpi.grade.title': 'Tetapan KPI',
   'kpi.settings.tab.competencies': 'Kompetensi',
@@ -2937,8 +3017,8 @@ export const LABELS = {
    * An appraisal moves through scoring rather than signatures, so no rung is ever waiting and a
    * chain would configure nothing.
    */
-  'kpi.settings.note.noChain':
-    'Modul ini tiada tab Aliran Kelulusan. Penilaian bergerak melalui pemarkahan, bukan tandatangan — tiada aras yang menunggu, jadi rantaian di sini tidak mengkonfigurasikan apa-apa.',
+  'kpi.settings.subtitle':
+    'Katalog kompetensi, jalur gred, notifikasi dan templat emel modul ini. Tiada tab Aliran Kelulusan: penilaian bergerak melalui pemarkahan, bukan tandatangan, jadi tiada aras yang menunggu.',
   'kpi.grade.subtitle':
     'Gred dan jalur markahnya. Jalur mesti melitupi 0–100 tepat sekali — jurang bermakna markah yang tidak mendapat gred sama sekali, dan tindihan bermakna markah sama mendapat gred berbeza bergantung susunan bacaan.',
   'kpi.grade.column.code': 'Gred',
@@ -2950,9 +3030,21 @@ export const LABELS = {
   'kpi.grade.error.load': 'Gred tidak dapat dimuatkan.',
   'kpi.grade.action.add': 'Gred Baharu',
   'kpi.grade.action.edit': 'Ubah gred',
-  'kpi.grade.action.remove': 'Buang gred',
+  /**
+   * The consequence on the bin itself. A finalised appraisal stores its grade as a code, not a
+   * reference, so removing a band regrades nobody — said here instead of in a strip over the table.
+   */
+  'kpi.grade.row.remove':
+    'Buang dari set — penilaian yang dimuktamadkan kekal menamakan gred ini',
+  'kpi.grade.count': '{count} gred',
   'kpi.grade.action.save': 'Simpan set gred',
-  'kpi.grade.form.title': 'Jalur Gred',
+  'kpi.grade.form.create': 'Gred baharu',
+  'kpi.grade.form.edit': 'Kemas kini gred',
+  /** The dialog edits a draft of the set; the button and this line say so. */
+  'kpi.grade.form.description':
+    'Ditambah ke set di bawah dahulu. Set disimpan sekali dengan Simpan set gred, kerana jalur hanya sah bersama.',
+  'kpi.grade.form.apply.add': 'Tambah ke set',
+  'kpi.grade.form.apply.update': 'Kemas kini set',
   'kpi.grade.form.code': 'Kod',
   'kpi.grade.form.name': 'Nama',
   'kpi.grade.form.min': 'Minimum (%)',
@@ -2965,13 +3057,12 @@ export const LABELS = {
     'Warna cip di belakang huruf gred. Gred dipandang sekilas, bukan dibaca — satu lajur A/B/C/D/E dalam satu warna memaksa seseorang mengiranya.',
   'kpi.grade.bonusMonths': '{months} bulan',
   'kpi.grade.bonusNone': 'Tiada',
-  'kpi.grade.covered': 'Jalur melitupi 0–100 tanpa jurang atau tindihan.',
-  'kpi.grade.saved': 'Gred disimpan.',
+  'kpi.grade.notice.saved': 'Set gred disimpan — {count} gred.',
+  'kpi.grade.unsaved':
+    'Ada perubahan yang belum disimpan. Set gred hanya disimpan apabila butang ini ditekan.',
   'kpi.grade.faults': 'Jalur gred bermasalah',
   'kpi.grade.note.set':
     'Gred disimpan sebagai satu set kerana jalur hanya sah bersama. Menyimpan satu gred sahaja boleh meninggalkan jurang yang tidak kelihatan sampai seseorang cuba menghantar penilaian.',
-  'kpi.grade.note.history':
-    'Gred pada penilaian yang dimuktamadkan disimpan sebagai kod, bukan rujukan. Membuang gred tidak mengubah penilaian lampau — ia kekal menamakan gred yang diberikan kepadanya.',
   'kpi.grade.note.boundary':
     'Gred dicari dengan jalur tertinggi yang markahnya mencapai lantainya. Markah tepat pada sempadan mendapat gred yang lebih baik — jawapan yang sama pada setiap skrin, dan jawapan yang boleh dipertahankan dengan lisan.',
 
@@ -5552,13 +5643,19 @@ export const LABELS = {
   'pay.period.remove.body':
     'Hanya draf boleh dibuang, dan draf tiada slip yang berbaloi disimpan. Selebihnya adalah rekod gaji yang sudah dikira.',
 
+  'pay.period.count': '{count} tempoh payroll',
+  /** Each notice names the period, so a message read after the dialog closes says which one. */
+  'pay.period.notice.saved': 'Tempoh {code} disimpan.',
+  'pay.period.notice.processed': '{code}: {count} slip gaji dibina, bersih RM{net}.',
+  'pay.period.notice.paid': 'Tempoh {code} ditanda dibayar.',
+  'pay.period.notice.closed': 'Tempoh {code} ditutup.',
+  'pay.period.notice.removed': 'Tempoh {code} dibuang.',
   'pay.period.note.processFirst': 'Proses tempoh dahulu — tiada slip gaji untuk diluluskan.',
   'pay.period.note.notDraft': 'Hanya draf boleh diproses semula atau dibuang.',
 
   // -------------------------------------------------------------------------
   // Payroll › Slip Gaji
   // -------------------------------------------------------------------------
-  'pay.payslip.title': 'Slip Gaji',
   'pay.payslip.subtitle':
     'Satu baris setiap orang, untuk tempoh yang dipilih. Setiap angka disimpan sebagaimana ia dikira — kadar statutori berubah dengan pengumuman kerajaan, jadi slip yang dikira semula tahun depan tidak akan sepadan dengan yang dibayar.',
   'pay.payslip.filter.period': 'Pilih tempoh',
@@ -5578,6 +5675,18 @@ export const LABELS = {
   'pay.payslip.column.net': 'Bersih',
 
   'pay.payslip.action.open': 'Buka slip',
+  'pay.payslip.count': '{count} slip gaji',
+  'pay.payslip.search': 'Cari nama atau no. staf…',
+  'pay.payslip.notice.saved': 'Slip {no} disimpan.',
+  /**
+   * The three employer contributions, as labels rather than literals.
+   *
+   * They were typed into the dialog as the Malay acronyms, so the English screen read KWSP where
+   * every other English payroll screen says EPF.
+   */
+  'pay.payslip.detail.epfEmployer': 'KWSP',
+  'pay.payslip.detail.socsoEmployer': 'PERKESO',
+  'pay.payslip.detail.eisEmployer': 'SIP',
   'pay.payslip.detail.title': 'Slip {no}',
   'pay.payslip.detail.earnings': 'Pendapatan',
   'pay.payslip.detail.deductions': 'Potongan',
@@ -5615,7 +5724,7 @@ export const LABELS = {
   'pay.allowance.tab.staff': 'Elaun Staf',
   'pay.allowance.tab.types': 'Jenis Elaun',
 
-  'pay.allowance.type.section': 'Katalog jenis elaun',
+  'pay.allowance.type.count': '{count} jenis elaun',
   'pay.allowance.type.subtitle':
     'Apa yang organisasi bayar, dan sama ada ia menyumbang kepada upah bercarum KWSP. Bayaran balik perjalanan bukan upah; elaun rumah adalah.',
   'pay.allowance.type.action.add': 'Jenis baharu',
@@ -5630,8 +5739,15 @@ export const LABELS = {
   'pay.allowance.type.epf.yes': 'Bercarum',
   'pay.allowance.type.epf.no': 'Dikecualikan',
   'pay.allowance.type.usage': '{count} staf',
-  'pay.allowance.type.inUse':
-    'Digunakan oleh {count} elaun staf — cara kiraan dan status KWSP dibekukan.',
+  /**
+   * Why the bin is grey, on the bin. It used to read a sentence about frozen fields and was given
+   * no count, so the tooltip printed its own `{count}` placeholder.
+   */
+  'pay.allowance.type.row.locked': '{count} elaun staf menggunakannya — nyahaktifkan sebaliknya',
+  'pay.allowance.type.row.locked.inactive':
+    '{count} elaun staf menggunakannya, jadi ia kekal sebagai rekod',
+  'pay.allowance.type.notice.saved': 'Jenis elaun "{code}" disimpan.',
+  'pay.allowance.type.notice.removed': 'Jenis elaun "{code}" dibuang.',
 
   'pay.allowance.type.form.title': 'Jenis elaun baharu',
   'pay.allowance.type.form.edit': 'Sunting jenis elaun',
@@ -5647,11 +5763,16 @@ export const LABELS = {
   'pay.allowance.type.form.epf.hint':
     'Dihidupkan secara lalai, arah yang lebih berhati-hati: menyumbang kurang adalah masalah yang pekerja temui bertahun kemudian.',
   'pay.allowance.type.form.taxable': 'Tertakluk cukai',
-  'pay.allowance.type.form.active': 'Aktif',
+  /** Said plainly because the mark looks like it drives a deduction, and it does not. */
+  'pay.allowance.type.form.taxable.hint':
+    'Direkodkan sahaja. PCB tidak dikira oleh sistem ini, jadi tanda ini tidak mengubah mana-mana potongan — potongan cukai dimasukkan pada slip gaji.',
   'pay.allowance.type.form.frozen':
     'Jenis ini sudah digunakan. Cara kiraan dan status KWSP tidak boleh diubah — ia akan menukar amaun yang sudah dibayar. Nyahaktifkan dan cipta yang baharu.',
 
-  'pay.allowance.section': 'Elaun staf',
+  'pay.allowance.count': '{count} elaun staf',
+  'pay.allowance.search': 'Cari nama atau no. staf…',
+  'pay.allowance.notice.saved': '{type} untuk {staff} disimpan.',
+  'pay.allowance.notice.removed': '{type} untuk {staff} dibuang.',
   'pay.allowance.section.subtitle':
     'Berulang secara sifatnya, jadi tiada pautan tempoh: setiap larian mengambil baris yang aktif dan yang tarikh mulanya sudah sampai.',
   'pay.allowance.action.add': 'Tetapkan elaun',
@@ -5678,7 +5799,13 @@ export const LABELS = {
     'Dibandingkan dengan tempoh. Elaun bertarikh kuarter depan tidak akan dibayar sebelum tarikh itu.',
   'pay.allowance.form.to': 'Berkuat kuasa hingga',
   'pay.allowance.form.to.hint': 'Biarkan kosong untuk elaun yang berterusan.',
-  'pay.allowance.form.active': 'Aktif',
+  /** The field error on an end date, shared by every payroll form that has a range. */
+  'pay.form.endBeforeStart': 'Tidak boleh sebelum tarikh mula.',
+  'pay.allowance.form.value.positive': 'Mesti lebih daripada sifar.',
+  'pay.allowance.form.staff.hint':
+    'Taip nama atau no. staf. Elaun dibayar oleh setiap larian selagi ia aktif dan dalam tempoh berkuat kuasanya.',
+  'pay.allowance.form.status.hint':
+    'Tidak aktif: tidak dibayar oleh larian seterusnya, tetapi kekal sebagai rekod.',
   'pay.allowance.form.note': 'Nota',
 
   'pay.allowance.remove.title': 'Buang elaun',
@@ -5764,9 +5891,43 @@ export const LABELS = {
   'pay.award.cancel.submit': 'Batalkan',
   'pay.award.note': 'Nota keputusan',
   'pay.award.remove.title': 'Buang {reference}',
-  'pay.award.remove.body':
-    'Hanya rekod yang menunggu atau dibatalkan boleh dibuang. Membuang barisan yang diluluskan menghilangkan rekod apa yang diluluskan.',
+  'pay.award.remove.confirm': 'Rekod {reference} dibuang terus dan tidak boleh dikembalikan.',
   'pay.award.locked': 'Hanya rekod yang menunggu keputusan boleh disunting.',
+  'pay.bonus.count': '{count} bonus',
+  'pay.commission.count': '{count} komisen',
+  'pay.award.search': 'Cari nama, no. staf atau keterangan…',
+  'pay.award.form.staff.hint': 'Taip nama atau no. staf. Hanya staf aktif disenaraikan.',
+  /**
+   * "Draf", not "can still be edited": the run collects awards when it builds the payslips and does
+   * not run again, so a processed period is already past what an award can reach.
+   */
+  'pay.award.form.noOpenPeriod':
+    'Tiada tempoh payroll yang masih draf. Rekod boleh disimpan tanpa tempoh, tetapi kelulusan memerlukannya.',
+  /** A pending award still naming a period that has since been processed. */
+  'pay.award.form.periodLocked':
+    'Tempoh {period} sudah diproses. Pilih tempoh yang masih draf, atau Tiada tempoh.',
+  'pay.award.notice.saved': '"{name}" untuk {staff} disimpan.',
+  'pay.award.notice.approved': '{reference} diluluskan — dibayar oleh tempoh {period}.',
+  'pay.award.notice.cancelled': '{reference} dibatalkan.',
+  'pay.award.notice.removed': '{reference} dibuang.',
+  /** One row action per decision, the way leave and claims put approve and reject side by side. */
+  'pay.award.row.approve': 'Luluskan',
+  'pay.award.row.cancel': 'Batalkan',
+  /** Why a control is grey, on the control. Each is the refusal the server would give. */
+  'pay.award.approve.noPeriod':
+    'Pilih tempoh payroll pada rekod ini dahulu — larian membaca rekod mengikut tempoh, jadi yang tiada tempoh tidak akan dibayar',
+  'pay.award.approve.locked':
+    'Tempoh {period} sudah diproses — pilih tempoh yang masih draf pada rekod ini dahulu',
+  'pay.award.cancel.locked': 'Tempoh {period} sudah diproses — buat pelarasan dalam tempoh berikutnya',
+  'pay.award.remove.locked.approved':
+    'Diluluskan — batalkan dahulu; membuang barisnya menghilangkan rekod apa yang diluluskan',
+  'pay.award.remove.locked.paid': 'Sudah dibayar — ia kekal sebagai rekod slip gaji',
+  'pay.bonus.generate.kpiOption':
+    '{code} — {name} · {finalised} dimuktamadkan, {generated} sudah berbonus',
+  'pay.bonus.generate.none':
+    'Tiada tempoh KPI yang ditutup. Bonus dijana daripada gred yang dimuktamadkan dalam kitaran yang sudah ditutup.',
+  'pay.bonus.generate.noOpenPeriod':
+    'Tiada tempoh payroll yang masih draf untuk membayarnya. Cipta satu di Tempoh Payroll dahulu.',
 
   // -------------------------------------------------------------------------
   // Payroll › Pinjaman dan Pendahuluan Gaji
@@ -5837,8 +5998,29 @@ export const LABELS = {
   'pay.lending.cancel.submit': 'Batalkan',
   'pay.lending.locked': 'Ansuran sudah dipotong daripada gaji — rekod ini tidak boleh dibuang.',
   'pay.lending.remove.title': 'Buang {reference}',
-  'pay.lending.remove.body':
-    'Hanya rekod yang belum diluluskan dan tiada sejarah potongan boleh dibuang. Slip gaji yang memotongnya merujuk rekod ini.',
+  'pay.lending.remove.confirm': 'Rekod {reference} dibuang terus dan tidak boleh dikembalikan.',
+  'pay.loan.count': '{count} pinjaman',
+  'pay.advance.count': '{count} pendahuluan',
+  'pay.lending.search': 'Cari nama atau no. staf…',
+  'pay.lending.form.staff.hint':
+    'Taip nama atau no. staf. Ansuran akan dipotong daripada gaji orang ini.',
+  /** The summary strip that closes the form: what leaves somebody's pay, and what it adds to. */
+  'pay.lending.form.previewPending':
+    'Isi amaun dan bilangan bulan untuk melihat potongan bulanan.',
+  'pay.lending.form.total': 'Jumlah dipungut balik: RM{total} dalam {months} bulan',
+  'pay.lending.form.startsEarly': 'Potongan tidak boleh bermula sebelum wang dikeluarkan.',
+  'pay.loan.form.preview': 'Ansuran bulanan: RM{amount}',
+  'pay.loan.form.shortfall':
+    '{months} ansuran RM{instalment} berjumlah RM{total}, kurang daripada pokok RM{principal}. Baki tidak akan habis.',
+  'pay.lending.notice.created': 'Disimpan untuk {staff}: RM{amount} sebulan, menunggu kelulusan.',
+  'pay.lending.notice.approved': '{reference} diluluskan — potongan bermula {date}.',
+  'pay.lending.notice.cancelled': '{reference} dibatalkan.',
+  'pay.lending.notice.removed': '{reference} dibuang.',
+  'pay.lending.row.approve': 'Luluskan',
+  'pay.lending.row.cancel': 'Batalkan',
+  'pay.lending.cancel.locked':
+    '{count} ansuran sudah dipotong — buat bayaran balik sebagai pelarasan',
+  'pay.lending.remove.locked.active': 'Aktif — batalkan dahulu, kemudian buang',
 
   // -------------------------------------------------------------------------
   // Payroll › Tetapan Payroll
@@ -5905,6 +6087,13 @@ export const LABELS = {
   'pay.settings.caveat.pcb':
     'PCB tidak dikira sama sekali. Ia bergantung pada pelepasan yang diisytiharkan, status perkahwinan dan tanggungan di bawah jadual LHDN — angka yang diteka memotong kurang dan pekerja yang menerima bilnya pada taksiran. Ia dimasukkan sendiri pada setiap slip.',
   'pay.settings.caveat.heading': 'Yang perlu diketahui sebelum menandakan ini disemak',
+  'pay.settings.rates.subtitle':
+    'Kadar pekerja dan majikan bagi setiap caruman, dan hari gaji dibayar. Dipakai oleh larian payroll seterusnya.',
+  /** The review state on the group header — a review, so not "active". */
+  'pay.settings.review.done': 'Disahkan',
+  'pay.settings.review.pending': 'Belum disahkan',
+  'pay.settings.save.hint':
+    'Kadar baharu dipakai oleh larian seterusnya, termasuk draf yang diproses semula. Slip yang sudah diluluskan menyimpan angka yang dikira dengannya.',
 
   /**
    * Shared by every form on these seven screens.
@@ -5912,12 +6101,9 @@ export const LABELS = {
    * One label rather than seven: it is the same control asking the same question, and seven
    * copies would be translated seven times and could disagree on the same screen.
    */
-  'pay.form.staffPlaceholder': 'Nombor staf, cth. 1001',
   'pay.form.periodNone': 'Tiada tempoh',
-  'pay.chip.all': 'Semua',
   'pay.filter.period': 'Semua tempoh',
   'pay.filter.type': 'Semua jenis',
-  'pay.action.decide': 'Luluskan atau batalkan',
   'pay.action.edit': 'Sunting',
   'pay.action.remove': 'Buang',
 

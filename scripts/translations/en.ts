@@ -4248,7 +4248,6 @@ export const EN_LABELS_KPI: Partial<Record<LabelKey, string>> = {
   'kpi.template.action.delete': 'Remove form',
   'kpi.template.action.view': 'View',
   'kpi.template.weightOff': 'Totals {total}, not 100',
-  'kpi.template.form.title': 'Appraisal Form',
   'kpi.template.form.code': 'Code',
   'kpi.template.form.name': 'Name',
   'kpi.template.form.description': 'Description',
@@ -4258,7 +4257,6 @@ export const EN_LABELS_KPI: Partial<Record<LabelKey, string>> = {
   'kpi.template.form.item.remove': 'Remove',
   'kpi.template.form.total': 'Total: {total}%',
   'kpi.template.form.total.ok': 'Total: {total}% — correct',
-  'kpi.template.form.active': 'Active',
 
   // ---------------------------------------------------------------------------
   // Appraisal periods
@@ -4279,16 +4277,9 @@ export const EN_LABELS_KPI: Partial<Record<LabelKey, string>> = {
   'kpi.period.action.new': 'New Period',
   'kpi.period.action.close': 'Close period',
   'kpi.period.action.delete': 'Remove period',
-  /*
-   * Both refusals are argued: a period that cannot be assigned is a row nobody can use, and reopening
-   * one whose grades have already been read may already have driven a bonus.
-   */
-  'kpi.period.note.forward':
-    'A period is created already open, and only moves forward: open → closed. There is no draft state, because a period that cannot be assigned is a row nobody can use. A closed period is not reopened: the grades in it have already been read, and may already have driven a bonus.',
   'kpi.period.close.outstanding':
     '{count} appraisals have not been submitted. Closing the period now leaves them permanently without a grade.',
   'kpi.period.close.confirm': 'I understand — close it anyway',
-  'kpi.period.form.title': 'Appraisal Period',
   'kpi.period.form.code': 'Code',
   'kpi.period.form.name': 'Name',
   'kpi.period.form.from': 'Period appraised from',
@@ -4319,9 +4310,7 @@ export const EN_LABELS_KPI: Partial<Record<LabelKey, string>> = {
   'kpi.assignment.action.new': 'Assign Appraisal',
   'kpi.assignment.action.open': 'Open form',
   'kpi.assignment.action.delete': 'Remove assignment',
-  'kpi.assignment.form.title': 'KPI Assignment',
   'kpi.assignment.form.period': 'Period',
-  'kpi.assignment.form.staff': 'Staff appraised (ID)',
   'kpi.assignment.form.template': 'Form',
   'kpi.assignment.form.reviewer': 'Reviewer',
 
@@ -4334,21 +4323,12 @@ export const EN_LABELS_KPI: Partial<Record<LabelKey, string>> = {
   'kpi.review.filter.mine': 'My appraisals only',
   'kpi.review.form.title': 'Appraisal — {staffName}',
   'kpi.review.form.item': 'Competency',
-  'kpi.review.form.weight': 'Weight',
   'kpi.review.form.score': 'Score (0–100)',
   'kpi.review.form.comment': 'Comment',
-  'kpi.review.form.running': 'Weighted total: {total}%',
-  // `{total_items}` keeps its exact name; renaming it empties the field.
-  'kpi.review.form.running.partial':
-    'So far answered: {total}% ({scored} of {total_items})',
   'kpi.review.action.save': 'Save',
   'kpi.review.action.submit': 'Submit',
   'kpi.review.action.reopen': 'Reopen',
   'kpi.review.action.finalise': 'Finalise',
-  'kpi.review.saved': 'Scores saved.',
-  'kpi.review.submitted': 'Submitted: {total}% — grade {grade}.',
-  'kpi.review.finalised': 'The appraisal has been finalised.',
-  'kpi.review.reopened': 'The appraisal has been reopened.',
   'kpi.review.reopen.note': 'Reason for reopening',
   /*
    * The second clause is why answers survive a reopen: the reviewer is being asked to look again, not
@@ -4404,7 +4384,6 @@ export const EN_LABELS_KPI_SETTINGS: Partial<Record<LabelKey, string>> = {
   'kpi.grade.empty': 'No grades configured.',
   'kpi.grade.error.load': 'The grades could not be loaded.',
   'kpi.grade.action.add': 'New Grade',
-  'kpi.grade.action.remove': 'Remove grade',
   'kpi.grade.action.save': 'Save grade set',
   'kpi.grade.form.code': 'Code',
   'kpi.grade.form.name': 'Name',
@@ -4413,18 +4392,13 @@ export const EN_LABELS_KPI_SETTINGS: Partial<Record<LabelKey, string>> = {
   'kpi.grade.form.bonus': 'Bonus (months of basic salary)',
   'kpi.grade.form.bonus.hint':
     'Leave blank if this grade carries no bonus. The {max} month ceiling is a typo guard rather than policy — a stray zero turns one month into ten, and it only shows up after the payslips are generated.',
-  'kpi.grade.covered': 'The bands cover 0–100 with no gap or overlap.',
-  'kpi.grade.saved': 'Grades saved.',
   'kpi.grade.note.set':
     'Grades are saved as one set because the bands are only valid together. Saving a single grade could leave a gap that stays invisible until somebody tries to submit an appraisal.',
-  'kpi.grade.note.history':
-    'The grade on a finalised appraisal is stored as a code, not a reference. Removing a grade does not change past appraisals — they keep naming the grade that was awarded.',
   'kpi.review.filter.all': 'All appraisals',
 
   // ---------------------------------------------------------------------------
   // Competency catalogue
   // ---------------------------------------------------------------------------
-  'kpi.competency.title': 'Competency Catalogue',
   // The quoted example keeps the source's straight quotes.
   'kpi.competency.subtitle':
     'The wording every appraisal form picks from. One competency, one spelling — without a catalogue, "Communication" is typed ten times with ten spellings and nobody can ask what its average score is.',
@@ -4445,9 +4419,6 @@ export const EN_LABELS_KPI_SETTINGS: Partial<Record<LabelKey, string>> = {
   'kpi.competency.action.new': 'New Competency',
   'kpi.competency.action.edit': 'Edit competency',
   'kpi.competency.action.delete': 'Remove competency',
-  'kpi.competency.action.deactivate': 'Deactivate',
-  'kpi.competency.action.activate': 'Reactivate',
-  'kpi.competency.form.title': 'Competency',
   'kpi.competency.form.name': 'Name',
   'kpi.competency.form.name.hint':
     'Trailing spaces and double spaces are stripped before saving — otherwise one extra space produces a second competency that reads identically.',
@@ -4457,17 +4428,8 @@ export const EN_LABELS_KPI_SETTINGS: Partial<Record<LabelKey, string>> = {
   'kpi.competency.form.description': 'Description',
   'kpi.competency.form.description.hint':
     'What a reviewer should be thinking about when scoring this row.',
-  'kpi.competency.form.active': 'Active',
-  'kpi.competency.saved': 'Competency saved.',
-  'kpi.competency.removed': 'Competency removed.',
   'kpi.competency.renamed':
     'Renamed. The {count} forms that ask about it were updated too; appraisals already created keep the wording that was put to those people.',
-  // The quoted question keeps the source's straight quotes.
-  'kpi.competency.note.retire':
-    'Deactivate rather than remove. A deactivated competency disappears from the pick list for new forms but its wording stays on the forms already using it — which is why "which forms use this" can still be answered next year.',
-  'kpi.competency.note.inUse':
-    'A competency currently used by a form cannot be removed. Deactivate it instead.',
-  'kpi.competency.inactive': 'Inactive',
 
   // ---------------------------------------------------------------------------
   // Form composition
@@ -4502,8 +4464,6 @@ export const EN_LABELS_KPI_SETTINGS: Partial<Record<LabelKey, string>> = {
     'One person, named. Appraisals have no chain of approval levels: they are reviewed by the person named here, not by whoever holds a particular level.',
   'kpi.assignment.note.snapshot':
     'Assigning an appraisal copies the form’s questions and weights onto that appraisal, there and then. Editing the form afterwards does not change appraisals that are already assigned.',
-  'kpi.assignment.note.oneReviewer':
-    'The screen permission allows somebody to fill in appraisals; it does not decide which ones. Only the reviewer named on the assignment can fill in its form.',
   /*
    * The worked example is the argument: counting unanswered rows as zero would show 12% after a first
    * answer of 60, which reads as a bad score rather than an unfinished form.
@@ -4518,13 +4478,8 @@ export const EN_LABELS_KPI_SETTINGS: Partial<Record<LabelKey, string>> = {
   'kpi.result.column.bonus': 'Bonus',
   'kpi.result.bonusMonths': '{months} months of basic salary',
   'kpi.result.bonusNone': 'No bonus',
-  'kpi.result.note.bonus':
-    'A bonus is stated in months of basic salary, not as an amount. It becomes money only when a payroll period freezes it onto a bonus row — until then the amount changes every time that person’s basic salary changes.',
   'kpi.settings.tab.competencies': 'Competencies',
   'kpi.settings.tab.grades': 'Grade Bands',
-  // Names the tab that other modules do have, so it matches `hr.approval.tab`.
-  'kpi.settings.note.noChain':
-    'This module has no Approval Flow tab. An appraisal moves through scoring, not signatures — there is no level waiting, so a chain here would configure nothing.',
 
   // ---------------------------------------------------------------------------
   // Band editing and refusals
@@ -4532,7 +4487,6 @@ export const EN_LABELS_KPI_SETTINGS: Partial<Record<LabelKey, string>> = {
   // The spaced en dash is the band separator and stays exactly as it is.
   'kpi.grade.band': '{min}% – {max}%',
   'kpi.grade.action.edit': 'Edit grade',
-  'kpi.grade.form.title': 'Grade Band',
   'kpi.grade.form.color': 'Colour',
   // The letter list is a column of grade codes and stays.
   'kpi.grade.form.color.hint':
@@ -4732,7 +4686,6 @@ export const EN_LABELS_PAY_SLIPS: Partial<Record<LabelKey, string>> = {
   // ---------------------------------------------------------------------------
   // Payslips
   // ---------------------------------------------------------------------------
-  'pay.payslip.title': 'Payslips',
   /*
    * The reason every figure is stored as calculated: statutory rates move with a government
    * announcement, so a payslip recomputed next year would not match the one that was paid.
@@ -4794,7 +4747,6 @@ export const EN_LABELS_PAY_SLIPS: Partial<Record<LabelKey, string>> = {
     'Recurring allowances, and the catalogue of types that decides how each one is calculated. A catalogue rather than fixed columns: a fifth allowance type should be one row, not a release.',
   'pay.allowance.tab.staff': 'Staff Allowances',
   'pay.allowance.tab.types': 'Allowance Types',
-  'pay.allowance.type.section': 'Allowance type catalogue',
   'pay.allowance.type.subtitle':
     'What the organisation pays, and whether it counts towards EPF contributory wages. A travel reimbursement is not wages; a housing allowance is.',
   'pay.allowance.type.action.add': 'New type',
@@ -4810,8 +4762,6 @@ export const EN_LABELS_PAY_SLIPS: Partial<Record<LabelKey, string>> = {
   'pay.allowance.type.epf.yes': 'Contributory',
   'pay.allowance.type.epf.no': 'Exempt',
   'pay.allowance.type.usage': '{count} staff',
-  'pay.allowance.type.inUse':
-    'Used by {count} staff allowances — the calculation method and EPF status are frozen.',
   'pay.allowance.type.form.title': 'New allowance type',
   'pay.allowance.type.form.edit': 'Edit allowance type',
   'pay.allowance.type.form.code': 'Code',
@@ -4831,10 +4781,8 @@ export const EN_LABELS_PAY_SLIPS: Partial<Record<LabelKey, string>> = {
   'pay.allowance.type.form.epf.hint':
     'On by default, the more cautious direction: under-contributing is the problem an employee discovers years later.',
   'pay.allowance.type.form.taxable': 'Taxable',
-  'pay.allowance.type.form.active': 'Active',
   'pay.allowance.type.form.frozen':
     'This type is already in use. The calculation method and EPF status cannot be changed — that would change amounts already paid. Deactivate it and create a new one.',
-  'pay.allowance.section': 'Staff allowances',
   'pay.allowance.section.subtitle':
     'Recurring by nature, so there is no period link: each run picks up the rows that are active and whose start date has arrived.',
   'pay.allowance.action.add': 'Assign allowance',
@@ -4869,7 +4817,6 @@ export const EN_LABELS_PAY_AWARDS: Partial<Record<LabelKey, string>> = {
     'Compared against the period. An allowance dated next quarter will not be paid before that date.',
   'pay.allowance.form.to': 'In effect until',
   'pay.allowance.form.to.hint': 'Leave blank for an allowance that continues.',
-  'pay.allowance.form.active': 'Active',
   'pay.allowance.form.note': 'Note',
   'pay.allowance.remove.title': 'Remove allowance',
   'pay.allowance.remove.body':
@@ -4963,8 +4910,6 @@ export const EN_LABELS_PAY_AWARDS: Partial<Record<LabelKey, string>> = {
   'pay.award.cancel.submit': 'Cancel',
   'pay.award.note': 'Decision note',
   'pay.award.remove.title': 'Remove {reference}',
-  'pay.award.remove.body':
-    'Only a pending or cancelled record can be removed. Removing an approved row loses the record of what was approved.',
   'pay.award.locked': 'Only a record awaiting a decision can be edited.',
 
   // ---------------------------------------------------------------------------
@@ -5060,8 +5005,6 @@ export const EN_LABELS_PAY_LENDING: Partial<Record<LabelKey, string>> = {
   'pay.lending.locked':
     'Instalments have already been deducted from salary — this record cannot be removed.',
   'pay.lending.remove.title': 'Remove {reference}',
-  'pay.lending.remove.body':
-    'Only a record that is not yet approved and has no deduction history can be removed. The payslips that deducted it refer to this record.',
 
   // ---------------------------------------------------------------------------
   // Statutory rates
@@ -5121,12 +5064,9 @@ export const EN_LABELS_PAY_LENDING: Partial<Record<LabelKey, string>> = {
   // ---------------------------------------------------------------------------
   // Shared controls
   // ---------------------------------------------------------------------------
-  'pay.form.staffPlaceholder': 'Staff number, e.g. 1001',
   'pay.form.periodNone': 'No period',
-  'pay.chip.all': 'All',
   'pay.filter.period': 'All periods',
   'pay.filter.type': 'All types',
-  'pay.action.decide': 'Approve or cancel',
   'pay.action.edit': 'Edit',
   'pay.action.remove': 'Remove',
   'pay.settings.tab.rates': 'Statutory Rates',
@@ -6397,4 +6337,203 @@ export const EN_LABELS_HR_SCREENS: Partial<Record<LabelKey, string>> = {
   'recruit.advance.done': '{number}: {status}.',
   'recruit.decide.done.rejected': '{number} unsuccessful.',
   'recruit.decide.done.offered': '{number} offered the position.',
+};
+
+/**
+ * Batch 13: KPI & Appraisal and Payroll & Compensation brought onto the Leave/Claims design.
+ *
+ * Counts in the section headings, notices that name the record, the reason on a disabled bin, staff
+ * pickers in place of ID fields, and the review queue's lock reasons and decision dialogs.
+ */
+export const EN_LABELS_KPI_PAY_SCREENS: Partial<Record<LabelKey, string>> = {
+  // KPI — forms
+  'kpi.template.count': '{count} appraisal forms',
+  'kpi.template.row.locked': '{count} appraisals use it — deactivate it instead',
+  'kpi.template.row.locked.inactive': '{count} appraisals use it, so it stays as a record',
+  'kpi.template.saved': 'Form “{code}” saved.',
+  'kpi.template.removed': 'Form “{code}” removed.',
+  'kpi.template.form.create': 'New appraisal form',
+  'kpi.template.form.edit': 'Update appraisal form',
+  'kpi.template.form.item.lastRow': 'A form needs at least one competency',
+  'kpi.template.form.retired':
+    '“{name}” has been deactivated in the catalogue. Remove that line or choose another competency before saving.',
+  // KPI — periods
+  'kpi.period.count': '{count} appraisal periods',
+  'kpi.period.delete.closed': 'A closed period is a historical record and cannot be removed',
+  'kpi.period.notice.saved': 'Period {code} saved.',
+  'kpi.period.notice.closed': 'Period {code} closed.',
+  'kpi.period.notice.removed': 'Period {code} removed.',
+  'kpi.period.form.create': 'New appraisal period',
+  'kpi.period.form.create.description':
+    'A period is created already open, so appraisals can be assigned straight away. It only moves forward: open → closed.',
+  'kpi.period.close.title': 'Close period {code}',
+  'kpi.period.close.final':
+    'A closed period is not reopened: the grades in it have already been read, and may already have driven a bonus.',
+  // KPI — assignments
+  'kpi.assignment.count': '{count} appraisals',
+  'kpi.assignment.search': 'Search name or staff no.…',
+  'kpi.assignment.filter.allPeriods': 'All periods',
+  'kpi.assignment.column.reviewer': 'Reviewer',
+  'kpi.assignment.delete.finalised': 'A finalised appraisal is a grade on record and cannot be removed',
+  'kpi.assignment.notice.removed': 'Appraisal of {name} removed.',
+  'kpi.assignment.notice.created': 'Appraisal of {name} assigned to {reviewer}.',
+  'kpi.assignment.form.create': 'Assign an appraisal',
+  'kpi.assignment.form.staff.hint':
+    'Type a name or staff number. A person can only be appraised once per period.',
+  'kpi.assignment.form.nothingToAssign':
+    'There is no open period or active form. Create a period under Appraisal Periods and a form under KPI Forms first.',
+  'kpi.assignment.form.reviewer.none':
+    'No account can fill in a review. Give a role Edit on Appraisal Reviews first.',
+  'kpi.assignment.form.selfReview': 'Nobody can review themselves. Choose another reviewer.',
+  'kpi.assignment.remove.title': 'Remove the appraisal of {name}',
+  'kpi.assignment.remove.body':
+    '{count} scores already entered are removed with this appraisal. They cannot be restored.',
+  // KPI — reviews
+  'kpi.review.action.fill': 'Fill in form',
+  'kpi.review.action.view': 'View form',
+  'kpi.review.notice.saved': 'Scores for {name} saved — {scored} of {total} answered.',
+  'kpi.review.notice.submitted': 'Appraisal of {name} submitted: {total}% — grade {grade}.',
+  'kpi.review.notice.finalised': 'Appraisal of {name} finalised — grade {grade}.',
+  'kpi.review.notice.reopened': 'Appraisal of {name} sent back to its reviewer.',
+  'kpi.review.finalise.title': 'Finalise the appraisal of {name}',
+  'kpi.review.finalise.warning':
+    'Once finalised, this grade is a record: it cannot be reopened or removed, and it appears in KPI Results.',
+  'kpi.review.finalise.note': 'Decision note',
+  'kpi.review.finalise.note.hint':
+    'Optional. Stored with the grade, and sent to the person appraised when notifications are on.',
+  'kpi.review.reopen.title': 'Reopen the appraisal of {name}',
+  'kpi.review.reopen.note.hint': 'The reviewer reads this on the form. At least 3 characters.',
+  'kpi.review.reopen.closed':
+    'The period is closed — this appraisal can only be finalised, not reopened',
+  'kpi.review.form.items.hint':
+    'Score each competency 0–100. Save at any time; every one must be answered before submitting.',
+  'kpi.review.form.weightOf': 'Weight {weight}%',
+  'kpi.review.form.score.range': 'Between 0 and {max}.',
+  'kpi.review.form.total': 'Weighted total',
+  'kpi.review.form.gradeFrozen': 'Grade {grade}, frozen at submission.',
+  'kpi.review.form.reopenedBecause': 'Reopened: {note}',
+  'kpi.review.form.decisionNote': 'Decision note: {note}',
+  'kpi.review.note.periodClosed': 'Period {code} is closed — scores can no longer be written.',
+  'kpi.review.note.submitted':
+    'This appraisal has been submitted and is waiting to be finalised. Scores can only change after it is reopened.',
+  'kpi.review.note.noEdit': 'Your role can read appraisals but not fill them in.',
+  // KPI — results
+  'kpi.result.count': '{count} results',
+  // KPI — settings
+  'kpi.settings.subtitle':
+    'The competency catalogue, grade bands, notifications and email templates for this module. There is no Approval Flow tab: an appraisal moves through scoring, not signatures, so no level is ever waiting.',
+  'kpi.competency.count': '{count} competencies',
+  'kpi.competency.search': 'Search competencies…',
+  'kpi.competency.row.locked': '{count} forms ask about it — deactivate it instead',
+  'kpi.competency.row.locked.inactive': '{count} forms ask about it, so it stays as a record',
+  'kpi.competency.notice.saved': 'Competency “{name}” saved.',
+  'kpi.competency.notice.removed': 'Competency “{name}” removed.',
+  'kpi.competency.form.create': 'New competency',
+  'kpi.competency.form.edit': 'Update competency',
+  'kpi.competency.form.inUse':
+    '{count} forms ask about this competency. Renaming it updates those forms; appraisals already created keep the wording that was put to them.',
+  'kpi.competency.form.status.hint':
+    'Inactive: gone from the picker for new forms, but kept on forms that already ask about it.',
+  'kpi.grade.count': '{count} grades',
+  'kpi.grade.row.remove': 'Remove from the set — finalised appraisals keep naming this grade',
+  'kpi.grade.notice.saved': 'Grade set saved — {count} grades.',
+  'kpi.grade.unsaved':
+    'There are unsaved changes. The grade set is only saved when this button is pressed.',
+  'kpi.grade.form.create': 'New grade',
+  'kpi.grade.form.edit': 'Update grade',
+  'kpi.grade.form.description':
+    'Added to the set below first. The set is saved once with Save grade set, because bands are only valid together.',
+  'kpi.grade.form.apply.add': 'Add to the set',
+  'kpi.grade.form.apply.update': 'Update the set',
+  // Payroll — bonuses and commissions
+  'pay.bonus.count': '{count} bonuses',
+  'pay.commission.count': '{count} commissions',
+  'pay.award.search': 'Search name, staff no. or description…',
+  'pay.award.form.staff.hint': 'Type a name or staff number. Only active staff are listed.',
+  'pay.award.form.noOpenPeriod':
+    'No payroll period is still a draft. The record can be saved without one, but approval needs it.',
+  'pay.award.form.periodLocked':
+    'Period {period} has been processed. Choose a period that is still a draft, or No period.',
+  'pay.award.notice.saved': '“{name}” for {staff} saved.',
+  'pay.award.notice.approved': '{reference} approved — paid by period {period}.',
+  'pay.award.notice.cancelled': '{reference} cancelled.',
+  'pay.award.notice.removed': '{reference} removed.',
+  'pay.award.row.approve': 'Approve',
+  'pay.award.row.cancel': 'Cancel',
+  'pay.award.approve.noPeriod':
+    'Choose a payroll period on this record first — the run reads records by period, so one without a period is never paid',
+  'pay.award.approve.locked':
+    'Period {period} has been processed — choose a draft period on this record first',
+  'pay.award.cancel.locked':
+    'Period {period} has been processed — make an adjustment in a following period',
+  'pay.award.remove.locked.approved':
+    'Approved — cancel it first; removing the row loses the record of what was approved',
+  'pay.award.remove.locked.paid': 'Already paid — it stays as the payslip’s record',
+  'pay.award.remove.confirm': 'Record {reference} is removed outright and cannot be restored.',
+  'pay.bonus.generate.kpiOption':
+    '{code} — {name} · {finalised} finalised, {generated} already have a bonus',
+  'pay.bonus.generate.none':
+    'There is no closed KPI period. Bonuses are generated from grades finalised in a cycle that has closed.',
+  'pay.bonus.generate.noOpenPeriod':
+    'No payroll period is still a draft to pay them. Create one under Payroll Periods first.',
+  // Payroll — loans and advances
+  'pay.loan.count': '{count} loans',
+  'pay.advance.count': '{count} advances',
+  'pay.lending.search': 'Search name or staff no.…',
+  'pay.lending.form.staff.hint':
+    'Type a name or staff number. The instalments are deducted from this person’s pay.',
+  'pay.lending.form.previewPending':
+    'Fill in the amount and the months to see the monthly deduction.',
+  'pay.lending.form.total': 'Total recovered: RM{total} over {months} months',
+  'pay.lending.form.startsEarly': 'Deductions cannot start before the money is issued.',
+  'pay.loan.form.preview': 'Monthly instalment: RM{amount}',
+  'pay.loan.form.shortfall':
+    '{months} instalments of RM{instalment} total RM{total}, less than the principal of RM{principal}. The balance would never clear.',
+  'pay.lending.notice.created': 'Saved for {staff}: RM{amount} a month, awaiting approval.',
+  'pay.lending.notice.approved': '{reference} approved — deductions start {date}.',
+  'pay.lending.notice.cancelled': '{reference} cancelled.',
+  'pay.lending.notice.removed': '{reference} removed.',
+  'pay.lending.row.approve': 'Approve',
+  'pay.lending.row.cancel': 'Cancel',
+  'pay.lending.cancel.locked': '{count} instalments already deducted — refund it as an adjustment',
+  'pay.lending.remove.locked.active': 'Active — cancel it first, then remove it',
+  'pay.lending.remove.confirm': 'Record {reference} is removed outright and cannot be restored.',
+  // Payroll — allowances
+  'pay.allowance.count': '{count} staff allowances',
+  'pay.allowance.search': 'Search name or staff no.…',
+  'pay.allowance.notice.saved': '{type} for {staff} saved.',
+  'pay.allowance.notice.removed': '{type} for {staff} removed.',
+  'pay.form.endBeforeStart': 'Cannot be before the start date.',
+  'pay.allowance.form.value.positive': 'Must be more than zero.',
+  'pay.allowance.form.staff.hint':
+    'Type a name or staff number. The allowance is paid by every run while it is active and in effect.',
+  'pay.allowance.form.status.hint': 'Inactive: not paid by the next run, but kept as a record.',
+  'pay.allowance.type.count': '{count} allowance types',
+  'pay.allowance.type.row.locked': '{count} staff allowances use it — deactivate it instead',
+  'pay.allowance.type.row.locked.inactive':
+    '{count} staff allowances use it, so it stays as a record',
+  'pay.allowance.type.notice.saved': 'Allowance type “{code}” saved.',
+  'pay.allowance.type.notice.removed': 'Allowance type “{code}” removed.',
+  'pay.allowance.type.form.taxable.hint':
+    'Recorded only. PCB is not computed by this system, so this mark changes no deduction — tax is entered on the payslip.',
+  // Payroll — periods and payslips
+  'pay.period.count': '{count} payroll periods',
+  'pay.period.notice.saved': 'Period {code} saved.',
+  'pay.period.notice.processed': '{code}: {count} payslips built, net RM{net}.',
+  'pay.period.notice.paid': 'Period {code} marked as paid.',
+  'pay.period.notice.closed': 'Period {code} closed.',
+  'pay.period.notice.removed': 'Period {code} removed.',
+  'pay.payslip.count': '{count} payslips',
+  'pay.payslip.search': 'Search name or staff no.…',
+  'pay.payslip.notice.saved': 'Payslip {no} saved.',
+  'pay.payslip.detail.epfEmployer': 'EPF',
+  'pay.payslip.detail.socsoEmployer': 'SOCSO',
+  'pay.payslip.detail.eisEmployer': 'EIS',
+  // Payroll — settings
+  'pay.settings.rates.subtitle':
+    'Employee and employer rates for each contribution, and the day wages are paid. Used by the next payroll run.',
+  'pay.settings.review.done': 'Confirmed',
+  'pay.settings.review.pending': 'Not confirmed',
+  'pay.settings.save.hint':
+    'New rates are used by the next run, including a draft processed again. Payslips already approved keep the figures they were calculated with.',
 };

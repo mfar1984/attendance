@@ -1,10 +1,15 @@
-import { CalendarRange, CircleAlert, Plus, SquareCheck, Trash2, TriangleAlert } from 'lucide-react';
+import { Plus, SquareCheck, Trash2, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
 import {
+  CodePill,
+  Detail,
+  DetailGrid,
+  FilterRow,
   PanelBody,
   PanelCard,
+  PanelFooter,
   PanelNote,
   PanelSection,
   RecordTable,
@@ -25,9 +30,11 @@ const SCREEN = 'hr.kpiPeriods';
  *
  * Forward only, and closing is the one irreversible act on this screen: the grades in a closed
  * period have been read, and where the payroll module exists they may already have driven a bonus.
+ * That is stated in the dialog that closes one, which is where it is decided.
  */
 export function KpiPeriodsPage(): ReactNode {
   const [rows, setRows] = useState<KpiPeriod[]>([]);
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -52,11 +59,28 @@ export function KpiPeriodsPage(): ReactNode {
     void load();
   }, [load]);
 
+  const needle = search.trim().toLowerCase();
+  const filtered = rows.filter(
+    (row) =>
+      needle.length === 0 ||
+      row.code.toLowerCase().includes(needle) ||
+      row.name.toLowerCase().includes(needle),
+  );
+
+  const remove = async (row: KpiPeriod): Promise<void> => {
+    try {
+      await kpiApi.deletePeriod(row.id);
+      setNotice(t('kpi.period.notice.removed', { code: row.code }));
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('app.error.remove'));
+    }
+  };
+
   return (
     <PanelCard title={<T k="kpi.period.title" />} subtitle={<T k="kpi.period.subtitle" />}>
       <PanelSection
-        icon={<CalendarRange className="size-4" aria-hidden />}
-        title={<T k="kpi.period.title" />}
+        title={<T k="kpi.period.count" vars={{ count: rows.length }} />}
         action={
           can(SCREEN, 'create') ? (
             <Button onClick={() => setCreating(true)}>
@@ -67,120 +91,127 @@ export function KpiPeriodsPage(): ReactNode {
         }
       />
 
-      <PanelBody className="space-y-2 pb-0">
-        <Feedback error={error} notice={notice} />
-        <PanelNote icon={<CircleAlert className="size-3.5" aria-hidden />}>
-          <T k="kpi.period.note.forward" />
-        </PanelNote>
-      </PanelBody>
+      <FilterRow
+        search={search}
+        onSearch={setSearch}
+        placeholder={t('app.search.codeName')}
+        dirty={search.length > 0}
+        onReset={() => setSearch('')}
+      />
+
+      {(error !== null || notice !== null) && (
+        <PanelBody className="pb-0">
+          <Feedback error={error} notice={notice} />
+        </PanelBody>
+      )}
 
       <RecordTable
+        framed
         loading={loading}
-        rowCount={rows.length}
+        rowCount={filtered.length}
         empty={<T k="kpi.period.empty" />}
         columns={[
-          { header: <T k="kpi.period.column.code" />, width: 'w-32' },
+          { header: <T k="kpi.period.column.code" />, width: 'w-28' },
           { header: <T k="kpi.period.column.name" /> },
           { header: <T k="kpi.period.column.span" />, width: 'w-52' },
           { header: <T k="kpi.period.column.due" />, width: 'w-28' },
           { header: <T k="kpi.period.column.assignments" />, width: 'w-24', align: 'right' },
           { header: <T k="kpi.period.column.outstanding" />, width: 'w-28', align: 'right' },
-          { header: <T k="panel.column.status" />, width: 'w-28' },
-          { header: <T k="panel.column.actions" />, width: 'w-32', align: 'right' },
+          { header: <T k="panel.column.status" />, width: 'w-24' },
+          { header: <T k="panel.column.actions" />, width: 'w-24', align: 'right' },
         ]}
       >
-        {rows.map((row) => (
-          <tr
-            key={row.id}
-            className={cn(
-              'border-b border-slate-100 hover:bg-slate-50/70',
-              row.status === 'closed' && 'text-slate-400',
-              // Outstanding reviews on an open period are the thing to act on.
-              row.status === 'open' && row.outstanding > 0 && 'bg-amber-50/40',
-            )}
-          >
-            <td className="px-5 py-2 font-mono text-xs text-slate-700">{row.code}</td>
-            <td className="px-2 py-2 text-slate-800">{row.name}</td>
-            <td className="px-2 py-2 text-xs whitespace-nowrap tabular-nums text-slate-600">
-              {formatDateOnly(row.fromDate)} – {formatDateOnly(row.toDate)}
-            </td>
-            <td className="px-2 py-2 text-xs whitespace-nowrap tabular-nums text-slate-600">
-              {formatDateOnly(row.dueOn)}
-            </td>
-            <td className="px-2 py-2 text-right text-xs tabular-nums text-slate-700">
-              {row.assignmentCount}
-            </td>
-            <td className="px-2 py-2 text-right text-xs tabular-nums">
-              <span className={row.outstanding > 0 ? 'font-medium text-amber-700' : 'text-slate-400'}>
-                {row.outstanding}
-              </span>
-            </td>
-            <td className="px-2 py-2">
-              <Badge tone={row.status === 'open' ? 'success' : 'neutral'}>
-                <span className="uppercase">
-                  <T k={PERIOD_STATUS_LABELS[row.status]} />
+        {filtered.map((row) => {
+          const closed = row.status === 'closed';
+          return (
+            <tr
+              key={row.id}
+              className={cn(
+                'border-b border-slate-100 hover:bg-slate-50/70',
+                // Outstanding reviews on an open period are the thing to act on.
+                !closed && row.outstanding > 0 ? 'bg-amber-50/40' : closed && 'bg-slate-50/60',
+              )}
+            >
+              <td className="px-5 py-2.5">
+                <CodePill code={row.code} />
+              </td>
+              <td className="px-2 py-2.5">
+                <span className={cn('block font-medium', closed ? 'text-slate-400' : 'text-slate-800')}>
+                  {row.name}
                 </span>
-              </Badge>
-            </td>
-            <td className="px-2 py-2 pr-4">
-              <RowActions>
-                {row.status === 'open' && can(SCREEN, 'edit') && (
-                  <RowAction
-                    icon={<SquareCheck className="size-4" aria-hidden />}
-                    label={t('kpi.period.action.close')}
-                    tone="warn"
-                    onClick={async () => {
-                      /*
-                       * Outstanding reviews get a confirmation rather than a refusal, because
-                       * closing anyway is sometimes the right call — but it must be a decision.
-                       */
-                      if (row.outstanding > 0) {
-                        setClosing(row);
-                        return;
+              </td>
+              <td className="px-2 py-2.5 text-xs whitespace-nowrap tabular-nums text-slate-600">
+                {formatDateOnly(row.fromDate)} – {formatDateOnly(row.toDate)}
+              </td>
+              <td className="px-2 py-2.5 text-xs whitespace-nowrap tabular-nums text-slate-600">
+                {formatDateOnly(row.dueOn)}
+              </td>
+              <td className="px-2 py-2.5 text-right text-xs tabular-nums text-slate-700">
+                {row.assignmentCount}
+              </td>
+              <td className="px-2 py-2.5 text-right text-xs tabular-nums">
+                <span className={row.outstanding > 0 ? 'font-medium text-amber-700' : 'text-slate-400'}>
+                  {row.outstanding}
+                </span>
+              </td>
+              <td className="px-2 py-2.5">
+                {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
+                <Badge tone={closed ? 'neutral' : 'success'} className="uppercase">
+                  <T k={PERIOD_STATUS_LABELS[row.status]} />
+                </Badge>
+              </td>
+              <td className="px-2 py-2.5 pr-4">
+                <RowActions>
+                  {/*
+                    Amber: closing changes the period's state, it does not remove it. Always a dialog,
+                    because it is the one thing on this screen that cannot be undone.
+                  */}
+                  {!closed && can(SCREEN, 'edit') && (
+                    <RowAction
+                      icon={<SquareCheck className="size-4" aria-hidden />}
+                      label={t('kpi.period.action.close')}
+                      tone="warn"
+                      onClick={() => setClosing(row)}
+                    />
+                  )}
+                  {/*
+                    Disabled with the reason in the label, not enabled and then a 409. Gated on the
+                    period being empty, and on it not being closed: an empty period created by
+                    mistake is a mistake, a closed one is a record.
+                  */}
+                  {can(SCREEN, 'delete') && (
+                    <RowAction
+                      icon={<Trash2 className="size-4" aria-hidden />}
+                      label={
+                        row.assignmentCount > 0
+                          ? t('kpi.period.delete.hasAssignments', { count: row.assignmentCount })
+                          : closed
+                            ? t('kpi.period.delete.closed')
+                            : t('kpi.period.action.delete')
                       }
-                      try {
-                        await kpiApi.setPeriodStatus(row.id, 'closed');
-                        setNotice(`${row.code} ditutup.`);
-                        await load();
-                      } catch (cause) {
-                        setError(cause instanceof Error ? cause.message : '');
-                      }
-                    }}
-                  />
-                )}
-                {row.status === 'open' && can(SCREEN, 'delete') && (
-                  <RowAction
-                    icon={<Trash2 className="size-4" aria-hidden />}
-                    /*
-                     * Disabled with the reason in the label, not enabled and then a 409.
-                     *
-                     * Gated on the period being empty rather than on a status: the old rule was
-                     * "only a draft may be deleted", which stopped meaning anything when `draft`
-                     * was removed. What matters is whether deleting would take appraisals with it.
-                     */
-                    label={
-                      row.assignmentCount > 0
-                        ? t('kpi.period.delete.hasAssignments', { count: row.assignmentCount })
-                        : t('kpi.period.action.delete')
-                    }
-                    disabled={row.assignmentCount > 0}
-                    tone="danger"
-                    onClick={async () => {
-                      try {
-                        await kpiApi.deletePeriod(row.id);
-                        setNotice(`${row.code} dibuang.`);
-                        await load();
-                      } catch (cause) {
-                        setError(cause instanceof Error ? cause.message : '');
-                      }
-                    }}
-                  />
-                )}
-              </RowActions>
-            </td>
-          </tr>
-        ))}
+                      disabled={row.assignmentCount > 0 || closed}
+                      tone="danger"
+                      onClick={() => void remove(row)}
+                    />
+                  )}
+                </RowActions>
+              </td>
+            </tr>
+          );
+        })}
       </RecordTable>
+
+      <PanelFooter
+        shown={filtered.length}
+        total={rows.length}
+        page={1}
+        pageSize={Math.max(1, rows.length)}
+        pageSizes={[Math.max(1, rows.length)]}
+        loading={loading}
+        onPage={() => undefined}
+        onPageSize={() => undefined}
+        onRefresh={() => void load()}
+      />
 
       {creating && (
         <PeriodDialog
@@ -226,30 +257,36 @@ function PeriodDialog({
 
   const submit = async (): Promise<void> => {
     setBusy(true);
+    setError(null);
     try {
-      await kpiApi.createPeriod({ code, name, fromDate, toDate, dueOn });
-      await onDone(`${code.toUpperCase()} disimpan.`);
+      const body = { code: code.trim().toUpperCase(), name: name.trim(), fromDate, toDate, dueOn };
+      await kpiApi.createPeriod(body);
+      await onDone(t('kpi.period.notice.saved', { code: body.code }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
 
   return (
     <Dialog
-      title={<T k="kpi.period.form.title" />}
-      titleText={t('kpi.period.form.title')}
-      width="md"
+      title={<T k="kpi.period.form.create" />}
+      titleText={t('kpi.period.form.create')}
+      // Why there is no draft state, said where the period is made rather than under the list.
+      description={<T k="kpi.period.form.create.description" />}
+      width="2xl"
       onClose={onClose}
     >
       <div className="space-y-4">
         <Feedback error={error} />
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        {/* Identity first: the code somebody types, then the name they read. */}
+        <div className="grid gap-4 sm:grid-cols-[9rem_1fr]">
           <Field
             label={<T k="kpi.period.form.code" />}
             value={code}
             maxLength={24}
+            autoFocus
             onChange={(event) => setCode(event.target.value.toUpperCase())}
           />
           <Field
@@ -260,28 +297,32 @@ function PeriodDialog({
           />
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        {/* The last block before the footer, so it carries the `pb-2`. */}
+        <div className="grid items-start gap-4 pb-2 sm:grid-cols-3">
           <Field
             label={<T k="kpi.period.form.from" />}
             type="date"
             value={fromDate}
-            onChange={(event) => setFromDate(event.target.value)}
+            onChange={(event) => {
+              setFromDate(event.target.value);
+              if (toDate !== '' && toDate < event.target.value) setToDate(event.target.value);
+            }}
           />
           <Field
             label={<T k="kpi.period.form.to" />}
             type="date"
             value={toDate}
+            min={fromDate === '' ? undefined : fromDate}
             onChange={(event) => setToDate(event.target.value)}
           />
+          <Field
+            label={<T k="kpi.period.form.due" />}
+            hint={<T k="kpi.period.form.due.hint" />}
+            type="date"
+            value={dueOn}
+            onChange={(event) => setDueOn(event.target.value)}
+          />
         </div>
-
-        <Field
-          label={<T k="kpi.period.form.due" />}
-          hint={<T k="kpi.period.form.due.hint" />}
-          type="date"
-          value={dueOn}
-          onChange={(event) => setDueOn(event.target.value)}
-        />
 
         <DialogFooter
           onClose={onClose}
@@ -302,10 +343,11 @@ function PeriodDialog({
 }
 
 /**
- * Confirms closing a period that still has unsubmitted reviews.
+ * Confirms closing a period.
  *
- * A dialog rather than a `window.confirm`, and the count is named: closing leaves those people
- * ungraded permanently, and the number is what makes that concrete.
+ * Always asked, because a closed period does not reopen. When reviews are still unsubmitted the
+ * count is named and the button says so: closing leaves those people ungraded permanently, and the
+ * number is what makes that concrete. The server requires the same acknowledgement.
  */
 function CloseDialog({
   target,
@@ -319,41 +361,70 @@ function CloseDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { t } = useLabels();
+  const outstanding = target.outstanding > 0;
 
   const submit = async (): Promise<void> => {
     setBusy(true);
+    setError(null);
     try {
-      await kpiApi.setPeriodStatus(target.id, 'closed', true);
-      await onDone(`${target.code} ditutup.`);
+      await kpiApi.setPeriodStatus(target.id, 'closed', outstanding ? true : undefined);
+      await onDone(t('kpi.period.notice.closed', { code: target.code }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
 
   return (
     <Dialog
-      title={<T k="kpi.period.action.close" />}
-      titleText={t('kpi.period.action.close')}
+      title={<T k="kpi.period.close.title" vars={{ code: target.code }} />}
+      titleText={t('kpi.period.close.title', { code: target.code })}
       width="md"
       onClose={onClose}
     >
       <div className="space-y-4">
         <Feedback error={error} />
 
-        <PanelNote tone="danger" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-          <T k="kpi.period.close.outstanding" vars={{ count: target.outstanding }} />
-        </PanelNote>
+        <DetailGrid>
+          <Detail
+            label={<T k="kpi.period.column.span" />}
+            value={`${formatDateOnly(target.fromDate)} – ${formatDateOnly(target.toDate)}`}
+          />
+          <Detail
+            label={<T k="kpi.period.column.assignments" />}
+            value={String(target.assignmentCount)}
+          />
+          <Detail
+            label={<T k="kpi.period.column.outstanding" />}
+            value={String(target.outstanding)}
+          />
+        </DetailGrid>
 
-        <PanelNote>
-          <T k="kpi.period.note.forward" />
-        </PanelNote>
+        {/*
+          One note: what this leaves behind, if anything, then why it cannot be undone. The last
+          block before the footer, so it carries the `pb-2`.
+        */}
+        <div className="pb-2">
+          <PanelNote
+            tone={outstanding ? 'danger' : 'warn'}
+            icon={<TriangleAlert className="size-3.5" aria-hidden />}
+          >
+            {outstanding && (
+              <>
+                <T k="kpi.period.close.outstanding" vars={{ count: target.outstanding }} />{' '}
+              </>
+            )}
+            <T k="kpi.period.close.final" />
+          </PanelNote>
+        </div>
 
         <DialogFooter
           onClose={onClose}
           onSubmit={() => void submit()}
           busy={busy}
-          submitLabel={<T k="kpi.period.close.confirm" />}
+          submitLabel={
+            outstanding ? <T k="kpi.period.close.confirm" /> : <T k="kpi.period.action.close" />
+          }
         />
       </div>
     </Dialog>

@@ -463,6 +463,11 @@ export function assignmentSettled(status: AssignmentStatus): boolean {
  * Both conditions, not either. A finished review is closed to edits, and a closed period is
  * closed to everything — including reviews inside it that were never submitted, which stay
  * unsubmitted rather than being quietly completed later.
+ *
+ * A submitted review is closed too. Submission freezes the total and the grade onto the row, so a
+ * score saved afterwards changed the answers under a grade that no longer described them — and the
+ * reviewer finalising it was signing a figure the form beside it contradicted. Changing a submitted
+ * review is what reopening is for: it clears the grade, and the reason is written down.
  */
 export function scoringOpen(input: {
   periodStatus: PeriodStatus;
@@ -473,6 +478,9 @@ export function scoringOpen(input: {
   }
   if (input.assignmentStatus === 'finalised') {
     return { key: 'kpi.refuse.assignmentFinalised' };
+  }
+  if (input.assignmentStatus === 'submitted') {
+    return { key: 'kpi.refuse.assignmentSubmitted' };
   }
   return null;
 }

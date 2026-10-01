@@ -26,8 +26,9 @@ import { conflict, notFound, parseBody } from '../http.js';
 import { recordActivity } from '../logging/activity.js';
 import { notify } from '../notify/dispatch.js';
 import { parsePeriod } from '../reports/aggregate.js';
+import { registerStaffSearch } from '../staff/search.js';
 import { hours, sendCsv, toCsvRow } from '../reports/csv.js';
-import { asDateOnly, dateOnlyKey } from '../time.js';
+import { asDateOnly, dateOnlyKey, zonedDateOnly } from '../time.js';
 
 /**
  * Payroll: periods, payslips, and the five things that add to or subtract from one.
@@ -99,9 +100,10 @@ export async function payrollRoutes(app: FastifyInstance): Promise<void> {
   /**
    * Refuses a write against a period that has moved past editing.
    *
-   * Called from the period routes and from every compensation route that names a period, because
-   * a bonus added to an approved period would sit there unpaid and unexplained: the run that
-   * would have collected it has already happened.
+   * For what is written onto the period or its payslips directly — the period's own fields, the
+   * tax and other deductions typed onto a payslip — which may still change while it is
+   * `processing`. Anything the run collects (bonuses, commissions) goes through
+   * `assertRebuildable` instead, because the run does not happen again after `draft`.
    */
   function assertWritable(period: { status: string; code: string }): void {
     if (!isWritable(period.status)) {
@@ -109,6 +111,25 @@ export async function payrollRoutes(app: FastifyInstance): Promise<void> {
         `Tempoh ${period.code} sudah "${period.status}". Tempoh yang telah diluluskan tidak ` +
           'menerima perubahan — angkanya sudah ditandatangani. Buat pelarasan dalam tempoh ' +
           'berikutnya.',
+      );
+    }
+  }
+
+  /**
+   * The stricter gate for anything a run collects: only a draft is rebuilt.
+   *
+   * `assertWritable` lets a `processing` period through, and that is right for what is typed onto
+   * a payslip by hand. It is wrong for a bonus or a commission. The run reads approved awards when
+   * it builds the payslips and moves the period to `processing`, and from there it does not run
+   * again — so an award approved into a processing period was marked approved and never paid, and
+   * one cancelled there was marked cancelled while the payslip still paid it.
+   */
+  function assertRebuildable(period: { status: string; code: string }): void {
+    if (!isRebuildable(period.status)) {
+      throw conflict(
+        `Tempoh ${period.code} sudah diproses — slip gajinya sudah dibina dan tidak dibina ` +
+          'semula, jadi perubahan ini tidak akan sampai padanya. Letakkan rekod ini dalam tempoh ' +
+          'yang masih draf, atau buat pelarasan dalam tempoh berikutnya.',
       );
     }
   }
@@ -1124,7 +1145,7 @@ export async function payrollRoutes(app: FastifyInstance): Promise<void> {
     }
   }
 
-  await compensationRoutes(app, { idParam, dateKey, loadPeriod, assertWritable });
+  await compensationRoutes(app, { idParam, dateKey, loadPeriod, assertRebuildable });
 }
 
 // ---------------------------------------------------------------------------
@@ -1139,11 +1160,12 @@ interface Shared {
   idParam: (params: unknown) => number;
   dateKey: z.ZodString;
   loadPeriod: (id: number) => Promise<{ id: number; status: string; code: string }>;
-  assertWritable: (period: { status: string; code: string }) => void;
+  /** Only a draft: what an award names has to be a period the run will still build. */
+  assertRebuildable: (period: { status: string; code: string }) => void;
 }
 
 async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise<void> {
-  const { idParam, dateKey, loadPeriod, assertWritable } = shared;
+  const { idParam, dateKey, loadPeriod, assertRebuildable } = shared;
 
   const toDateOnly = (key: string): Date => asDateOnly(new Date(`${key}T00:00:00Z`));
 
@@ -1190,7 +1212,11 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
     name: z.string().trim().min(1).max(120),
     description: z.union([z.literal(''), z.string().trim().max(500)]).optional(),
     calcMode: z.enum(['fixed', 'percentOfBasic']),
-    defaultAmount: z.union([z.coerce.number().min(0).max(1_000_000), z.null()]).optional(),
+    /*
+     * `z.null()` first. The other order coerced `null` to 0 before the null branch was tried, so a
+     * type saved with no default was stored as RM0.00 and the form then offered 0 as the amount.
+     */
+    defaultAmount: z.union([z.null(), z.coerce.number().min(0).max(1_000_000)]).optional(),
     epfLiable: z.boolean().optional(),
     taxable: z.boolean().optional(),
     active: z.boolean().optional(),
@@ -1316,6 +1342,9 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
 
   // ── Staff allowances ──
 
+  // The person the allowance is for, picked by name. See `staff/search.ts`.
+  registerStaffSearch(app, '/api/payroll/allowances/staff-search', 'hr.allowances');
+
   app.get(
     '/api/payroll/allowances',
     { preHandler: requirePermission('hr.allowances', 'view') },
@@ -1357,7 +1386,15 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
             type: { select: { code: true, name: true, calcMode: true, epfLiable: true } },
           },
         }),
-        db().staffAllowance.groupBy({ by: ['active'], _count: { _all: true } }),
+        /*
+         * Counted with every filter but its own, so choosing a chip does not zero the other one —
+         * and typing a name narrows both chips to that person, which is the list they filter.
+         */
+        db().staffAllowance.groupBy({
+          by: ['active'],
+          where: { ...where, active: undefined },
+          _count: { _all: true },
+        }),
       ]);
 
       return jsonSafe({
@@ -1539,6 +1576,29 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
     const typeField = isBonus ? 'bonusType' : 'commissionType';
     const dateField = isBonus ? 'awardedOn' : 'earnedOn';
 
+    // The recipient, picked by name on this module's own gate. See `staff/search.ts`.
+    registerStaffSearch(app, `/api/payroll/${config.path}/staff-search`, config.screen);
+
+    /**
+     * The payroll periods this screen filters by and attaches awards to.
+     *
+     * On the module's own `view`, because the period list proper is behind `hr.payrollPeriods`:
+     * a clerk who records bonuses is not necessarily one who runs payroll, and borrowing that list
+     * left the period filter and the dialog's period field empty for exactly that clerk. Codes,
+     * names and status only — nothing a payslip carries.
+     */
+    app.get(
+      `/api/payroll/${config.path}/periods`,
+      { preHandler: requirePermission(config.screen, 'view') },
+      async () => {
+        const periods = await db().payrollPeriod.findMany({
+          orderBy: [{ fromDate: 'desc' }, { id: 'desc' }],
+          select: { id: true, code: true, name: true, status: true },
+        });
+        return jsonSafe(periods);
+      },
+    );
+
     app.get(
       `/api/payroll/${config.path}`,
       { preHandler: requirePermission(config.screen, 'view') },
@@ -1574,11 +1634,17 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
         const orderBy = [{ [dateField]: 'desc' as const }, { id: 'desc' as const }];
         const skip = (query.page - 1) * query.pageSize;
 
+        /*
+         * Chip counts take every filter but the status one, so choosing a chip does not zero the
+         * others — and a search or a period narrows them to the list they are filtering.
+         */
+        const countWhere = { ...where, status: undefined };
+
         const [total, rows, counts] = isBonus
           ? await Promise.all([
               db().staffBonus.count({ where }),
               db().staffBonus.findMany({ where, include, orderBy, skip, take: query.pageSize }),
-              db().staffBonus.groupBy({ by: ['status'], _count: { _all: true } }),
+              db().staffBonus.groupBy({ by: ['status'], where: countWhere, _count: { _all: true } }),
             ])
           : await Promise.all([
               db().staffCommission.count({ where }),
@@ -1589,7 +1655,11 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
                 skip,
                 take: query.pageSize,
               }),
-              db().staffCommission.groupBy({ by: ['status'], _count: { _all: true } }),
+              db().staffCommission.groupBy({
+                by: ['status'],
+                where: countWhere,
+                _count: { _all: true },
+              }),
             ]);
 
         return jsonSafe({
@@ -1659,7 +1729,7 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
          * on anybody's payslip.
          */
         if (body.periodId != null) {
-          assertWritable(await loadPeriod(body.periodId));
+          assertRebuildable(await loadPeriod(body.periodId));
         }
 
         const on = toDateOnly(body.onDate);
@@ -1744,7 +1814,7 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
         }
 
         if (body.periodId != null) {
-          assertWritable(await loadPeriod(body.periodId));
+          assertRebuildable(await loadPeriod(body.periodId));
         }
 
         const data = {
@@ -1815,7 +1885,8 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
                 'mengikut tempoh, jadi yang tiada tempoh tidak akan dibayar.',
             );
           }
-          assertWritable(existing.period);
+          // A draft only: an award approved into a processing period is never on its payslips.
+          assertRebuildable(existing.period);
         } else if (existing.status === 'paid') {
           // Cancelling something already paid would leave the payslip carrying it. Reversal is
           // an adjustment in a later period, which is a decision somebody makes on purpose.
@@ -1823,6 +1894,18 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
             'Rekod ini sudah dibayar dan tidak boleh dibatalkan. Buat pelarasan dalam tempoh ' +
               'berikutnya.',
           );
+        } else if (existing.status === 'cancelled') {
+          throw conflict('Rekod ini sudah dibatalkan.');
+        } else if (existing.status === 'approved' && existing.period !== null) {
+          /*
+           * An approved award whose period has been processed is already on a payslip the run will
+           * not rebuild.
+           *
+           * Cancelling it here would mark it unpaid while the payslip still pays it — the record
+           * and the payslip would disagree, and the payslip is the one the employee has. The same
+           * rule as cancelling a paid one: an adjustment in a later period.
+           */
+          assertRebuildable(existing.period);
         }
 
         const status = body.action === 'approve' ? 'approved' : 'cancelled';
@@ -1943,6 +2026,63 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
   });
 
   /**
+   * The appraisal cycles a bonus can be generated from: closed ones, with their finalised count.
+   *
+   * Behind `hr.bonuses:create`, the same gate as generating. The dialog used to read the KPI period
+   * list, which is behind `hr.kpiPeriods` — so the person allowed to generate bonuses was shown an
+   * empty choice unless they also happened to manage appraisal cycles.
+   *
+   * Closed only: an open cycle is still being scored, and a bonus generated from it would be priced
+   * on grades that have not settled. The count says how many rows the run would consider, and
+   * `generated` how many already carry a bonus, so a second run is not a surprise.
+   */
+  app.get(
+    '/api/payroll/bonuses/appraisal-periods',
+    { preHandler: requirePermission('hr.bonuses', 'create') },
+    async () => {
+      const periods = await db().kpiPeriod.findMany({
+        where: { status: 'closed' },
+        orderBy: [{ fromDate: 'desc' }, { id: 'desc' }],
+        select: { id: true, code: true, name: true },
+      });
+      if (periods.length === 0) return jsonSafe([]);
+
+      // Ids only: the bonus row holds the appraisal's id as a plain column, not a relation.
+      const finalised = await db().kpiAssignment.findMany({
+        where: { periodId: { in: periods.map((period) => period.id) }, status: 'finalised' },
+        select: { id: true, periodId: true },
+      });
+      const generated =
+        finalised.length === 0
+          ? []
+          : await db().staffBonus.findMany({
+              where: { kpiAssignmentId: { in: finalised.map((row) => row.id) } },
+              select: { kpiAssignmentId: true },
+            });
+
+      const periodOf = new Map(finalised.map((row) => [row.id, row.periodId]));
+      const finalisedBy = new Map<number, number>();
+      for (const row of finalised) {
+        finalisedBy.set(row.periodId, (finalisedBy.get(row.periodId) ?? 0) + 1);
+      }
+      const generatedBy = new Map<number, number>();
+      for (const row of generated) {
+        const periodId = row.kpiAssignmentId === null ? undefined : periodOf.get(row.kpiAssignmentId);
+        if (periodId === undefined) continue;
+        generatedBy.set(periodId, (generatedBy.get(periodId) ?? 0) + 1);
+      }
+
+      return jsonSafe(
+        periods.map((period) => ({
+          ...period,
+          finalised: finalisedBy.get(period.id) ?? 0,
+          generated: generatedBy.get(period.id) ?? 0,
+        })),
+      );
+    },
+  );
+
+  /**
    * Turns finalised appraisals into bonus rows somebody still has to approve.
    *
    * The grade carries the months and the bonus row carries the amount. Nothing reaches a payslip
@@ -1964,13 +2104,25 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
       );
 
       const period = await loadPeriod(body.periodId);
-      assertWritable(period);
+      // A draft only, for the same reason as approving one by hand: the run collects it.
+      assertRebuildable(period);
 
       const kpiPeriod = await db().kpiPeriod.findUnique({
         where: { id: body.kpiPeriodId },
-        select: { id: true, name: true },
+        select: { id: true, name: true, status: true },
       });
       if (!kpiPeriod) throw notFound('Tempoh KPI tidak dijumpai');
+      /*
+       * Closed cycles only, the same rule as the list the dialog offers. An open cycle is still
+       * being scored, so a run against it would price bonuses on a distribution that has not
+       * settled and would have to be run again for everybody finalised later.
+       */
+      if (kpiPeriod.status !== 'closed') {
+        throw conflict(
+          `Tempoh KPI ${kpiPeriod.name} masih dibuka. Bonus dijana daripada kitaran yang sudah ` +
+            'ditutup.',
+        );
+      }
 
       const assignments = await db().kpiAssignment.findMany({
         where: { periodId: body.kpiPeriodId, status: 'finalised' },
@@ -2003,7 +2155,13 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
         ).map((row) => row.kpiAssignmentId),
       );
 
-      const yearMonth = yearMonthOf(asDateOnly(new Date()));
+      /*
+       * Today in the organisation's zone, not in UTC. `asDateOnly(new Date())` read the UTC date,
+       * so a run before 08:00 in Malaysia stamped yesterday — and on the first of a month, numbered
+       * the bonuses under the previous month.
+       */
+      const today = zonedDateOnly(new Date(), loadEnv().ORG_TIMEZONE);
+      const yearMonth = yearMonthOf(today);
       let created = 0;
       let skippedNoGrade = 0;
       let skippedNoSalary = 0;
@@ -2057,7 +2215,7 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
               bonusType: 'performance',
               name: `Bonus prestasi ${kpiPeriod.name} — gred ${grade.code}`,
               amount,
-              awardedOn: asDateOnly(new Date()),
+              awardedOn: today,
               kpiAssignmentId: assignment.id,
               // Pending, like any other bonus. Generated is not approved.
               status: 'pending',
@@ -2097,6 +2255,9 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
     const isLoan = config.entity === 'loan';
     const numberField = isLoan ? 'loanNo' : 'advanceNo';
 
+    // The borrower, picked by name on this module's own gate. See `staff/search.ts`.
+    registerStaffSearch(app, `/api/payroll/${config.path}/staff-search`, config.screen);
+
     app.get(
       `/api/payroll/${config.path}`,
       { preHandler: requirePermission(config.screen, 'view') },
@@ -2128,16 +2289,23 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
         const orderBy = [{ startsOn: 'desc' as const }, { id: 'desc' as const }];
         const skip = (query.page - 1) * query.pageSize;
 
+        // Chip counts take every filter but their own, as on the award lists.
+        const countWhere = { ...where, status: undefined };
+
         const [total, rows, counts] = isLoan
           ? await Promise.all([
               db().staffLoan.count({ where }),
               db().staffLoan.findMany({ where, include, orderBy, skip, take: query.pageSize }),
-              db().staffLoan.groupBy({ by: ['status'], _count: { _all: true } }),
+              db().staffLoan.groupBy({ by: ['status'], where: countWhere, _count: { _all: true } }),
             ])
           : await Promise.all([
               db().staffAdvance.count({ where }),
               db().staffAdvance.findMany({ where, include, orderBy, skip, take: query.pageSize }),
-              db().staffAdvance.groupBy({ by: ['status'], _count: { _all: true } }),
+              db().staffAdvance.groupBy({
+                by: ['status'],
+                where: countWhere,
+                _count: { _all: true },
+              }),
             ]);
 
         return jsonSafe({
@@ -2326,6 +2494,9 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
         if (body.action === 'approve' && existing.status !== 'pending') {
           throw conflict(`Rekod ini sudah "${existing.status}".`);
         }
+        if (body.action === 'cancel' && existing.status === 'cancelled') {
+          throw conflict('Rekod ini sudah dibatalkan.');
+        }
 
         /*
          * Cancelling something already recovered from is refused.
@@ -2350,7 +2521,10 @@ async function compensationRoutes(app: FastifyInstance, shared: Shared): Promise
           approvedBy: request.user?.accountId ?? null,
           approvedAt: new Date(),
           ...(body.note ? { note: body.note } : {}),
-          ...(status === 'cancelled' ? { closedOn: asDateOnly(new Date()) } : {}),
+          // The organisation's date, for the same reason as the bonus run above.
+          ...(status === 'cancelled'
+            ? { closedOn: zonedDateOnly(new Date(), loadEnv().ORG_TIMEZONE) }
+            : {}),
         };
 
         if (isLoan) await db().staffLoan.update({ where: { id }, data });

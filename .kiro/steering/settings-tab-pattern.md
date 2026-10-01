@@ -222,12 +222,16 @@ bukan tahun *dipapar*, kedua-duanya boleh bercanggah terus.
 
 ## Rollout `framed` masih berperingkat
 
-`RecordTable framed` ialah opt-in. Setakat ini **14 jadual**: `ApprovalWorkflow`, `EmailTemplates`,
-senarai cuti umum dalam Integrasi, tab Connector pada Senarai Peranti, dan setiap modul permohonan
-HR sepenuhnya — senarai dan jadual induk Cuti, Tuntutan, Lebih Masa dan Perbelanjaan, serta Iklan
-Jawatan dan Pemohon (termasuk kedua-dua tab Arkib Pengambilan, yang memakai panel yang sama).
-**51 jadual lain masih penuh lebar.** Tukar dengan sengaja, satu skrin satu masa, dan padankan
-keseluruhan corak pada skrin itu — bukan hanya propnya. Grep untuk mencari yang belum:
+`RecordTable framed` ialah opt-in. Setakat ini **27 jadual**: `ApprovalWorkflow`, `EmailTemplates`,
+senarai cuti umum dalam Integrasi, tab Connector pada Senarai Peranti, setiap modul permohonan HR
+sepenuhnya — senarai dan jadual induk Cuti, Tuntutan, Lebih Masa dan Perbelanjaan, serta Iklan
+Jawatan dan Pemohon (termasuk kedua-dua tab Arkib Pengambilan, yang memakai panel yang sama) — dan
+seluruh kumpulan **KPI & Penilaian** dan **Payroll & Pampasan**: Templat KPI, Tempoh Penilaian,
+Penugasan, Semakan, Keputusan, kedua-dua tab Tetapan KPI, Tempoh Payroll dan Slip Gaji, kedua-dua tab
+Elaun, Bonus, Komisen, Pinjaman dan Pendahuluan Gaji (dua yang terakhir berkongsi `LendingPanel`,
+dua sebelumnya `AwardsPanel`). **38 jadual lain masih penuh lebar.** Tukar dengan sengaja, satu
+skrin satu masa, dan padankan keseluruhan corak pada skrin itu — bukan hanya propnya. Grep untuk
+mencari yang belum:
 
 ```powershell
 $f = Get-ChildItem 'apps\web\src' -Recurse -Include *.tsx
@@ -378,8 +382,29 @@ apa yang dimuatkan oleh pilihan itu.
 
 Endpoint carian **satu per modul** (`/api/leave-requests/staff-search`,
 `/api/claim-requests/staff-search`, `/api/overtime-requests/staff-search`,
-`/api/expense-requests/staff-search`) sebab pintunya berbeza — sesiapa yang memfailkan tuntutan bukan
-semestinya sesiapa yang memfailkan cuti. Setiap satu diperlukan kebenaran `create` modulnya sendiri.
+`/api/expense-requests/staff-search`, `/api/kpi-assignments/staff-search`, dan
+`/api/payroll/{allowances,bonuses,commissions,loans,advances}/staff-search`) sebab pintunya berbeza —
+sesiapa yang memfailkan tuntutan bukan semestinya sesiapa yang memfailkan cuti. Setiap satu diperlukan
+kebenaran `create` modulnya sendiri.
+
+**Daftar endpoint baharu dengan `registerStaffSearch(app, path, screen)`** dalam
+`apps/server/src/staff/search.ts`, bukan salinan query sendiri. Satu pelaksanaan di belakang semua:
+staf aktif sahaja, ditapis di pelayan, dihadkan. Cuti dan Tuntutan masih membawa salinan masing-masing
+kerana ia ditulis sebelum helper itu wujud.
+
+**Jangan sekali-kali guna medan nombor untuk "staf".** Borang Elaun, Bonus, Komisen, Pinjaman dan
+Pendahuluan dahulunya ada medan nombor berlabel dengan contoh no. staf (`cth. 1001`) tetapi
+menghantar **id baris dalaman** direktori. Menaip no. staf seseorang merekodkan wang atau hutang pada
+sesiapa yang memegang id baris itu — dan tiada apa pada skrin akan menunjukkannya. `StaffPicker`
+menutup kelas kesilapan itu kerana yang dipilih ialah orang, bukan nombor.
+
+**Senarai pilihan datang dari pintu skrin itu sendiri, bukan skrin lain.** Penapis tempoh pada Bonus
+dan Komisen dahulunya membaca `/api/payroll/periods` (`hr.payrollPeriods`), dan dialog jana bonus
+membaca senarai tempoh KPI (`hr.kpiPeriods`) — kerani yang hanya ada kebenaran bonus mendapat penapis
+kosong. Sekarang `/api/payroll/{bonuses,commissions}/periods` dan
+`/api/payroll/bonuses/appraisal-periods` menjawabnya atas kebenaran modul itu, dan Keputusan KPI
+membawa senarai tempohnya sendiri dalam balasan. Skrin Semakan Penilaian membaca `/api/kpi-reviews`
+(`hr.kpiReviews`), bukan senarai penugasan.
 
 `search` dalam `StaffPicker` dipegang dalam ref. Fungsi anak panah sebaris yang diberi sebagai prop
 bertukar identiti setiap render, dan sebagai kebergantungan kesan ia akan memulakan semula debounce

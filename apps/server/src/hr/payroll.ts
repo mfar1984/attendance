@@ -363,11 +363,24 @@ export function instalmentDue(monthly: number, remainingBalance: number): number
   return toSen(Math.min(instalment, owed));
 }
 
-/** An advance's monthly recovery, from the amount and the months chosen. */
+/**
+ * A monthly recovery from the amount and the months chosen — an advance's, and a loan's when no
+ * instalment was agreed.
+ *
+ * Rounded **up** to the sen, so the months chosen always clear the amount and the last deduction is
+ * whatever is left (`instalmentDue`). It rounded to the nearest sen, which for RM1,000 over three
+ * months gave 333.33: three deductions left a cent owing, a fourth month deducted it, and the
+ * advance read "4 of 3 months". For a loan it was worse — 83.33 over twelve months falls short of
+ * RM1,000, so the route refused the very instalment it had derived and a loan with the instalment
+ * left blank could not be recorded at all.
+ *
+ * The epsilon keeps an exact division exact: `1.1 * 100` is `110.00000000000001` in floating
+ * point, and a bare ceiling would charge a sen nobody owes.
+ */
 export function monthlyRecovery(principal: number, months: number): number {
   if (!Number.isFinite(principal) || principal <= 0) return 0;
   if (!Number.isInteger(months) || months < 1) return 0;
-  return toSen(principal / months);
+  return toSen(Math.ceil((principal / months) * 100 - 1e-6) / 100);
 }
 
 // ---------------------------------------------------------------------------

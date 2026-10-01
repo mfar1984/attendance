@@ -136,6 +136,8 @@ export interface KpiAssignmentRow {
   itemCount: number;
   scoredCount: number;
   reviewerAccountId: number;
+  /** The reviewer's name, looked up for the page. Null only if the account has since gone. */
+  reviewerName: string | null;
   status: AssignmentStatus;
   /** Written at submission, cleared on reopen. */
   totalScore: number | null;
@@ -150,6 +152,28 @@ export interface KpiAssignmentPage {
   total: number;
   counts: Partial<Record<AssignmentStatus, number>>;
   generatedAt: string;
+}
+
+/** An account whose role can fill in a review, offered as a reviewer. */
+export interface KpiReviewerOption {
+  id: number;
+  /** The account's own staff record, so the form can refuse a self-review before the server does. */
+  staffId: number;
+  label: string;
+  employeeNo: string;
+  roleName: string;
+}
+
+/**
+ * What the assignment screen filters by and assigns against, on its own permission.
+ *
+ * Not the period and form lists themselves: those are behind `hr.kpiPeriods` and `hr.kpiTemplates`,
+ * and somebody who assigns appraisals need not manage either.
+ */
+export interface KpiAssignmentOptions {
+  periods: Array<{ id: number; code: string; name: string; status: PeriodStatus }>;
+  /** Active forms only — the only ones an appraisal can be assigned against. */
+  templates: Array<{ id: number; code: string; name: string }>;
 }
 
 export interface ReviewLine {
@@ -244,6 +268,8 @@ export interface ResultPage {
     bonusMonths: number | null;
     color: string;
   }>;
+  /** Periods holding a finalised grade, for the filter — the period list is behind another screen. */
+  periods: Array<{ id: number; code: string; name: string }>;
   generatedAt: string;
 }
 
@@ -325,10 +351,37 @@ export const kpiApi = {
     periodId?: number;
     staffId?: number;
     status?: AssignmentStatus;
-    mine?: boolean;
+    /** Name or staff number of the person assessed, matched on the server. */
+    search?: string;
     page?: number;
     pageSize?: number;
   }) => api.get<KpiAssignmentPage>(`/api/kpi-assignments?${toQuery(query)}`),
+
+  /**
+   * The review queue, behind the review screen's own permission rather than the assignment screen's.
+   *
+   * `mine` is the caller's own and the server's default. `all` is every reviewer's, and is refused
+   * unless the role can finalise — the screen only offers it then.
+   */
+  reviews: (query: {
+    scope?: 'mine' | 'all';
+    status?: AssignmentStatus;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  }) => api.get<KpiAssignmentPage>(`/api/kpi-reviews?${toQuery(query)}`),
+
+  /** The person to assess, filtered server-side and gated on assigning: five thousand is not a dropdown. */
+  searchStaff: (query: string) =>
+    api.get<Array<{ id: number; employeeNo: string; fullName: string; department: { name: string } | null }>>(
+      `/api/kpi-assignments/staff-search?q=${encodeURIComponent(query)}`,
+    ),
+
+  /** Accounts that can fill in a review — tens, not thousands, so a list rather than a search. */
+  reviewers: () => api.get<KpiReviewerOption[]>('/api/kpi-assignments/reviewers'),
+
+  /** Periods and active forms for the assignment screen, behind `hr.kpiAssignments:view`. */
+  assignmentOptions: () => api.get<KpiAssignmentOptions>('/api/kpi-assignments/options'),
 
   createAssignment: (body: {
     periodId: number;
@@ -341,9 +394,19 @@ export const kpiApi = {
 
   review: (id: number) => api.get<ReviewForm>(`/api/kpi-assignments/${id}/review`),
 
-  /** Partial saves are expected: a reviewer works through a form over more than one sitting. */
-  saveScores: (id: number, scores: Array<{ scoreId: number; score: number; comment?: string }>) =>
-    api.put<{ ok: true; saved: number }>(`/api/kpi-assignments/${id}/review`, { scores }),
+  /**
+   * Partial saves are expected: a reviewer works through a form over more than one sitting.
+   *
+   * Every line is sent, and `score: null` clears one — so what the form shows is what is stored,
+   * including an answer emptied and a comment on a line not yet scored.
+   */
+  saveScores: (
+    id: number,
+    scores: Array<{ scoreId: number; score: number | null; comment?: string }>,
+  ) =>
+    api.put<{ ok: true; saved: number; answered: number }>(`/api/kpi-assignments/${id}/review`, {
+      scores,
+    }),
 
   submitReview: (id: number) =>
     api.post<{ ok: true; totalScore: number; gradeCode: string }>(

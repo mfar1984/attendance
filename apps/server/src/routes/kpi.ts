@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { requirePermission } from '../auth/plugin.js';
+import { can } from '../auth/service.js';
 import { db, jsonSafe } from '../db.js';
 import {
   ASSIGNMENT_STATUSES,
@@ -33,6 +34,7 @@ import { moduleSettings, settingIsOn } from '../hr/approval.js';
 import { conflict, forbidden, notFound, parseBody, unauthorized } from '../http.js';
 import { recordActivity } from '../logging/activity.js';
 import { notify } from '../notify/dispatch.js';
+import { registerStaffSearch } from '../staff/search.js';
 import { asDateOnly, dateOnlyKey } from '../time.js';
 
 /**
@@ -153,6 +155,11 @@ function refusalMessage(refusal: Refusal): string {
       return 'Tempoh ini sudah ditutup — markah hanya boleh ditulis pada tempoh yang dibuka.';
     case 'kpi.refuse.assignmentFinalised':
       return 'Penilaian ini sudah dimuktamadkan dan tidak boleh diubah.';
+    case 'kpi.refuse.assignmentSubmitted':
+      return (
+        'Penilaian ini sudah dihantar, jadi markah dan gred sudah dibekukan. Ia perlu dibuka ' +
+        'semula sebelum markahnya boleh diubah.'
+      );
     case 'kpi.refuse.selfReview':
       return 'Seseorang tidak boleh menilai dirinya sendiri.';
     case 'kpi.refuse.badDate':
@@ -167,6 +174,125 @@ function refusalMessage(refusal: Refusal): string {
     default:
       return 'Tindakan ini tidak sah.';
   }
+}
+
+/** Filters shared by the assignment list and the review queue. */
+const ASSIGNMENT_LIST_QUERY = z.object({
+  periodId: z.coerce.number().int().positive().optional(),
+  staffId: z.coerce.number().int().positive().optional(),
+  status: z.enum(ASSIGNMENT_STATUSES).optional(),
+  /** Name or staff number of the person assessed, so the box covers every page. */
+  search: z.string().trim().max(120).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(25),
+});
+
+/**
+ * One page of assignments, with a count per status that ignores the status filter.
+ *
+ * Shared by the assignment screen and the review queue so the two cannot drift into describing the
+ * same appraisal differently. `reviewerAccountId` narrows it to one reviewer's, or is null for every
+ * reviewer's — the route decides which the caller is allowed.
+ */
+async function listAssignments(
+  query: z.infer<typeof ASSIGNMENT_LIST_QUERY>,
+  reviewerAccountId: number | null,
+): Promise<unknown> {
+  const search = query.search === undefined || query.search === '' ? null : query.search;
+
+  const where = {
+    ...(query.periodId === undefined ? {} : { periodId: query.periodId }),
+    ...(query.staffId === undefined ? {} : { staffId: query.staffId }),
+    ...(query.status === undefined ? {} : { status: query.status }),
+    ...(reviewerAccountId === null ? {} : { reviewerAccountId }),
+    ...(search === null
+      ? {}
+      : {
+          staff: {
+            OR: [{ fullName: { contains: search } }, { employeeNo: { contains: search } }],
+          },
+        }),
+  };
+
+  const [rows, total, grouped] = await Promise.all([
+    db().kpiAssignment.findMany({
+      where,
+      orderBy: [{ periodId: 'desc' }, { id: 'desc' }],
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+      include: {
+        period: { select: { code: true, name: true, status: true, dueOn: true } },
+        staff: {
+          select: {
+            employeeNo: true,
+            fullName: true,
+            department: { select: { name: true } },
+          },
+        },
+        template: { select: { code: true, name: true } },
+        scores: { select: { score: true } },
+      },
+    }),
+    db().kpiAssignment.count({ where }),
+    db().kpiAssignment.groupBy({
+      by: ['status'],
+      where: { ...where, status: undefined },
+      _count: { _all: true },
+    }),
+  ]);
+
+  /*
+   * The reviewer by name, in one query for the page.
+   *
+   * The row holds an account id and no relation, so without this the list said who was assessed and
+   * on which form but not by whom — the one fact the assignment exists to record.
+   */
+  const reviewerIds = [...new Set(rows.map((row) => row.reviewerAccountId))];
+  const reviewers =
+    reviewerIds.length === 0
+      ? []
+      : await db().userAccount.findMany({
+          where: { id: { in: reviewerIds } },
+          select: { id: true, staff: { select: { fullName: true } } },
+        });
+  const reviewerNames = new Map(reviewers.map((account) => [account.id, account.staff.fullName]));
+
+  return jsonSafe({
+    rows: rows.map((row) => ({
+      id: row.id,
+      periodId: row.periodId,
+      periodCode: row.period.code,
+      periodName: row.period.name,
+      periodStatus: row.period.status,
+      dueOn: dateOnlyKey(row.period.dueOn),
+      staffId: row.staffId,
+      employeeNo: row.staff.employeeNo,
+      staffName: row.staff.fullName,
+      departmentName: row.staff.department?.name ?? null,
+      templateId: row.templateId,
+      templateCode: row.template.code,
+      templateName: row.template.name,
+      /*
+       * Both counts come from the appraisal's own snapshot rows, not from the form.
+       *
+       * The form can have gained or lost competencies since; this appraisal has the questions it
+       * was created with, and progress has to be reported against those.
+       */
+      itemCount: row.scores.length,
+      scoredCount: row.scores.filter((score) => score.score !== null).length,
+      reviewerAccountId: row.reviewerAccountId,
+      reviewerName: reviewerNames.get(row.reviewerAccountId) ?? null,
+      status: row.status,
+      totalScore: row.totalScore === null ? null : Number(row.totalScore),
+      gradeCode: row.gradeCode,
+      submittedAt: row.submittedAt?.toISOString() ?? null,
+      finalisedAt: row.finalisedAt?.toISOString() ?? null,
+      decisionNote: row.decisionNote,
+    })),
+    total,
+    counts: Object.fromEntries(grouped.map((row) => [row.status, row._count._all])),
+    generatedAt: new Date().toISOString(),
+  });
 }
 
 /** Grade bands as the rule library wants them. */
@@ -860,89 +986,124 @@ export async function kpiRoutes(app: FastifyInstance): Promise<void> {
     '/api/kpi-assignments',
     { preHandler: requirePermission('hr.kpiAssignments', 'view') },
     async (request) => {
-      const query = z
-        .object({
-          periodId: z.coerce.number().int().positive().optional(),
-          staffId: z.coerce.number().int().positive().optional(),
-          status: z.enum(ASSIGNMENT_STATUSES).optional(),
-          /** The review screen asks for what this account has to fill in. */
-          mine: z.enum(['true', 'false']).optional(),
-          page: z.coerce.number().int().min(1).default(1),
-          pageSize: z.coerce.number().int().min(1).max(200).default(25),
-        })
-        .parse(request.query);
+      const query = ASSIGNMENT_LIST_QUERY.extend({
+        /** Kept for callers that still ask for their own; the review screen uses `/api/kpi-reviews`. */
+        mine: z.enum(['true', 'false']).optional(),
+      }).parse(request.query);
 
       if (!request.user) throw unauthorized();
 
-      const where = {
-        ...(query.periodId === undefined ? {} : { periodId: query.periodId }),
-        ...(query.staffId === undefined ? {} : { staffId: query.staffId }),
-        ...(query.status === undefined ? {} : { status: query.status }),
-        ...(query.mine === 'true' ? { reviewerAccountId: request.user.accountId } : {}),
-      };
+      return listAssignments(query, query.mine === 'true' ? request.user.accountId : null);
+    },
+  );
 
-      const [rows, total, grouped] = await Promise.all([
-        db().kpiAssignment.findMany({
-          where,
-          orderBy: [{ periodId: 'desc' }, { id: 'desc' }],
-          skip: (query.page - 1) * query.pageSize,
-          take: query.pageSize,
-          include: {
-            period: { select: { code: true, name: true, status: true, dueOn: true } },
-            staff: {
-              select: {
-                employeeNo: true,
-                fullName: true,
-                department: { select: { name: true } },
-              },
-            },
-            template: { select: { code: true, name: true } },
-            scores: { select: { score: true } },
-          },
+  /**
+   * The review queue: the same rows, behind the review screen's own permission.
+   *
+   * The screen used to read `/api/kpi-assignments`, which is behind `hr.kpiAssignments:view`. The
+   * sidebar shows the review screen to anybody holding `hr.kpiReviews`, so a reviewer whose role
+   * could fill in reviews but not manage assignments opened the screen and was refused the list of
+   * the very reviews they had been named on.
+   *
+   * Scoped to the caller's own unless they can finalise. A reviewer has no reason to read a
+   * colleague's appraisal of somebody else; the person who finalises has to read all of them, and
+   * that is what `approve` grants. Defaulted to `mine` on the server so an unscoped request never
+   * lists everybody's.
+   */
+  app.get(
+    '/api/kpi-reviews',
+    { preHandler: requirePermission('hr.kpiReviews', 'view') },
+    async (request) => {
+      const query = ASSIGNMENT_LIST_QUERY.extend({
+        scope: z.enum(['mine', 'all']).default('mine'),
+      }).parse(request.query);
+
+      if (!request.user) throw unauthorized();
+
+      if (query.scope === 'all' && !can(request.user, 'hr.kpiReviews', 'approve')) {
+        throw forbidden(
+          'Hanya peranan yang boleh memuktamadkan penilaian boleh melihat penilaian setiap ' +
+            'penilai. Penilaian yang dinamakan kepada anda ada di bawah "Hanya penilaian saya".',
+        );
+      }
+
+      return listAssignments(query, query.scope === 'mine' ? request.user.accountId : null);
+    },
+  );
+
+  // The person being assessed, picked by name. See `staff/search.ts`.
+  registerStaffSearch(app, '/api/kpi-assignments/staff-search', 'hr.kpiAssignments');
+
+  /**
+   * The periods and forms this screen filters by and assigns against, on its own permission.
+   *
+   * It used to read the period list and the form list, which are behind `hr.kpiPeriods` and
+   * `hr.kpiTemplates`. A role that may assign appraisals but not manage cycles or build forms got an
+   * empty period filter, and the dialog told it to go and create periods that already existed.
+   * Codes, names and status only; the forms are the active ones, which are all that can be assigned.
+   */
+  app.get(
+    '/api/kpi-assignments/options',
+    { preHandler: requirePermission('hr.kpiAssignments', 'view') },
+    async () => {
+      const [periods, templates] = await Promise.all([
+        db().kpiPeriod.findMany({
+          orderBy: [{ fromDate: 'desc' }, { id: 'desc' }],
+          select: { id: true, code: true, name: true, status: true },
         }),
-        db().kpiAssignment.count({ where }),
-        db().kpiAssignment.groupBy({
-          by: ['status'],
-          where: { ...where, status: undefined },
-          _count: { _all: true },
+        db().kpiTemplate.findMany({
+          where: { active: true },
+          orderBy: { code: 'asc' },
+          select: { id: true, code: true, name: true },
         }),
       ]);
+      return jsonSafe({ periods, templates });
+    },
+  );
 
-      return jsonSafe({
-        rows: rows.map((row) => ({
-          id: row.id,
-          periodId: row.periodId,
-          periodCode: row.period.code,
-          periodName: row.period.name,
-          periodStatus: row.period.status,
-          dueOn: dateOnlyKey(row.period.dueOn),
-          staffId: row.staffId,
-          employeeNo: row.staff.employeeNo,
-          staffName: row.staff.fullName,
-          departmentName: row.staff.department?.name ?? null,
-          templateId: row.templateId,
-          templateCode: row.template.code,
-          templateName: row.template.name,
-          /*
-           * Both counts come from the appraisal's own snapshot rows, not from the form.
-           *
-           * The form can have gained or lost competencies since; this appraisal has the questions
-           * it was created with, and progress has to be reported against those.
-           */
-          itemCount: row.scores.length,
-          scoredCount: row.scores.filter((score) => score.score !== null).length,
-          reviewerAccountId: row.reviewerAccountId,
-          status: row.status,
-          totalScore: row.totalScore === null ? null : Number(row.totalScore),
-          gradeCode: row.gradeCode,
-          submittedAt: row.submittedAt?.toISOString() ?? null,
-          finalisedAt: row.finalisedAt?.toISOString() ?? null,
-          decisionNote: row.decisionNote,
-        })),
-        total,
-        counts: Object.fromEntries(grouped.map((row) => [row.status, row._count._all])),
-        generatedAt: new Date().toISOString(),
+  /**
+   * Who may be named as the reviewer: active accounts whose role can fill in a review.
+   *
+   * The same filter the approval chain editor applies to its approvers. Offering an account that
+   * would be refused the moment it opened the review is how an appraisal gets assigned to somebody
+   * who can never complete it, and the person who assigned it has no way to see why it stalls.
+   *
+   * A list rather than a search: these are login accounts, tens of them, not the staff directory.
+   * `staffId` comes back so the form can refuse a self-review before the server does.
+   */
+  app.get(
+    '/api/kpi-assignments/reviewers',
+    { preHandler: requirePermission('hr.kpiAssignments', 'create') },
+    async () => {
+      const accounts = await db().userAccount.findMany({
+        where: { status: 'active', role: { status: 'active' } },
+        orderBy: { staff: { fullName: 'asc' } },
+        select: {
+          id: true,
+          staffId: true,
+          staff: { select: { fullName: true, employeeNo: true } },
+          role: { select: { name: true, permissions: true } },
+        },
       });
+
+      return jsonSafe(
+        accounts
+          .filter((account) => {
+            const granted = ((account.role.permissions ?? {}) as Record<string, unknown>)[
+              'hr.kpiReviews'
+            ];
+            return Array.isArray(granted) && granted.includes('edit');
+          })
+          // No login email: the dialog names the person and the role, and an assigner has no use
+          // for the identifier somebody signs in with.
+          .map((account) => ({
+            id: account.id,
+            staffId: account.staffId,
+            label: account.staff.fullName,
+            employeeNo: account.staff.employeeNo,
+            roleName: account.role.name,
+          })),
+      );
     },
   );
 
@@ -1052,9 +1213,15 @@ export async function kpiRoutes(app: FastifyInstance): Promise<void> {
        */
       const settings = await moduleSettings('kpi');
       if (settingIsOn(settings, 'notifyApprover')) {
+        /*
+         * The name lives on the staff record, not the account. This selected `fullName` from the
+         * account, which has no such column, so every assignment made while this notification was
+         * on answered 500 after the row had already been written — the screen reported a failure
+         * for an appraisal that existed, and trying again was refused as a duplicate.
+         */
         const reviewerAccount = await db().userAccount.findUnique({
           where: { id: body.reviewerAccountId },
-          select: { email: true, fullName: true, staff: { select: { phone: true } } },
+          select: { email: true, staff: { select: { phone: true, fullName: true } } },
         });
         notify({
           trigger: 'kpi.reviewAssigned',
@@ -1075,7 +1242,7 @@ export async function kpiRoutes(app: FastifyInstance): Promise<void> {
               periodName: period.name,
               templateName: template.name,
               dueOn: dateOnlyKey(period.dueOn),
-              reviewer: reviewerAccount?.fullName ?? null,
+              reviewer: reviewerAccount?.staff.fullName ?? null,
             },
           },
         });
@@ -1210,7 +1377,15 @@ export async function kpiRoutes(app: FastifyInstance): Promise<void> {
             .array(
               z.object({
                 scoreId: z.number().int().positive(),
-                score: z.coerce.number(),
+                /*
+                 * `null` clears a line. `z.null()` first, because `z.coerce.number()` turns null
+                 * into 0 — which would record a zero nobody gave instead of clearing the answer.
+                 *
+                 * Clearing had no shape at all before: the form sent only answered lines, so a
+                 * score emptied on screen came back on reopening, and a comment on an unanswered
+                 * line was never stored — while the notice reported them saved.
+                 */
+                score: z.union([z.null(), z.coerce.number()]),
                 comment: z.union([z.literal(''), z.string().trim().max(500)]).optional(),
               }),
             )
@@ -1253,6 +1428,7 @@ export async function kpiRoutes(app: FastifyInstance): Promise<void> {
           // Addressing another appraisal's row, whether by mistake or on purpose.
           throw conflict('Satu markah merujuk baris yang bukan pada penilaian ini.');
         }
+        if (entry.score === null) continue;
         const refusal = checkScore(entry.score);
         if (refusal) throw conflict(refusalMessage(refusal));
       }
@@ -1269,13 +1445,18 @@ export async function kpiRoutes(app: FastifyInstance): Promise<void> {
         }
 
         // Entered by the first score being saved, not by a button: a reviewer who has started is
-        // in progress whether or not they pressed anything.
-        if (existing.status === 'pending' && body.scores.length > 0) {
+        // in progress whether or not they pressed anything. A save of nothing but blanks has not
+        // started anything.
+        if (existing.status === 'pending' && body.scores.some((entry) => entry.score !== null)) {
           await tx.kpiAssignment.update({ where: { id }, data: { status: 'inProgress' } });
         }
       });
 
-      return { ok: true, saved: body.scores.length };
+      return {
+        ok: true,
+        saved: body.scores.length,
+        answered: body.scores.filter((entry) => entry.score !== null).length,
+      };
     },
   );
 
@@ -1358,6 +1539,15 @@ export async function kpiRoutes(app: FastifyInstance): Promise<void> {
           totalScore: total,
           gradeCode: grade,
           submittedAt: new Date(),
+          /*
+           * The reopen reason has been answered by this submission, so it is cleared here.
+           *
+           * Reopening and finalising share the column. Left in place, a review reopened,
+           * resubmitted and then finalised without a note showed the reopen reason as the
+           * finaliser's decision note. The reason itself is kept in the activity log entry the
+           * reopen wrote.
+           */
+          decisionNote: null,
         },
       });
 
@@ -1388,8 +1578,21 @@ export async function kpiRoutes(app: FastifyInstance): Promise<void> {
 
       const body = parseBody(z.object({ note: z.string().trim().min(3).max(500) }), request.body);
 
-      const existing = await db().kpiAssignment.findUnique({ where: { id } });
+      const existing = await db().kpiAssignment.findUnique({
+        where: { id },
+        include: { period: { select: { status: true } } },
+      });
       if (!existing) throw notFound('Penilaian tidak dijumpai');
+      /*
+       * Not in a closed period. Scoring is refused there, so a review reopened in one could never
+       * be saved or submitted again — sent back to a reviewer who has no way to answer.
+       */
+      if (existing.period.status !== 'open') {
+        throw conflict(
+          'Tempoh ini sudah ditutup, jadi penilaian yang dibuka semula tidak boleh diisi atau ' +
+            'dihantar lagi. Muktamadkan ia seperti dihantar.',
+        );
+      }
       if (!assignmentTransitionAllowed(existing.status as AssignmentStatus, 'inProgress')) {
         throw conflict(
           `Penilaian pada status "${existing.status}" tidak boleh dibuka semula. ` +
@@ -1562,7 +1765,7 @@ export async function kpiRoutes(app: FastifyInstance): Promise<void> {
           : { gradeCode: query.gradeCode }),
       };
 
-      const [rows, total, byGrade, grades] = await Promise.all([
+      const [rows, total, byGrade, grades, periods] = await Promise.all([
         db().kpiAssignment.findMany({
           where,
           orderBy: [{ totalScore: 'desc' }, { id: 'asc' }],
@@ -1592,6 +1795,18 @@ export async function kpiRoutes(app: FastifyInstance): Promise<void> {
           _count: { _all: true },
         }),
         db().kpiGrade.findMany({ orderBy: { minScore: 'desc' } }),
+        /*
+         * The periods this screen can filter by: those holding a finalised grade.
+         *
+         * Sent here because the period list itself is behind `hr.kpiPeriods`, and somebody who may
+         * read results is not necessarily somebody who may manage cycles — the filter came up empty
+         * for exactly the role this screen was split out for.
+         */
+        db().kpiPeriod.findMany({
+          where: { assignments: { some: { status: 'finalised' } } },
+          orderBy: { fromDate: 'desc' },
+          select: { id: true, code: true, name: true },
+        }),
       ]);
 
       const monthsByGrade = new Map(
@@ -1637,6 +1852,7 @@ export async function kpiRoutes(app: FastifyInstance): Promise<void> {
           bonusMonths: row.bonusMonths === null ? null : Number(row.bonusMonths),
           color: row.color,
         })),
+        periods,
         generatedAt: new Date().toISOString(),
       });
     },

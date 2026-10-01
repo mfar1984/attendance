@@ -6,7 +6,6 @@ import {
   CircleCheck,
   Landmark,
   Mail,
-  Settings,
   ShieldCheck,
   TriangleAlert,
   Umbrella,
@@ -27,7 +26,7 @@ import {
   SettingsGroup,
   SettingsStack,
 } from '../components/RecordPanel';
-import { Button, Field } from '../components/ui';
+import { Badge, Button, Field } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { payrollApi, type PayrollSettingsPayload } from '../lib/payroll-api';
 import { T, useLabels } from '../lib/translation';
@@ -162,25 +161,25 @@ function RatesTab(): ReactNode {
 
   return (
     <>
+      {/* The tab's opening heading, so it carries the tab's icon — the one place a section does. */}
       <PanelSection
-        icon={<Settings className="size-4" aria-hidden />}
+        icon={<Landmark className="size-4" aria-hidden />}
         title={<T k="pay.settings.tab.rates" />}
+        subtitle={<T k="pay.settings.rates.subtitle" />}
       />
 
-      <PanelBody className="space-y-2 pb-0">
-        <Feedback error={error} notice={notice} />
+      {(error !== null || notice !== null || !reviewed) && (
+        <PanelBody className="space-y-2 pb-0">
+          <Feedback error={error} notice={notice} />
 
-        {/*
-          The caveats come from the server as keys.
-          Sent rather than written here so a caveat cannot be true of the engine and absent from
-          the screen — these are approximations somebody has to know about before signing a period.
-        */}
-        {!reviewed && (
-          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-            <T k="pay.settings.caveat.unverified" />
-          </PanelNote>
-        )}
-      </PanelBody>
+          {/* The one standing warning, until finance confirms the rates in the last group. */}
+          {!reviewed && !loading && (
+            <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+              <T k="pay.settings.caveat.unverified" />
+            </PanelNote>
+          )}
+        </PanelBody>
+      )}
 
       {loading ? (
         <PanelBody>
@@ -194,6 +193,8 @@ function RatesTab(): ReactNode {
             <SettingsGroup
               title={<T k="pay.settings.group.epf" />}
               icon={<Landmark className="size-3.5" aria-hidden />}
+              // What the base excludes, under the heading of the group it describes.
+              subtitle={<T k="pay.settings.epf.note" />}
               action={
                 <span className="text-xs tabular-nums text-slate-500">
                   {`${draft.epfEmployeeRate ?? '—'}% / ${draft.epfEmployerRate ?? '—'}%`}
@@ -220,11 +221,6 @@ function RatesTab(): ReactNode {
                   showLabel={false}
                 />
               </SettingRow>
-              <div className="pt-2">
-                <PanelNote icon={<CircleAlert className="size-3.5" aria-hidden />}>
-                  <T k="pay.settings.epf.note" />
-                </PanelNote>
-              </div>
             </SettingsGroup>
 
             <SettingsGroup
@@ -297,29 +293,36 @@ function RatesTab(): ReactNode {
                 )
               }
               action={
-                <span
-                  className={
-                    reviewed
-                      ? 'text-xs font-medium uppercase text-emerald-700'
-                      : 'text-xs font-medium uppercase text-amber-700'
-                  }
-                >
-                  <T k={reviewed ? 'app.status.active' : 'app.status.inactive'} />
-                </span>
+                /*
+                  Whether the rates are confirmed, in its own words. It used to borrow "active" and
+                  "inactive", which describe a record and not a review.
+                */
+                <Badge tone={reviewed ? 'success' : 'warning'} className="uppercase">
+                  <T k={reviewed ? 'pay.settings.review.done' : 'pay.settings.review.pending'} />
+                </Badge>
               }
             >
-              <div className="pb-3">
-                <p className="mb-2 text-xs font-medium tracking-wide text-slate-500 uppercase">
-                  <T k="pay.settings.caveat.heading" />
-                </p>
-                <div className="space-y-2">
-                  {(payload?.caveatKeys ?? []).map((key) => (
-                    <PanelNote key={key} icon={<CircleAlert className="size-3.5" aria-hidden />}>
-                      <T k={key as LabelKey} />
-                    </PanelNote>
-                  ))}
+              {/*
+                The caveats come from the server as keys, so one cannot be true of the engine and
+                absent from the screen. One strip listing them: they are read together, as the
+                checklist for the switch below, not as separate warnings.
+              */}
+              {(payload?.caveatKeys ?? []).length > 0 && (
+                <div className="pt-1 pb-3">
+                  <PanelNote icon={<CircleAlert className="size-3.5" aria-hidden />}>
+                    <span className="block font-medium">
+                      <T k="pay.settings.caveat.heading" />
+                    </span>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                      {(payload?.caveatKeys ?? []).map((key) => (
+                        <li key={key}>
+                          <T k={key as LabelKey} />
+                        </li>
+                      ))}
+                    </ul>
+                  </PanelNote>
                 </div>
-              </div>
+              )}
 
               <SettingRow
                 label={<T k="pay.settings.ratesReviewed" />}
@@ -337,7 +340,8 @@ function RatesTab(): ReactNode {
           </SettingsStack>
 
           {mayEdit && (
-            <PanelActions>
+            // What the save does and does not touch, read beside the button that does it.
+            <PanelActions hint={<T k="pay.settings.save.hint" />}>
               <Button disabled={busy} onClick={() => void save()}>
                 <T k="pay.settings.action.save" />
               </Button>

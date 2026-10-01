@@ -25,6 +25,7 @@ import { REQUEST_PREFIX, highestSequence, nextRequestNo, yearMonthOf } from '../
 import { conflict, forbidden, notFound, parseBody, unauthorized } from '../http.js';
 import { recordActivity } from '../logging/activity.js';
 import { notify } from '../notify/dispatch.js';
+import { registerStaffSearch } from '../staff/search.js';
 import { asDateOnly, dateOnlyKey } from '../time.js';
 
 /**
@@ -1107,49 +1108,11 @@ export async function expenseRoutes(app: FastifyInstance): Promise<void> {
   // Expense requests
   // -------------------------------------------------------------------------
 
-  /**
-   * Staff picker for the expense form, scoped to the expense permission.
-   *
-   * Its own endpoint and not the claims one, for the reason the claims one is not the leave one:
-   * whoever records expenses is not necessarily whoever files claims, and borrowing
-   * `/api/claim-requests/staff-search` would make this form depend on a claims grant.
+  /*
+   * Staff picker for the expense form, gated on recording expenses — not the claims one, because
+   * whoever records expenses is not necessarily whoever files claims. See `staff/search.ts`.
    */
-  app.get(
-    '/api/expense-requests/staff-search',
-    { preHandler: requirePermission('hr.expenses', 'create') },
-    async (request) => {
-      const query = z
-        .object({
-          q: z.string().trim().max(128).default(''),
-          limit: z.coerce.number().int().min(1).max(50).default(20),
-        })
-        .parse(request.query);
-
-      const rows = await db().staff.findMany({
-        where: {
-          active: true,
-          ...(query.q.length > 0
-            ? {
-                OR: [
-                  { fullName: { contains: query.q } },
-                  { employeeNo: { contains: query.q } },
-                ],
-              }
-            : {}),
-        },
-        orderBy: { fullName: 'asc' },
-        take: query.limit,
-        select: {
-          id: true,
-          employeeNo: true,
-          fullName: true,
-          department: { select: { name: true } },
-        },
-      });
-
-      return jsonSafe(rows);
-    },
-  );
+  registerStaffSearch(app, '/api/expense-requests/staff-search', 'hr.expenses');
 
   app.get(
     '/api/expense-requests',

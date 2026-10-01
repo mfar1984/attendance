@@ -417,6 +417,17 @@ check(
   scoringOpen({ periodStatus: 'open', assignmentStatus: 'finalised' })?.key,
   'kpi.refuse.assignmentFinalised',
 );
+// Submission froze the total and grade; a later save would change the answers under them.
+check(
+  'penugasan dihantar ditolak',
+  scoringOpen({ periodStatus: 'open', assignmentStatus: 'submitted' })?.key,
+  'kpi.refuse.assignmentSubmitted',
+);
+check(
+  'belum bermula masih dibuka',
+  scoringOpen({ periodStatus: 'open', assignmentStatus: 'pending' }),
+  null,
+);
 
 console.log('\nPenilai — seorang, dinamakan');
 check('penilai berbeza dari subjek', checkReviewer({ subjectStaffId: 1, reviewerStaffId: 2 }), null);

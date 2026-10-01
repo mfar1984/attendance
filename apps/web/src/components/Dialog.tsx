@@ -114,6 +114,7 @@ export function DialogFooter({
   submitLabel,
   closeLabel,
   submitTitle,
+  secondary,
 }: {
   onClose: () => void;
   onSubmit?: () => void;
@@ -135,6 +136,14 @@ export function DialogFooter({
    * already have — the same rule `RowAction` has always followed with its `label`.
    */
   submitTitle?: string;
+  /**
+   * A second commit between cancel and submit, for a form that can be kept without being sent.
+   *
+   * The appraisal form is the case: answers are saved over more than one sitting and submitted
+   * once. It sits in this bar rather than in the body so both commits are where every other dialog
+   * puts its commit — a save button floating above the footer was a second place to look.
+   */
+  secondary?: ReactNode;
 }): ReactNode {
   return (
     /*
@@ -152,6 +161,7 @@ export function DialogFooter({
       <Button variant="ghost" onClick={onClose} disabled={busy === true}>
         {closeLabel ?? <T k="dialog.cancel" />}
       </Button>
+      {secondary}
       {onSubmit !== undefined && (
         <Button
           onClick={onSubmit}

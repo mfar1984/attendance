@@ -1,5 +1,6 @@
 import type { LabelKey } from '@attendance/shared';
 
+import type { PickedStaff } from '../components/StaffPicker';
 import { api } from './api';
 
 /**
@@ -422,6 +423,25 @@ export interface LendingInput {
   note?: string;
 }
 
+/** A payroll period as the award screens see it: enough to filter by and to attach an award to. */
+export interface PeriodOption {
+  id: number;
+  code: string;
+  name: string;
+  status: PeriodStatus;
+}
+
+/** A closed appraisal cycle a bonus run can read. */
+export interface AppraisalPeriodOption {
+  id: number;
+  code: string;
+  name: string;
+  /** Finalised grades in the cycle — what a run would consider. */
+  finalised: number;
+  /** Of those, how many already carry a bonus and would be skipped. */
+  generated: number;
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
@@ -500,6 +520,9 @@ export const payrollApi = {
   ) => api.patch<{ ok: true }>(`/api/payroll/allowances/${String(id)}`, input),
   removeAllowance: (id: number) =>
     api.delete<{ ok: true }>(`/api/payroll/allowances/${String(id)}`),
+  /** The person an allowance is for, filtered server-side behind this module's `create`. */
+  searchAllowanceStaff: (q: string) =>
+    api.get<PickedStaff[]>(`/api/payroll/allowances/staff-search${query({ q })}`),
 
   /**
    * Bonuses and commissions share a shape and not an endpoint.
@@ -535,6 +558,14 @@ export const payrollApi = {
   ),
   removeAward: (kind: 'bonuses' | 'commissions', id: number) =>
     api.delete<{ ok: true }>(`/api/payroll/${kind}/${String(id)}`),
+  /** The recipient, on the kind's own gate — a bonus clerk is not thereby a commission clerk. */
+  searchAwardStaff: (kind: 'bonuses' | 'commissions', q: string) =>
+    api.get<PickedStaff[]>(`/api/payroll/${kind}/staff-search${query({ q })}`),
+  /** Periods to filter by and attach to, on the kind's own `view` rather than the period screen's. */
+  awardPeriods: (kind: 'bonuses' | 'commissions') =>
+    api.get<PeriodOption[]>(`/api/payroll/${kind}/periods`),
+  /** Closed appraisal cycles, with how many finalised grades each holds and how many already paid. */
+  appraisalPeriods: () => api.get<AppraisalPeriodOption[]>('/api/payroll/bonuses/appraisal-periods'),
 
   generateFromAppraisals: (input: { kpiPeriodId: number; periodId: number }) =>
     api.post<{
@@ -560,4 +591,7 @@ export const payrollApi = {
   ),
   removeLending: (kind: 'loans' | 'advances', id: number) =>
     api.delete<{ ok: true }>(`/api/payroll/${kind}/${String(id)}`),
+  /** The borrower, on the kind's own gate. */
+  searchLendingStaff: (kind: 'loans' | 'advances', q: string) =>
+    api.get<PickedStaff[]>(`/api/payroll/${kind}/staff-search${query({ q })}`),
 };

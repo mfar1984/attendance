@@ -34,6 +34,7 @@ import { REQUEST_PREFIX, highestSequence, nextRequestNo } from '../hr/request-nu
 import { conflict, forbidden, forUpdate, notFound, parseBody, unauthorized } from '../http.js';
 import { recordActivity } from '../logging/activity.js';
 import { notify } from '../notify/dispatch.js';
+import { registerStaffSearch } from '../staff/search.js';
 import { asDateOnly, dateOnlyKey } from '../time.js';
 
 /**
@@ -219,51 +220,8 @@ export async function overtimeRoutes(app: FastifyInstance): Promise<void> {
   // Claims
   // -------------------------------------------------------------------------
 
-  /**
-   * Staff picker for the overtime form, scoped to the overtime permission.
-   *
-   * One per module, like leave and claims, because the gate differs: whoever files overtime is
-   * not necessarily whoever files leave, and borrowing another module's search would make this
-   * form depend on that module's grant.
-   *
-   * Filtered on the server: five thousand staff is not a dropdown.
-   */
-  app.get(
-    '/api/overtime-requests/staff-search',
-    { preHandler: requirePermission('hr.overtime', 'create') },
-    async (request) => {
-      const query = z
-        .object({
-          q: z.string().trim().max(128).default(''),
-          limit: z.coerce.number().int().min(1).max(50).default(20),
-        })
-        .parse(request.query);
-
-      const rows = await db().staff.findMany({
-        where: {
-          active: true,
-          ...(query.q.length > 0
-            ? {
-                OR: [
-                  { fullName: { contains: query.q } },
-                  { employeeNo: { contains: query.q } },
-                ],
-              }
-            : {}),
-        },
-        orderBy: { fullName: 'asc' },
-        take: query.limit,
-        select: {
-          id: true,
-          employeeNo: true,
-          fullName: true,
-          department: { select: { name: true } },
-        },
-      });
-
-      return jsonSafe(rows);
-    },
-  );
+  // Staff picker for the overtime form, gated on filing overtime. See `staff/search.ts`.
+  registerStaffSearch(app, '/api/overtime-requests/staff-search', 'hr.overtime');
 
   app.get(
     '/api/overtime-requests',
