@@ -889,6 +889,15 @@ export function KeyValueList({ children }: { children: ReactNode }): ReactNode {
   return <dl className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2">{children}</dl>;
 }
 
+/**
+ * One read-only value and its label.
+ *
+ * **The value is never cut.** It used to be `truncate` with the label held at full width, so a long
+ * label pushed the value out of its own row: a connector's LAN address read `192.168.1…` in the one
+ * place an operator looks it up to point a terminal at it, with no tooltip and no way to read the
+ * rest. The value is the reason the row exists, so the label gives way instead — it wraps, and the
+ * value keeps its width up to two thirds of the row, past which it wraps too rather than vanishing.
+ */
 export function KeyValue({
   label,
   value,
@@ -900,8 +909,14 @@ export function KeyValue({
 }): ReactNode {
   return (
     <div className="flex items-baseline justify-between gap-3 border-b border-slate-100 pb-1.5">
-      <dt className="shrink-0 text-slate-500">{label}</dt>
-      <dd className={cn('min-w-0 truncate text-right text-slate-700', mono ? 'font-mono text-xs' : '')}>
+      <dt className="min-w-0 text-slate-500">{label}</dt>
+      <dd
+        className={cn(
+          'max-w-[66%] shrink-0 text-right break-words text-slate-700',
+          // Addresses, paths and hashes have no spaces to wrap at.
+          mono ? 'font-mono text-xs break-all' : '',
+        )}
+      >
         {value}
       </dd>
     </div>

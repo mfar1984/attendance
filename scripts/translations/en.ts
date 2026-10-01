@@ -6211,7 +6211,7 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
   'agent.build.outdated': 'OUT OF DATE',
   'agent.build.unknown': 'NOT REPORTED',
 
-  'agent.detail.lan': 'LAN address the terminals point at',
+  'agent.detail.lan': 'Terminals push to',
   'agent.detail.publicAddress': 'Last public address',
   'agent.detail.enrolled': 'Enrolled',
   'agent.detail.lastSeen': 'Seen',
@@ -6230,6 +6230,19 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
   'agent.update.requested': 'Update requested. The connector will collect it on its next heartbeat.',
   'agent.update.pending': 'An update request has been waiting since {time}.',
   'agent.update.failed': 'The last update failed {time}: {reason}',
+  'agent.update.stage.preflight':
+    'The connector service cannot write where the update needs to, so it stays on the old code. Allow it in the systemd unit (ReadWritePaths and HOME), then try again.',
+  'agent.update.stage.fetch': 'The new code could not be fetched, so the connector stays on the old code.',
+  'agent.update.stage.source':
+    'The latest code in the repository is not the build the cloud asked for, so nothing was built. Usually the cloud has not been updated to the same commit yet.',
+  'agent.update.stage.space':
+    'Not enough disk space to install dependencies, so the connector stays on the old code. Free some space on that machine, then try again.',
+  'agent.update.stage.install':
+    'Installing dependencies failed. The connector is still running the old code but must NOT be restarted until this is fixed by hand.',
+  'agent.update.stage.packages': 'Building the packages failed, so the connector stays on the old code.',
+  'agent.update.stage.build': 'Building the connector failed, so it stays on the old code.',
+  'agent.update.stage.entry':
+    'The build finished but left no connector entry point, so the restart was cancelled and it stays on the old code.',
   'agent.error.update': 'Could not request the update',
 
   // The device editor, when the terminal is reached through a connector rather than dialled.

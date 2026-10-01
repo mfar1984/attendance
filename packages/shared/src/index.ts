@@ -58,7 +58,10 @@ export {
 
 export {
   AGENT_EVENT_BATCH_MAX,
+  AGENT_UPDATE_STAGES,
   AGENT_VERSION,
+  formatAgentUpdateFailure,
+  parseAgentUpdateFailure,
   agentCommandOutcomeSchema,
   agentDeviceReportSchema,
   agentEnrolSchema,
@@ -98,6 +101,7 @@ export {
   type AgentEventBatch,
   type AgentHeartbeat,
   type AgentHeartbeatReply,
+  type AgentUpdateStage,
   type AgentSnapshot,
   type AgentSnapshotBatch,
   type TerminalEventPayload,

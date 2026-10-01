@@ -271,9 +271,20 @@ connector melakukan perkara yang sama dari skrin. Ia tidak boleh memasang diriny
 binaan yang berjalan sekarang tidak tahu membaca permintaan itu — jadi setiap tapak yang ada
 perlukan satu lawatan manual, dan setiap tapak baharu mendapatnya dari hari pertama.
 
+**Dengan syarat unitnya membenarkan.** Tapak yang dipasang sebelum unit dibetulkan perlukan dua
+baris lagi, sekali, dengan tangan — lihat "Kemas kini sendiri" dalam bahagian Connector tapak.
+Tanpanya butang itu gagal pada setiap tapak dengan `git pull --ff-only`.
+
 **Susunan: cloud dahulu, agent kemudian.** Agent yang dikemas kini bercakap dengan endpoint yang
 cloud lama tidak ada, dapat 404, dan log amaran pada setiap pusingan. Tiada kerosakan, tetapi ia
 bunyi yang menghantar seseorang memburu bug yang tidak wujud.
+
+Susunan itu juga yang menentukan **binaan mana** yang connector bina. Ia membandingkan
+`AGENT_VERSION` dalam kod yang baru diambil dengan versi yang cloud minta, dan enggan membina
+kalau berbeza. Repo yang sudah membawa connector lebih baharu sementara cloud masih pada binaan
+sebelumnya akan memulakan semula ke versi yang cloud panggil lapuk, diminta lagi, dan berulang
+setiap minit. Penolakan itu muncul pada skrin sebagai "bukan binaan yang cloud minta" — jawapannya
+deploy cloud, kemudian tekan semula.
 
 ### Skrip pemasangan mesti diluluskan dalam repo
 
@@ -511,6 +522,72 @@ token pendaftaran semula, tarik kredensial, buang baris yang ditarik, dan buka
 dialog butiran dengan butang kemas kini. Borang peranti ada pemilih "Dicapai
 melalui" yang menetapkan `devices.agentId`. `create-agent.mts` masih ada untuk
 sesiapa yang lebih suka shell, tetapi tiada langkah operasi memerlukannya lagi.
+
+### Kemas kini sendiri
+
+#[[file:apps/agent/src/selfupdate.ts]]
+
+**Unit mesti membenarkan connector menulis klonnya sendiri.** `ProtectSystem=strict` memasang
+seluruh sistem fail baca-sahaja untuk proses itu kecuali `ReadWritePaths`, **siapa pun
+pemiliknya** — memiliki `/opt/attendance` tidak cukup. Pemasang dahulu menyenaraikan direktori
+keadaan sahaja, jadi kemas kini sendiri yang pertama di tapak sebenar gagal pada tulisan
+pertamanya, dan skrin hanya berkata `git pull --ff-only` gagal kerana sebab sebenar terpotong.
+
+Unit sekarang membawa dua baris itu:
+
+```ini
+ReadWritePaths=/var/lib/attendance-agent /opt/attendance
+Environment=HOME=/var/lib/attendance-agent
+```
+
+`HOME` kerana akaun servis tiada home dan `ProtectHome` menyembunyikan `/home` — npm perlukan
+cache yang boleh ditulis untuk `npm ci`, dan kalau ia gagal di situ, `node_modules` sudah pun
+dibuang.
+
+**Tapak yang dipasang sebelum itu: satu drop-in, sekali.** Lebih pendek daripada menjalankan semula
+pemasang, dan tidak perlukan token:
+
+```bash
+sudo mkdir -p /etc/systemd/system/attendance-agent.service.d
+printf '[Service]\nReadWritePaths=/opt/attendance\nEnvironment=HOME=/var/lib/attendance-agent\n' \
+  | sudo tee /etc/systemd/system/attendance-agent.service.d/self-update.conf
+sudo chown -R attendance-agent:attendance-agent /opt/attendance
+sudo systemctl daemon-reload && sudo systemctl restart attendance-agent
+systemctl show attendance-agent -p ReadWritePaths -p Environment
+```
+
+`ReadWritePaths` dalam drop-in **menambah** kepada senarai unit, bukan menggantikannya. `chown`
+kerana kemas kini manual sebagai root yang terhenti sebelum `chown`nya sendiri meninggalkan fail
+milik root yang servis tidak boleh tulis walaupun sandbox membenarkan.
+
+**Ini melonggarkan sandbox dengan sengaja.** Proses yang mendengar terminal pada LAN kini boleh
+menulis kodnya sendiri. Itu harga kemas kini tanpa root: pengemas kini yang tidak boleh menulis
+kodnya tidak boleh mengemas kini. Tambahan risikonya kecil, kerana proses yang sudah dikompromi
+sudah memegang kredensial connector dan kata laluan terminal. Kalau pemisahan diperlukan, bentuknya
+ialah unit pengemas kini berasingan yang dipicu unit `.path` — bukan membuang dua baris ini.
+
+**Menjalankan semula pemasang selamat** (dari cloud yang membawa perubahan ini). Ia mengekalkan
+port pendengar dan nama pengguna serta kata laluan Digest dari `agent.env` yang sedia ada, kerana
+ketiga-tiganya dikonfigurasi ke dalam setiap terminal di tapak — versi lama menjana kata laluan
+baharu, dan setiap terminal ditolak tanpa apa-apa pada skrin. Alamat LAN dikesan semula dengan
+sengaja. Arahan git sebagai root membawa `-c safe.directory` sendiri.
+
+**Apa yang skrin paparkan.** Connector melaporkan `<peringkat>: <output alat>` melalui
+`formatAgentUpdateFailure`, dan `/api/agents` memecahkannya kepada `updateErrorKey` dan
+`updateError`. Peringkat diterjemah; output git atau npm dipaparkan seperti dicetak, kerana itulah
+baris yang seseorang di mesin itu akan cari. Bukan medan heartbeat baharu: skema heartbeat
+`strictObject`, jadi connector baharu yang menghantar medan baharu kepada cloud lama akan ditolak —
+dan heartbeat yang membawa ralat diulang sehingga ia sampai, jadi setiap heartbeat selepasnya juga
+ditolak. Awalan rentetan melalui mana-mana cloud.
+
+**Kegagalan yang dilaporkan menamatkan percubaan.** Permintaan dahulu kekal selepas kegagalan, dan
+connector bertindak atas setiap heartbeat yang membawanya — kegagalan pertama itu menjalankan
+`git pull` semula setiap minit sambil butang kelabu seolah-olah permintaan sedang menunggu.
+Sekarang sebab itu kekal pada skrin di sebelah butang yang hidup semula.
+
+**Sebelum apa-apa diubah**, ia menyemak klon, `.git`, `node_modules`, `dist` dan cache npm boleh
+ditulis, dan sekurang-kurangnya 1 GiB kosong sebelum `npm ci`. Hanya peringkat `install` yang
+meninggalkan tapak tidak selamat untuk dimulakan semula, dan labelnya berkata begitu.
 
 ### Dua perkara yang akan menggigit kalau dilupakan
 

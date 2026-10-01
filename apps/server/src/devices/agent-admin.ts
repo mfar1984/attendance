@@ -1,4 +1,10 @@
-import { AGENT_VERSION, AgentStatus } from '@attendance/shared';
+import {
+  AGENT_VERSION,
+  AgentStatus,
+  parseAgentUpdateFailure,
+  type AgentUpdateStage,
+  type LabelKey,
+} from '@attendance/shared';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
@@ -36,6 +42,40 @@ import {
 const agentInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
 });
+
+/**
+ * The label for each stage a self-update can stop at.
+ *
+ * Sent as a key like every other route's wording, because whoever opens the dialog reads the reason
+ * in their own language. Only the stage is translated; the detail after it is what git or npm
+ * printed, and is shown as printed.
+ */
+const UPDATE_STAGE_LABELS: Record<AgentUpdateStage, LabelKey> = {
+  preflight: 'agent.update.stage.preflight',
+  fetch: 'agent.update.stage.fetch',
+  source: 'agent.update.stage.source',
+  space: 'agent.update.stage.space',
+  install: 'agent.update.stage.install',
+  packages: 'agent.update.stage.packages',
+  build: 'agent.update.stage.build',
+  entry: 'agent.update.stage.entry',
+};
+
+/**
+ * Why the last update stopped, split for the screen.
+ *
+ * A connector from 0.2.2 sends `<stage>: <tool output>`, which becomes a key and the output. One
+ * from before sent a sentence of its own in Malay; that has no key and is passed through as
+ * written, because there is nothing in it to translate by.
+ */
+function updateFailure(stored: string | null): {
+  updateErrorKey: LabelKey | null;
+  updateError: string | null;
+} {
+  if (stored === null) return { updateErrorKey: null, updateError: null };
+  const { stage, detail } = parseAgentUpdateFailure(stored);
+  return { updateErrorKey: stage === null ? null : UPDATE_STAGE_LABELS[stage], updateError: detail };
+}
 
 export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -84,6 +124,7 @@ export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
             ...agent,
             devices: _count.devices,
             queued: queueByAgent.get(agent.id) ?? 0,
+            ...updateFailure(agent.updateError),
             /**
              * The build this installation would install, and whether the site matches it.
              *

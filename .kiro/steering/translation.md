@@ -97,7 +97,8 @@ const STATUS_LABELS: Record<string, LabelKey> = { online: 'device.status.online'
 Fail yang memegangnya: `lib/operations-api.ts` (EXCEPTION/STATUS/EVENT/MAJOR),
 `lib/reports-api.ts` (LEAVE_STATUS), `lib/settings-api.ts` (USER_STATUS, LEVEL, CATEGORY,
 SOURCE, ENTITY, ENCRYPTION), `server/routes/reports.ts` (FIELD_LABELS),
-`server/auth/permissions.ts` (ACTION_LABELS), dan peta setempat dalam LiveMonitorPage,
+`server/auth/permissions.ts` (ACTION_LABELS), `server/devices/agent-admin.ts`
+(UPDATE_STAGE_LABELS), dan peta setempat dalam LiveMonitorPage,
 DevicesPage, ShiftsPage, HolidaysPage, PayrollExportPage, LogsPage, ApiTokenList.
 
 **Bahaya yang `tsc` tidak tangkap.** Selepas menukar peta kepada kunci, `MAP[k] ?? k` masih
@@ -175,6 +176,7 @@ menyelesaikannya.
 | `/api/work-patterns` | `noteKey?` |
 | `/api/api-tokens` skop | `labelKey` + `action`, sengkang milik label |
 | `/api/users` | `noteKey?` |
+| `/api/agents` | `updateErrorKey` (peringkat kemas kini connector) + `updateError` (output git/npm, kekal teks) |
 
 **Pengecualian, dan sebabnya:**
 
@@ -255,7 +257,7 @@ tanpa satu semakan gagal.
 
 ## Kemajuan
 
-**3823 kunci berdaftar. Setiap skrin siap.**
+**4344 kunci berdaftar. Setiap skrin siap.**
 
 Tiada lagi fail dengan literal tinggal. Yang terakhir disiapkan ialah tujuh yang paling besar:
 `UsersPage` (1518 baris), `EmailProfilesTab`, `WebhookList`, `ProfilePage`, `SecurityTab`,

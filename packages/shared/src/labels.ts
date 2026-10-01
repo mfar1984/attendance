@@ -5115,7 +5115,7 @@ export const LABELS = {
   'agent.build.outdated': 'LAPUK',
   'agent.build.unknown': 'BELUM DILAPORKAN',
 
-  'agent.detail.lan': 'Alamat LAN yang terminal dituding',
+  'agent.detail.lan': 'Terminal menghantar ke',
   'agent.detail.publicAddress': 'Alamat awam terakhir',
   'agent.detail.enrolled': 'Didaftar',
   'agent.detail.lastSeen': 'Dilihat',
@@ -5143,8 +5143,31 @@ export const LABELS = {
     'Connector mengutip permintaan ini pada heartbeat berikutnya, membina kod baharu, kemudian keluar supaya systemd memulakannya semula. Tiada port masuk dibuka dan tiada akses root diperlukan. Kalau bina gagal, ia kekal pada kod lama dan melaporkan sebabnya di sini.',
   'agent.update.requested': 'Kemas kini diminta. Connector akan mengutipnya pada heartbeat berikutnya.',
   'agent.update.pending': 'Permintaan kemas kini menunggu sejak {time}.',
-  /** The connector's own words, because it is the only thing that knows why. */
+  /**
+   * `{reason}` is one of the stage labels below, followed on screen by what git or npm printed. A
+   * connector before 0.2.2 sent a sentence of its own instead, which is shown as written.
+   */
   'agent.update.failed': 'Kemas kini terakhir gagal {time}: {reason}',
+  /**
+   * Where a self-update stopped, one per stage the connector reports (`AGENT_UPDATE_STAGES`).
+   *
+   * Each states what the site is left running, because that is the question after "did it work".
+   * Every stage but `install` leaves the old code running and safe to restart. `install` does not,
+   * and says so in capitals: `npm ci` deleted `node_modules` before it failed.
+   */
+  'agent.update.stage.preflight':
+    'Servis connector tidak boleh menulis ke tempat yang kemas kini perlukan, jadi ia kekal pada kod lama. Benarkannya dalam unit systemd (ReadWritePaths dan HOME), kemudian cuba lagi.',
+  'agent.update.stage.fetch': 'Kod baharu tidak dapat diambil, jadi connector kekal pada kod lama.',
+  'agent.update.stage.source':
+    'Kod terkini dalam repositori bukan binaan yang cloud minta, jadi tiada apa dibina. Biasanya cloud belum dikemas kini ke commit yang sama.',
+  'agent.update.stage.space':
+    'Ruang cakera tidak cukup untuk memasang kebergantungan, jadi connector kekal pada kod lama. Kosongkan ruang pada mesin itu, kemudian cuba lagi.',
+  'agent.update.stage.install':
+    'Pemasangan kebergantungan gagal. Connector masih berjalan pada kod lama tetapi TIDAK boleh dimulakan semula sampai ia dibetulkan dengan tangan.',
+  'agent.update.stage.packages': 'Bina pakej gagal, jadi connector kekal pada kod lama.',
+  'agent.update.stage.build': 'Bina connector gagal, jadi ia kekal pada kod lama.',
+  'agent.update.stage.entry':
+    'Bina selesai tetapi titik masuk connector tiada, jadi restart dibatalkan dan ia kekal pada kod lama.',
   'agent.error.update': 'Gagal meminta kemas kini',
 
   // -------------------------------------------------------------------------

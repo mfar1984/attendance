@@ -396,7 +396,8 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
  *
  * A reported failure is stored, because the connector is the only thing that knows why: `git pull`
  * refused, the build failed, the compiled entry point was missing. Each has a different answer and
- * none is visible from the cloud.
+ * none is visible from the cloud. It also ends the request, so the connector is not asked to repeat
+ * a failure on every heartbeat.
  *
  * A request is cleared once the reported build matches what this installation would install. That
  * is the only success signal there is, and it is a better one than a flag the connector sets: a
@@ -425,13 +426,26 @@ async function settleUpdate(
   if (reportedError !== null) {
     data.updateError = reportedError.slice(0, 500);
     data.updateErrorAt = new Date();
+
+    /*
+     * A reported failure ends the attempt.
+     *
+     * The request used to stay, on the reasoning that the update had not happened yet. But the
+     * connector acts on every heartbeat that carries a request, so a request that outlived its
+     * failure was a retry on every beat: the first real one — a checkout the unit had made
+     * read-only — ran `git pull` again each minute, while the button stayed grey as though an
+     * attempt were merely waiting to be collected. Ending it here leaves the reason on screen
+     * beside a button that works, and trying again becomes a decision somebody makes after reading
+     * it. A rebuild that failed will fail the same way until something at the site changes.
+     */
+    if (row.updateRequestedAt !== null) data.updateRequestedAt = null;
   } else if (row.updateError !== null && current) {
     // The condition it described is over, so the words go with it.
     data.updateError = null;
     data.updateErrorAt = null;
   }
 
-  const requested = row.updateRequestedAt !== null && !current;
+  const requested = row.updateRequestedAt !== null && !current && reportedError === null;
   if (row.updateRequestedAt !== null && current) data.updateRequestedAt = null;
 
   if (Object.keys(data).length > 0) {

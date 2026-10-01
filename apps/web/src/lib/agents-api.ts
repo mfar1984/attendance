@@ -43,9 +43,17 @@ export interface AgentRow {
    */
   buildStatus: string;
 
-  /** Set while a self-update is waiting to be collected. */
+  /**
+   * Set while a self-update is waiting to be collected. Cleared when the connector reports the
+   * target build, and also when it reports a failure — a failed attempt is over, not waiting.
+   */
   updateRequestedAt: string | null;
-  /** Why the last attempt did not happen, in the connector's own words. */
+  /**
+   * Where the last attempt stopped, as a label, when the connector said which stage (0.2.2 on).
+   * Null for an older connector, whose `updateError` is a sentence of its own.
+   */
+  updateErrorKey: LabelKey | null;
+  /** What git or npm printed when `updateErrorKey` is set; the older connector's sentence otherwise. */
   updateError: string | null;
   updateErrorAt: string | null;
 }

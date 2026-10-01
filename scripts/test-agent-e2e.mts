@@ -19,7 +19,13 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { AGENT_VERSION, PunchDirection, RawEventKind, VerifyMethod } from '@attendance/shared';
+import {
+  AGENT_VERSION,
+  PunchDirection,
+  RawEventKind,
+  VerifyMethod,
+  formatAgentUpdateFailure,
+} from '@attendance/shared';
 
 import { buildApp } from '../apps/server/src/app.js';
 import { encryptSecret } from '../apps/server/src/crypto.js';
@@ -808,7 +814,7 @@ try {
    *
    * Three properties are asserted, and the third is the one that would silently rot.
    */
-  section('a connector learns it should update itself, and reports failure in words');
+  section('a connector learns it should update itself, and a reported failure ends the attempt');
 
   await db().deviceAgent.update({
     where: { id: agentRow.id },
@@ -855,20 +861,48 @@ try {
     data: { updateRequestedAt: new Date(), version: '0.0.1' },
   });
 
+  const updateFailure = formatAgentUpdateFailure(
+    'packages',
+    "npx tsc --build (exit 2): packages/shared/src/x.ts(1,1): error TS2304: Cannot find name 'x'.",
+  );
   const failed = await cloud.heartbeat({
     version: '0.0.1',
     lanHost: '192.168.99.10',
     lanPort: 18080,
     spooled: 0,
     devices: [],
-    updateError: 'Bina pakej gagal. npx tsc: exit 2',
+    updateError: updateFailure,
   });
   check('a reported failure is accepted', failed.ok);
 
+  /*
+   * And it ends the attempt. The request used to stay "because it has not happened yet", and the
+   * connector acts on every heartbeat that carries one — so the first real failure was repeated on
+   * every beat, while the button stayed grey as though an attempt were waiting to be collected.
+   */
+  check(
+    'the reply to the failure does not ask the connector to repeat it',
+    failed.ok && failed.value.updateRequested !== true,
+  );
+
   const withError = await db().deviceAgent.findUniqueOrThrow({ where: { id: agentRow.id } });
-  check("the connector's own reason is stored", withError.updateError === 'Bina pakej gagal. npx tsc: exit 2');
+  check("the connector's own reason is stored", withError.updateError === updateFailure);
   check('and stamped', withError.updateErrorAt !== null);
-  check('while the request stays, because it has not happened yet', withError.updateRequestedAt !== null);
+  check('and the request is cleared, so the button is offered again', withError.updateRequestedAt === null);
+
+  const afterFailure = await cloud.heartbeat({
+    version: '0.0.1',
+    lanHost: '192.168.99.10',
+    lanPort: 18080,
+    spooled: 0,
+    devices: [],
+  });
+  check(
+    'the next beat from the same old build is not asked again',
+    afterFailure.ok && afterFailure.value.updateRequested !== true,
+  );
+  const stillFailed = await db().deviceAgent.findUniqueOrThrow({ where: { id: agentRow.id } });
+  check('and the reason stays on screen until something changes', stillFailed.updateError === updateFailure);
 
   // Recovering clears the words with the condition they described.
   await cloud.heartbeat({

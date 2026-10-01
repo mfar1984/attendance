@@ -141,6 +141,61 @@ export const agentDeviceReportSchema = z.strictObject({
 
 export type AgentDeviceReport = z.infer<typeof agentDeviceReportSchema>;
 
+/** What the heartbeat carries and `device_agents.updateError` stores. */
+const UPDATE_ERROR_MAX = 500;
+
+/**
+ * Where a connector's self-update stopped.
+ *
+ * Carried as a prefix on `updateError` (`fetch: git pull --ff-only (exit 128): …`) rather than in a
+ * field of its own, and that is a compatibility decision. The heartbeat schema is strict, so a
+ * connector that sent a new field to a cloud not yet updated would have that heartbeat refused —
+ * and the one carrying an error is retried until it is delivered, so every heartbeat after it would
+ * be refused too. A prefix travels through any cloud: one that knows it shows the stage as a label
+ * in the reader's language, one that does not shows the line as written.
+ *
+ * Only the stage is translated. The rest is what git or npm printed, which no translation could
+ * improve and which is what somebody at the machine will search for.
+ */
+export const AGENT_UPDATE_STAGES = [
+  /** The service cannot write where the update has to: its checkout, or npm's cache. */
+  'preflight',
+  'fetch',
+  /** The fetched code is not the build the cloud asked for, so building it would only loop. */
+  'source',
+  /** Too little disk for `npm ci`, which deletes `node_modules` before it reinstalls. */
+  'space',
+  'install',
+  'packages',
+  'build',
+  'entry',
+] as const;
+
+export type AgentUpdateStage = (typeof AGENT_UPDATE_STAGES)[number];
+
+export function formatAgentUpdateFailure(stage: AgentUpdateStage, detail: string): string {
+  return `${stage}: ${detail}`.slice(0, UPDATE_ERROR_MAX);
+}
+
+/**
+ * The stage and the tool output, or no stage for the sentence a build before 0.2.2 sent.
+ *
+ * Matched against the known stages rather than any word before a colon, so prose that happens to
+ * open with one is not mistaken for a code.
+ */
+export function parseAgentUpdateFailure(text: string): {
+  stage: AgentUpdateStage | null;
+  detail: string;
+} {
+  const colon = text.indexOf(': ');
+  if (colon > 0) {
+    const head = text.slice(0, colon);
+    const stage = AGENT_UPDATE_STAGES.find((candidate) => candidate === head);
+    if (stage !== undefined) return { stage, detail: text.slice(colon + 2) };
+  }
+  return { stage: null, detail: text };
+}
+
 export const agentHeartbeatSchema = z.strictObject({
   version: z.string().max(32),
   /**
@@ -164,8 +219,11 @@ export const agentHeartbeatSchema = z.strictObject({
    * on the new code — so the proof is the `version` field above changing. Only failure needs
    * words, and a failed update leaves the process running, which means the next heartbeat can
    * carry them.
+   *
+   * From 0.2.2 this is `<stage>: <tool output>` (see `formatAgentUpdateFailure`). Earlier builds
+   * sent a sentence of their own, which is still accepted and shown as written.
    */
-  updateError: z.string().max(500).nullable().optional(),
+  updateError: z.string().max(UPDATE_ERROR_MAX).nullable().optional(),
 });
 
 export type AgentHeartbeat = z.infer<typeof agentHeartbeatSchema>;
@@ -216,8 +274,15 @@ export type AgentCommandOutcome = z.infer<typeof agentCommandOutcomeSchema>;
  *
  * 0.2.1 — undici 7.30.0, the HTTP client the connector reaches its terminals with. No behaviour
  * change; raised so every site shows as behind until it has the patched client.
+ *
+ * 0.2.2 — a self-update checks it can write before touching anything, reports where it stopped
+ * with what git or npm actually printed, and refuses to build code that is not the build asked
+ * for. The first real update, from 0.2.0, could not even fetch: the unit the installer wrote made
+ * the checkout read-only, and the screen said only that `git pull --ff-only` failed. Sites
+ * installed before the unit was fixed need two lines added to it by hand, once (deployment
+ * steering, "Connector tapak").
  */
-export const AGENT_VERSION = '0.2.1';
+export const AGENT_VERSION = '0.2.2';
 
 /**
  * What a connector reports about one terminal's own settings.

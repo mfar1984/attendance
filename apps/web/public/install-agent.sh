@@ -15,7 +15,8 @@
 # from `systemctl start`, so an installer that stopped there would report success on a site that
 # records nothing.
 #
-# Re-running is safe. It updates the checkout, rebuilds, and restarts.
+# Re-running is safe. It updates the checkout, rebuilds, rewrites the unit and restarts, and it
+# keeps the listener port and the Digest credentials the terminals at the site already use.
 
 set -euo pipefail
 
@@ -26,9 +27,12 @@ INSTALL_DIR="/opt/attendance"
 STATE_DIR="/var/lib/attendance-agent"
 CONFIG_DIR="/etc/attendance-agent"
 SERVICE_USER="attendance-agent"
-LISTEN_PORT="8080"
+# Empty rather than defaulted here, so a re-run can tell "not given" from "given the default" and
+# keep what the terminals already use. The defaults (8080, hikpush) are applied in "Menulis
+# konfigurasi" once the existing configuration has been read.
+LISTEN_PORT=""
 LAN_HOST=""
-INGEST_USERNAME="hikpush"
+INGEST_USERNAME=""
 INGEST_PASSWORD=""
 REPO="https://github.com/mfar1984/attendance.git"
 
@@ -138,9 +142,12 @@ step "Mengambil kod"
 # ---------------------------------------------------------------------------
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
-  git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH"
-  git -C "$INSTALL_DIR" checkout -f "$BRANCH"
-  git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
+  # The clone belongs to the service account after the first run, so root is refused here with
+  # "dubious ownership". Trusted for these commands only, rather than written into root's global
+  # configuration where it would outlive this script.
+  git -c safe.directory="$INSTALL_DIR" -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH"
+  git -c safe.directory="$INSTALL_DIR" -C "$INSTALL_DIR" checkout -f "$BRANCH"
+  git -c safe.directory="$INSTALL_DIR" -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
   note "klon dikemas kini ke origin/$BRANCH"
 else
   git clone --depth 1 --branch "$BRANCH" "$REPO" "$INSTALL_DIR"
@@ -180,6 +187,34 @@ chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
 step "Menulis konfigurasi"
 # ---------------------------------------------------------------------------
 
+ENV_FILE="$CONFIG_DIR/agent.env"
+
+# A re-run keeps what the terminals at this site already use.
+#
+# The listener port and the Digest username and password are configured into every terminal here.
+# A re-run that generated a new password, or fell back to the default port, would leave each of them
+# pushing at a connector that now refuses them or is not listening, and the firmware keeps no queue:
+# every scan in between is lost, with nothing on any screen saying why. A flag still wins, for when
+# changing one of these is the point.
+#
+# The LAN address is not kept. It is detected again, because a lease that moved is exactly when the
+# stored one is wrong, and the address the devices screen shows should be the one that answers.
+existing_value() {
+  if [[ -f "$ENV_FILE" ]]; then
+    sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1
+  fi
+}
+
+KEPT_PASSWORD=0
+if [[ -z "$INGEST_PASSWORD" ]]; then
+  INGEST_PASSWORD="$(existing_value INGEST_PASSWORD)"
+  if [[ -n "$INGEST_PASSWORD" ]]; then KEPT_PASSWORD=1; fi
+fi
+if [[ -z "$LISTEN_PORT" ]]; then LISTEN_PORT="$(existing_value LISTEN_PORT)"; fi
+if [[ -z "$INGEST_USERNAME" ]]; then INGEST_USERNAME="$(existing_value INGEST_USERNAME)"; fi
+LISTEN_PORT="${LISTEN_PORT:-8080}"
+INGEST_USERNAME="${INGEST_USERNAME:-hikpush}"
+
 if [[ -z "$LAN_HOST" ]]; then
   # The address on the route that reaches the cloud, which on a single-NIC Pi is the LAN address
   # the terminals will also use. Reported to the cloud and shown on the devices screen, so a wrong
@@ -195,8 +230,6 @@ if [[ -z "$INGEST_PASSWORD" ]]; then
   INGEST_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 14)"
   GENERATED_PASSWORD=1
 fi
-
-ENV_FILE="$CONFIG_DIR/agent.env"
 
 # The enrolment token is written only if there is no credential yet. Leaving a spent token in the
 # file achieves nothing and puts a secret on disk for no reason.
@@ -251,12 +284,21 @@ ExecStart=/usr/bin/env node --disable-warning=ExperimentalWarning $INSTALL_DIR/a
 Restart=always
 RestartSec=5
 
-# The connector reads one directory and writes one. Nothing else on this machine is its business.
+# The connector writes two directories: its state, and its own checkout, because it rebuilds itself
+# there when the cloud asks (apps/agent/src/selfupdate.ts). Nothing else on this machine is its
+# business.
+#
+# Both lines below are what make that rebuild possible. Without the checkout in ReadWritePaths,
+# ProtectSystem=strict mounts it read-only for this process whoever owns it, and every self-update
+# fails at its first write; the first one on a real site reached the screen as "git pull --ff-only"
+# failing and nothing else. HOME points into the state directory because this account has no home
+# and ProtectHome hides /home anyway, while npm needs a writable cache to install dependencies.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=$STATE_DIR
+ReadWritePaths=$STATE_DIR $INSTALL_DIR
+Environment=HOME=$STATE_DIR
 
 [Install]
 WantedBy=multi-user.target
@@ -308,6 +350,8 @@ if [[ "$GENERATED_PASSWORD" -eq 1 ]]; then
   printf '  Kata laluan Digest   : %s\n\n' "$INGEST_PASSWORD"
   printf '  Kata laluan ini dijana dan dipaparkan sekali di sini. Ia ada dalam %s\n' "$ENV_FILE"
   printf '  kalau diperlukan semula.\n'
+elif [[ "$KEPT_PASSWORD" -eq 1 ]]; then
+  printf '  Kata laluan Digest   : (tidak berubah, dalam %s)\n' "$ENV_FILE"
 else
   printf '  Kata laluan Digest   : (yang anda berikan)\n'
 fi

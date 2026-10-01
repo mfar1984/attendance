@@ -2002,9 +2002,20 @@ function AgentDetailDialog({
               k="agent.update.failed"
               vars={{
                 time: row.updateErrorAt === null ? '' : formatDateTime(row.updateErrorAt),
-                reason: row.updateError,
+                // A connector before 0.2.2 sent a sentence of its own, with no stage to translate.
+                reason: row.updateErrorKey === null ? row.updateError : <T k={row.updateErrorKey} />,
               }}
             />
+            {/*
+              What git or npm printed, kept whole and as printed. It is the line somebody at the
+              machine will search for, and a summary of it would be one more thing to translate
+              back before it could be looked up.
+            */}
+            {row.updateErrorKey !== null && row.updateError !== '' && (
+              <code className="mt-1.5 block font-mono text-[11px] break-all whitespace-pre-wrap">
+                {row.updateError}
+              </code>
+            )}
           </PanelNote>
         )}
 
