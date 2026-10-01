@@ -281,8 +281,13 @@ export type AgentCommandOutcome = z.infer<typeof agentCommandOutcomeSchema>;
  * the checkout read-only, and the screen said only that `git pull --ff-only` failed. Sites
  * installed before the unit was fixed need two lines added to it by hand, once (deployment
  * steering, "Connector tapak").
+ *
+ * 0.2.3 — the listener stops logging nonce rotation as a refused push. Every five and a half
+ * minutes a working terminal's push carried the nonce that had just expired, and the journal read
+ * "Refused a terminal push" for a retry that succeeded a moment later. The first release
+ * delivered by the update button rather than by hand.
  */
-export const AGENT_VERSION = '0.2.2';
+export const AGENT_VERSION = '0.2.3';
 
 /**
  * What a connector reports about one terminal's own settings.

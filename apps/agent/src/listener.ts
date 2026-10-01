@@ -82,13 +82,25 @@ export function createListener(
     });
 
     if (!verdict.ok) {
-      stats.rejected += 1;
       /*
        * A challenge is re-issued on every rejection, including a wrong password. The terminal
        * has no way to report an authentication failure to a human, so the alternative is a unit
        * that silently stops delivering with nothing anywhere saying why.
+       *
+       * Except `stale`, which is this listener rotating its nonce every five minutes: the
+       * terminal's next push still carries the old one, is refused, and is resent at once against
+       * the fresh challenge. Logged as a refusal, rotation alone wrote two "Refused a terminal
+       * push" warnings every five and a half minutes on a site that was working, and the first
+       * person to read them asked what was broken. Nothing is lost by quieting it: a wrong password
+       * fails the retry as `mismatch`, and a terminal sending no credentials stays `missing`.
+       * The cloud's own ingest route has never counted it either.
        */
-      logger().warn({ reason: verdict.reason, ip: request.ip }, 'Refused a terminal push');
+      if (verdict.reason === 'stale') {
+        logger().debug({ ip: request.ip }, 'Terminal push carried an expired nonce; challenged again');
+      } else {
+        stats.rejected += 1;
+        logger().warn({ reason: verdict.reason, ip: request.ip }, 'Refused a terminal push');
+      }
       return reply
         .status(401)
         .header('www-authenticate', digestChallenge())
