@@ -517,6 +517,14 @@ itu sendiri.
   alamat dan kata laluan Digestnya sendiri. Mengosongkan slot dibenarkan, kerana
   itu perlukan nombor slot sahaja.
 
+  Butangnya **"Tulis melalui connector"** pada tab Push editor peranti, yang
+  menggantikan borang hos/port bagi terminal connector. Route itu dahulu wujud
+  tanpa butang, dan halaman web terminal sendiri tiada medan kata laluan untuk
+  HTTP Listening — jadi terminal yang menghantar dengan kata laluan salah hanya
+  boleh dibetulkan dengan curl, sementara connector menolak dua push sesaat
+  (`reason: "mismatch"` dalam journal). Slot lalai ialah yang sudah menuju ke
+  connector, supaya kredensial salah diganti dan bukan slot kedua ditambah.
+
 **Skrin sudah ada.** Tab Connector pada Senarai Peranti mencipta agent, jana
 token pendaftaran semula, tarik kredensial, buang baris yang ditarik, dan buka
 dialog butiran dengan butang kemas kini. Borang peranti ada pemilih "Dicapai

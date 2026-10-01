@@ -4847,6 +4847,29 @@ export const LABELS = {
   'device.editor.push.configured': 'Terminal kini menghantar ke {target}.',
   'device.editor.push.hint':
     'Push mempercepatkan kemasukan tetapi bukan sumber kebenaran: firmware tidak menyimpan baris gilir dan tidak mencuba semula, jadi tarikan berkala tetap berjalan sebagai jaring keselamatan.',
+  /**
+   * The Push tab for a terminal behind a connector.
+   *
+   * The connector writes the slot itself, because only it knows its own LAN address and the Digest
+   * password its installer generated — and the terminal's own web page has no field for that
+   * password, which is the first place somebody looks.
+   */
+  'device.editor.push.agent.group': 'Tuding ke connector',
+  'device.editor.push.agent.group.subtitle':
+    'Connector "{agent}" mengisi alamat LAN dan kata laluan Digestnya sendiri, jadi tiada apa untuk ditaip di sini. Halaman web terminal tidak memaparkan kata laluan itu langsung.',
+  'device.editor.push.agent.destination.hint':
+    'Seperti yang connector laporkan. Ia ditentukan semula semasa menulis, jadi alamat lama tidak tertulis kalau ia sudah berpindah.',
+  'device.editor.push.agent.slot.aimed':
+    'Slot {slot} sudah menuju ke connector ini, jadi kredensialnya diganti dan bukan slot kedua ditambah.',
+  'device.editor.push.agent.slot.free':
+    'Belum ada slot yang menuju ke connector ini, jadi slot kosong pertama dipilih.',
+  'device.editor.push.agent.slot.full':
+    'Kedua-dua slot sudah digunakan untuk pelayan lain. Slot yang dipilih akan ditimpa, jadi pastikan ia bukan pelayan yang masih diperlukan.',
+  'device.editor.push.agent.action': 'Tulis melalui connector',
+  'device.editor.push.agent.hint':
+    'Dibariskan, bukan serta-merta: connector menulisnya pada tinjauan berikutnya, dan push terminal diterima sejak itu.',
+  'device.editor.push.agent.queued':
+    'Dibariskan untuk slot {slot}. Connector "{agent}" akan menulisnya pada tinjauan berikutnya.',
 
   // Tab Diagnostik
   'device.editor.diag.title': 'Diagnostik',

@@ -2227,6 +2227,13 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
 // Tab 6 — Push slots
 // ---------------------------------------------------------------------------
 
+/** Why the connector form chose the slot it did, so the operator can see what will be replaced. */
+const SLOT_PLAN_HINTS: Record<'aimed' | 'free' | 'full', LabelKey> = {
+  aimed: 'device.editor.push.agent.slot.aimed',
+  free: 'device.editor.push.agent.slot.free',
+  full: 'device.editor.push.agent.slot.full',
+};
+
 function PushTab({ device }: { device: DeviceRecord }): ReactNode {
   /** A connector collects commands and does not serve reads, so none is attempted. */
   const viaAgent = device.agentId !== null;
@@ -2284,6 +2291,60 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
       await reload();
     } catch (cause) {
       setWriteError(cause instanceof Error ? cause.message : t('app.error.remove'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /*
+   * Pointing a connector terminal at its own connector.
+   *
+   * The form a direct terminal gets cannot do it: it writes this server's address and ingest
+   * credentials, which the connector's listener refuses, and for a connector terminal the write is
+   * refused outright. The terminal's own web page cannot do it either — its HTTP Listening section
+   * has an address, a path and a port, and no credentials at all. So this asks the connector, which
+   * fills in its own LAN address and the Digest password its installer generated. The route existed
+   * with no button, and the first site found out by its connector refusing two pushes a second.
+   *
+   * The slot defaults to the one already aimed at the connector, so the wrong credentials are
+   * replaced rather than a second slot added beside them; otherwise the first free one.
+   */
+  const connectorHost = device.agent?.lanHost ?? null;
+  const connectorTarget =
+    connectorHost === null
+      ? null
+      : `${connectorHost}${device.agent?.lanPort == null ? '' : `:${String(device.agent.lanPort)}`}/hik/events`;
+
+  const slotPlan = useMemo((): { slot: string; reason: 'aimed' | 'free' | 'full' } => {
+    const used = (data ?? []).filter((row) => row.url !== '');
+    const aimed =
+      connectorHost === null
+        ? undefined
+        : used.find(
+            (row) => row.url.includes(`//${connectorHost}:`) || row.url.includes(`//${connectorHost}/`),
+          );
+    if (aimed !== undefined) return { slot: String(aimed.slot), reason: 'aimed' };
+    const free = [1, 2].find((id) => !used.some((row) => row.slot === id));
+    return free === undefined ? { slot: '1', reason: 'full' } : { slot: String(free), reason: 'free' };
+  }, [data, connectorHost]);
+
+  const [agentSlot, setAgentSlot] = useState<string | null>(null);
+  const chosenSlot = agentSlot ?? slotPlan.slot;
+
+  async function pointAtConnector(): Promise<void> {
+    setBusy(true);
+    setWriteError(null);
+    setNotice(null);
+    try {
+      const result = await api.post<{ queued: boolean; slot: number }>(
+        `/api/devices/${String(device.id)}/push/via-agent`,
+        { slot: Number(chosenSlot) },
+      );
+      setNotice(
+        t('device.editor.push.agent.queued', { slot: result.slot, agent: device.agent?.name ?? '' }),
+      );
+    } catch (cause) {
+      setWriteError(cause instanceof Error ? cause.message : t('app.error.save'));
     } finally {
       setBusy(false);
     }
@@ -2408,72 +2469,118 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
           </SettingsGroup>
         ))}
 
-        <SettingsGroup
-          title={<T k="device.editor.push.group.configure" />}
-          icon={<Settings2 className="size-3.5" aria-hidden />}
-          subtitle={<T k="device.editor.push.group.configure.subtitle" />}
-        >
-          <SettingRow
-            label={<T k="device.editor.push.destination" />}
-            hint={<T k="device.editor.push.destination.hint" />}
-            required
+        {/*
+          A connector terminal gets the connector's form instead of this server's. The direct form
+          is refused for it, and a form that always fails is worse than none: it teaches the
+          operator that pushing is broken rather than that it is set somewhere else.
+        */}
+        {viaAgent ? (
+          <SettingsGroup
+            title={<T k="device.editor.push.agent.group" />}
+            icon={<Satellite className="size-3.5" aria-hidden />}
+            subtitle={
+              <T k="device.editor.push.agent.group.subtitle" vars={{ agent: device.agent?.name ?? '' }} />
+            }
           >
-            <ControlGrid columns={3}>
-              <ControlCell caption={<T k="device.editor.push.host" />}>
-                <TextControl
-                  label={t('device.editor.push.host')}
-                  value={host}
-                  disabled={!allowed}
-                  onChange={(event) => setHost(event.target.value)}
-                  placeholder="192.168.1.100"
-                />
-              </ControlCell>
-              <ControlCell caption={<T k="device.editor.push.port" />}>
-                <TextControl
-                  label={t('device.editor.push.port')}
-                  inputMode="numeric"
-                  value={port}
-                  disabled={!allowed}
-                  onChange={(event) => setPort(event.target.value.replace(/\D/g, ''))}
-                />
-              </ControlCell>
-              <ControlCell caption={<T k="device.editor.push.slotCaption" />}>
-                <SelectControl
-                  label={t('device.editor.push.slotCaption')}
-                  value={slot}
-                  disabled={!allowed}
-                  onChange={(event) => setSlot(event.target.value)}
-                >
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                </SelectControl>
-              </ControlCell>
-            </ControlGrid>
-          </SettingRow>
+            <SettingRow
+              label={<T k="device.editor.push.destination" />}
+              hint={<T k="device.editor.push.agent.destination.hint" />}
+            >
+              <StaticControl mono value={connectorTarget ?? t('agent.row.noAddress')} />
+            </SettingRow>
 
-          <SettingRow
-            label={<T k="device.editor.push.path" />}
-            hint={<T k="device.editor.push.path.hint" />}
+            <SettingRow
+              label={<T k="device.editor.push.slotCaption" />}
+              hint={<T k={SLOT_PLAN_HINTS[slotPlan.reason]} vars={{ slot: slotPlan.slot }} />}
+            >
+              <SelectControl
+                label={t('device.editor.push.slotCaption')}
+                value={chosenSlot}
+                disabled={!allowed}
+                onChange={(event) => setAgentSlot(event.target.value)}
+              >
+                <option value="1">1</option>
+                <option value="2">2</option>
+              </SelectControl>
+            </SettingRow>
+          </SettingsGroup>
+        ) : (
+          <SettingsGroup
+            title={<T k="device.editor.push.group.configure" />}
+            icon={<Settings2 className="size-3.5" aria-hidden />}
+            subtitle={<T k="device.editor.push.group.configure.subtitle" />}
           >
-            <TextControl
-              label={t('device.editor.push.path')}
-              value={path}
-              disabled={!allowed}
-              onChange={(event) => setPath(event.target.value)}
-            />
-          </SettingRow>
-        </SettingsGroup>
+            <SettingRow
+              label={<T k="device.editor.push.destination" />}
+              hint={<T k="device.editor.push.destination.hint" />}
+              required
+            >
+              <ControlGrid columns={3}>
+                <ControlCell caption={<T k="device.editor.push.host" />}>
+                  <TextControl
+                    label={t('device.editor.push.host')}
+                    value={host}
+                    disabled={!allowed}
+                    onChange={(event) => setHost(event.target.value)}
+                    placeholder="192.168.1.100"
+                  />
+                </ControlCell>
+                <ControlCell caption={<T k="device.editor.push.port" />}>
+                  <TextControl
+                    label={t('device.editor.push.port')}
+                    inputMode="numeric"
+                    value={port}
+                    disabled={!allowed}
+                    onChange={(event) => setPort(event.target.value.replace(/\D/g, ''))}
+                  />
+                </ControlCell>
+                <ControlCell caption={<T k="device.editor.push.slotCaption" />}>
+                  <SelectControl
+                    label={t('device.editor.push.slotCaption')}
+                    value={slot}
+                    disabled={!allowed}
+                    onChange={(event) => setSlot(event.target.value)}
+                  >
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                  </SelectControl>
+                </ControlCell>
+              </ControlGrid>
+            </SettingRow>
+
+            <SettingRow
+              label={<T k="device.editor.push.path" />}
+              hint={<T k="device.editor.push.path.hint" />}
+            >
+              <TextControl
+                label={t('device.editor.push.path')}
+                value={path}
+                disabled={!allowed}
+                onChange={(event) => setPath(event.target.value)}
+              />
+            </SettingRow>
+          </SettingsGroup>
+        )}
       </SettingsStack>
 
-      <PanelActions hint={<T k="device.editor.push.hint" />}>
-        <Button
-          onClick={() => void configure()}
-          disabled={busy || !allowed || host.trim() === '' || path.trim() === ''}
-        >
-          <Save className="size-4" aria-hidden />
-          <T k="device.editor.push.configure" />
-        </Button>
-      </PanelActions>
+      {viaAgent ? (
+        <PanelActions hint={<T k="device.editor.push.agent.hint" />}>
+          <Button onClick={() => void pointAtConnector()} disabled={busy || !allowed}>
+            <Satellite className="size-4" aria-hidden />
+            <T k="device.editor.push.agent.action" />
+          </Button>
+        </PanelActions>
+      ) : (
+        <PanelActions hint={<T k="device.editor.push.hint" />}>
+          <Button
+            onClick={() => void configure()}
+            disabled={busy || !allowed || host.trim() === '' || path.trim() === ''}
+          >
+            <Save className="size-4" aria-hidden />
+            <T k="device.editor.push.configure" />
+          </Button>
+        </PanelActions>
+      )}
     </>
   );
 }

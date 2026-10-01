@@ -5653,6 +5653,22 @@ export const EN_LABELS_DEVICE_DIAG: Partial<Record<LabelKey, string>> = {
   'device.editor.push.configured': 'The terminal is now sending to {target}.',
   'device.editor.push.hint':
     'Push makes events arrive faster but it is not the source of truth: the firmware keeps no queue and does not retry, so the periodic pull keeps running as a safety net.',
+  'device.editor.push.agent.group': 'Point at the connector',
+  'device.editor.push.agent.group.subtitle':
+    'Connector "{agent}" fills in its own LAN address and Digest password, so there is nothing to type here. The terminal\'s own web page does not show that password at all.',
+  'device.editor.push.agent.destination.hint':
+    'As the connector reports it. It is worked out again at the moment of writing, so an old address is not written if it has moved.',
+  'device.editor.push.agent.slot.aimed':
+    'Slot {slot} already points at this connector, so its credentials are replaced rather than a second slot added.',
+  'device.editor.push.agent.slot.free':
+    'No slot points at this connector yet, so the first free one is chosen.',
+  'device.editor.push.agent.slot.full':
+    'Both slots are already used by other servers. The chosen slot will be overwritten, so make sure it is not one still needed.',
+  'device.editor.push.agent.action': 'Write through the connector',
+  'device.editor.push.agent.hint':
+    "Queued, not immediate: the connector writes it on its next poll, and the terminal's pushes are accepted from then on.",
+  'device.editor.push.agent.queued':
+    'Queued for slot {slot}. Connector "{agent}" will write it on its next poll.',
 
   // ---------------------------------------------------------------------------
   // Diagnostics
