@@ -118,66 +118,12 @@ export async function reportsRoutes(app: FastifyInstance): Promise<void> {
     const period = parsePeriod(query.from, query.to, timeZone);
     const staffWhere = staffFilter(query);
 
-    const [staffCount, organisation, unresolved, noRecords, drifting] = await Promise.all([
+    const [staffCount, organisation, unresolved] = await Promise.all([
       db().staff.count({ where: staffWhere }),
       organisationTotals(staffWhere, period),
       countUnresolved(staffWhere, period),
-      countStaffWithoutRecords(staffWhere, period),
-      countDriftingDays(period),
     ]);
-
-    const blockers: Array<{ kind: string; count: number; detail: string }> = [];
-
-    if (unresolved.total > 0) {
-      blockers.push({
-        kind: 'unresolved_exceptions',
-        count: unresolved.total,
-        detail:
-          'Setiap satu adalah hari yang enjin tidak dapat selesaikan. Yang paling kerap ialah ' +
-          'tiada scan keluar, yang menjadikan hari itu pendek — dan gaji pendek.',
-      });
-    }
-    if (noRecords > 0) {
-      blockers.push({
-        kind: 'staff_without_records',
-        count: noRecords,
-        detail:
-          'Staf aktif tanpa satu pun rekod dalam tempoh ini. Biasanya bermakna mereka tidak ' +
-          'boleh scan sama sekali, bukan bahawa mereka tidak bekerja.',
-      });
-    }
-    if (drifting > 0) {
-      blockers.push({
-        kind: 'clock_drift',
-        count: drifting,
-        detail:
-          'Scan yang direkod ketika jam terminal tersasar melebihi ambang. Cap masanya mewarisi ' +
-          'kesilapan itu, dan membetulkan jam kemudian tidak membetulkan rekod ini.',
-      });
-    }
-
-    /*
-     * Undecided overtime is money the file will not contain.
-     *
-     * Stated rather than blocked, like every other entry here — but it belongs on the list,
-     * because this is the one the person who filed the claim will notice on payday and
-     * nobody reading the spreadsheet would.
-     */
-    const staffIds = (
-      await db().staff.findMany({ where: staffWhere, select: { id: true } })
-    ).map((row) => row.id);
-    const pendingOvertime = await countPendingOvertime(staffIds, period);
-
-    if (pendingOvertime.count > 0) {
-      blockers.push({
-        kind: 'pending_overtime',
-        count: pendingOvertime.count,
-        detail:
-          `${hours(pendingOvertime.minutes)} jam lebih masa dalam tempoh ini masih menunggu ` +
-          'keputusan. Export hanya membawa yang diluluskan, jadi jam itu tidak akan dibayar ' +
-          'sampai seseorang memutuskannya.',
-      });
-    }
+    const blockers = await payrollBlockers(staffWhere, period, unresolved.total);
 
     return jsonSafe({
       period: { from: period.fromKey, to: period.toKey, workingDays: period.dayCount },
@@ -289,6 +235,15 @@ export async function reportsRoutes(app: FastifyInstance): Promise<void> {
      * warning banner. Written as leading comment rows, which Excel shows as text and
      * which no importer will mistake for data.
      */
+    /*
+     * Every check the preview runs, not only the exceptions. The file carried one warning while the
+     * screen listed four, so a spreadsheet forwarded with staff who could not scan, or overtime
+     * still undecided, read as clean to whoever opened it next.
+     */
+    const otherBlockers = (await payrollBlockers(staffWhere, period, unresolved.total)).filter(
+      (blocker) => blocker.kind !== 'unresolved_exceptions',
+    );
+
     const preamble = [
       `# Export payroll — ${period.fromKey} hingga ${period.toKey}`,
       `# Dijana ${new Date().toISOString()} · zon waktu ${timeZone}`,
@@ -297,6 +252,11 @@ export async function reportsRoutes(app: FastifyInstance): Promise<void> {
         ? `# AMARAN: ${String(unresolved.total)} pengecualian belum diselesaikan dalam tempoh ini. ` +
           'Jam bekerja bagi hari tersebut mungkin kurang daripada yang sebenar.'
         : '# Tiada pengecualian belum diselesaikan dalam tempoh ini.',
+      ...otherBlockers.map(
+        (blocker) =>
+          `# AMARAN: ${LABELS[BLOCKER_LABELS[blocker.kind]]} — ${String(blocker.count)}. ` +
+          sourceText(blocker.detailKey, blocker.vars),
+      ),
       '#',
     ];
 
@@ -663,6 +623,94 @@ async function departmentTotals(
   }
 
   return [...groups.values()].sort((left, right) => right.absentDays - left.absentDays);
+}
+
+type BlockerKind = 'unresolved_exceptions' | 'staff_without_records' | 'clock_drift' | 'pending_overtime';
+
+/** What makes a payroll export untrustworthy. Stated, never enforced. */
+interface PayrollBlocker {
+  kind: BlockerKind;
+  count: number;
+  /**
+   * What the failure means, as a registry key.
+   *
+   * It was a finished Malay sentence, which the preview screen rendered as it came — so an English
+   * reader got the one paragraph that explains why the figures are wrong in a language they had not
+   * chosen. The CSV writes the source wording itself, through `sourceText`.
+   */
+  detailKey: LabelKey;
+  vars?: Record<string, string>;
+}
+
+/** The check names, for the comment rows of a file that has no reader to translate for. */
+const BLOCKER_LABELS: Record<BlockerKind, LabelKey> = {
+  unresolved_exceptions: 'payroll.check.unresolvedExceptions',
+  staff_without_records: 'payroll.check.staffWithoutRecords',
+  clock_drift: 'payroll.check.clockDrift',
+  pending_overtime: 'payroll.check.pendingOvertime',
+};
+
+/**
+ * The checks the preview lists and the export writes into its comment rows.
+ *
+ * One function so the two cannot disagree: the file used to warn about exceptions alone while the
+ * screen that produced it listed four checks.
+ */
+async function payrollBlockers(
+  staffWhere: Record<string, unknown>,
+  period: Period,
+  unresolvedTotal: number,
+): Promise<PayrollBlocker[]> {
+  const [noRecords, drifting, staffRows] = await Promise.all([
+    countStaffWithoutRecords(staffWhere, period),
+    countDriftingDays(period),
+    db().staff.findMany({ where: staffWhere, select: { id: true } }),
+  ]);
+
+  /*
+   * Undecided overtime is money the file will not contain.
+   *
+   * Stated rather than blocked, like every other entry here — but it belongs on the list, because
+   * this is the one the person who filed the claim will notice on payday and nobody reading the
+   * spreadsheet would.
+   */
+  const pendingOvertime = await countPendingOvertime(
+    staffRows.map((row) => row.id),
+    period,
+  );
+
+  const blockers: PayrollBlocker[] = [];
+  if (unresolvedTotal > 0) {
+    blockers.push({
+      kind: 'unresolved_exceptions',
+      count: unresolvedTotal,
+      detailKey: 'payroll.blocker.unresolvedExceptions',
+    });
+  }
+  if (noRecords > 0) {
+    blockers.push({
+      kind: 'staff_without_records',
+      count: noRecords,
+      detailKey: 'payroll.blocker.staffWithoutRecords',
+    });
+  }
+  if (drifting > 0) {
+    blockers.push({ kind: 'clock_drift', count: drifting, detailKey: 'payroll.blocker.clockDrift' });
+  }
+  if (pendingOvertime.count > 0) {
+    blockers.push({
+      kind: 'pending_overtime',
+      count: pendingOvertime.count,
+      detailKey: 'payroll.blocker.pendingOvertime',
+      vars: { hours: hours(pendingOvertime.minutes) },
+    });
+  }
+  return blockers;
+}
+
+/** Source wording with its `{placeholders}` filled, for text written where nobody reads a language. */
+function sourceText(key: LabelKey, vars: Record<string, string> = {}): string {
+  return LABELS[key].replace(/\{(\w+)\}/g, (match, name: string) => vars[name] ?? match);
 }
 
 async function countUnresolved(

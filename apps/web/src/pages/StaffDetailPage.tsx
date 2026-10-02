@@ -918,7 +918,7 @@ function AttendanceTab({ staffId }: { staffId: number }): ReactNode {
       >
         <DateBox
           type="month"
-          label={t('staff.view.attendance.month')}
+          label={t('app.month')}
           value={month}
           onChange={(value) => {
             setMonth(value === '' ? defaultMonth : value);
@@ -1224,7 +1224,7 @@ function RosterTab({
       >
         <DateBox
           type="month"
-          label={t('staff.view.attendance.month')}
+          label={t('app.month')}
           value={month}
           onChange={(value) => setMonth(value === '' ? defaultMonth : value)}
         />
@@ -1391,7 +1391,7 @@ function ScansTab({ staffId }: { staffId: number }): ReactNode {
       >
         <DateBox
           type="month"
-          label={t('staff.view.attendance.month')}
+          label={t('app.month')}
           value={month}
           onChange={(value) => setMonth(value === '' ? defaultMonth : value)}
         />

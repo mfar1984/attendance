@@ -10,6 +10,7 @@
  *
  *   node --env-file=.env node_modules/tsx/dist/cli.mjs scripts/verify-reports.mts <password>
  */
+import { LABELS } from '@attendance/shared';
 import { generateSync } from 'otplib';
 
 const BASE = process.env['API_BASE'] ?? 'http://127.0.0.1:8080';
@@ -184,15 +185,23 @@ check(
   'and safeToExport agrees with them',
   payroll.body['safeToExport'] === (blockers.length === 0),
 );
+/*
+ * A registry key, not a sentence: the preview is read in the reader's language, and the server has
+ * no reader to ask. The key has to name real wording, or the screen prints the key itself.
+ */
 check(
   'every blocker states what it means, not just a count',
   blockers.every(
     (row) =>
       typeof row['kind'] === 'string' &&
       typeof row['count'] === 'number' &&
-      typeof row['detail'] === 'string' &&
-      String(row['detail']).length > 20,
+      typeof row['detailKey'] === 'string' &&
+      String((LABELS as Record<string, string>)[String(row['detailKey'])] ?? '').length > 20,
   ),
+);
+check(
+  'and none of them carries prose of its own',
+  blockers.every((row) => !('detail' in row)),
 );
 show('safeToExport', String(payroll.body['safeToExport']));
 for (const blocker of blockers) {

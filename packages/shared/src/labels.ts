@@ -123,6 +123,8 @@ export const LABELS = {
   'app.loading': 'Memuatkan',
   /** The header control and the panel footer control are the same act, so one label. */
   'app.refresh': 'Muat semula',
+  /** The month picker in a filter row: a person's attendance, the work calendar, the monthly summary. */
+  'app.month': 'Bulan',
 
   /**
    * The confirm button on every destructive dialog, and the fallback message when a save
@@ -1102,7 +1104,6 @@ export const LABELS = {
   'staff.view.attendance.count': '{count} hari direkod',
   'staff.view.attendance.subtitle':
     'Hari kerja seperti yang dikira oleh enjin. Setiap baris boleh dibina semula daripada log scan mentah.',
-  'staff.view.attendance.month': 'Bulan',
   'staff.view.attendance.empty':
     'Tiada rekod untuk bulan ini. Jalankan kira semula jika scan sudah masuk.',
 
@@ -1691,9 +1692,6 @@ export const LABELS = {
     'Pilih sel, kemudian pilih shift atau rehat. Klik nama untuk memilih seluruh bulan. Cuti datang dari Permohonan Cuti, bukan dari sini.',
   'roster.count': '{count} staf dalam paparan ini',
   'roster.search': 'Cari nama atau No. Staf…',
-  'roster.month': 'Bulan',
-  'roster.month.previous': 'Bulan sebelum',
-  'roster.month.next': 'Bulan seterusnya',
   'roster.error.load': 'Gagal memuatkan jadual',
   'roster.error.save': 'Gagal menyimpan jadual',
   'roster.error.clear': 'Gagal mengosongkan',
@@ -2095,9 +2093,12 @@ export const LABELS = {
   'monthly.title': 'Ringkasan Bulanan',
   'monthly.subtitle':
     'Kiraan hari dan jumlah minit setiap staf, dikira dari rekod kehadiran.',
-  'monthly.loading': 'Memuatkan…',
-  'monthly.section.subtitle': '{staff} staf · {days} hari kalendar dalam tempoh',
-  'monthly.export': 'Export CSV',
+  'monthly.tabs.aria': 'Paparan ringkasan',
+  'monthly.tab.staff': 'Staf',
+  'monthly.tab.departments': 'Jabatan',
+  'monthly.count': '{count} staf',
+  /** `{month}` comes from `Intl`, so it is already in the reader's language. */
+  'monthly.period': '{month} · {days} hari kalendar dalam tempoh',
   'monthly.error.load': 'Gagal menjana ringkasan',
   'monthly.empty': 'Tiada staf sepadan dengan penapis ini.',
 
@@ -2132,9 +2133,9 @@ export const LABELS = {
   'monthly.column.overtime': 'OT',
   'monthly.row.expand': 'butiran staf',
 
-  'monthly.byDept.title': 'Per jabatan',
+  'monthly.byDept.count': '{count} jabatan',
   'monthly.byDept.subtitle':
-    'Disusun mengikut hari tidak hadir — jabatan yang paling perlu diperhatikan di atas.',
+    '{month} · disusun mengikut hari tidak hadir, yang paling perlu diperhatikan di atas.',
   'monthly.byDept.empty': 'Tiada jabatan.',
   'monthly.byDept.column.incomplete': 'Tidak lengkap',
   'monthly.byDept.column.exceptions': 'Pengecualian',
@@ -2151,6 +2152,7 @@ export const LABELS = {
   'monthly.detail.lateMinutes': 'Minit lewat',
   'monthly.detail.earlyLeaveMinutes': 'Minit keluar awal',
   'monthly.detail.overtimeHours': 'Jam kerja lebih masa',
+  'monthly.detail.exceptions': 'Pengecualian belum selesai',
 
   'monthly.detail.noRecords':
     'Tiada satu pun rekod kehadiran dalam tempoh ini. Biasanya bermakna orang ini tidak boleh scan sama sekali — bukan bahawa mereka tidak bekerja. Semak biometrik dan pemetaan ID terminal.',
@@ -2165,7 +2167,6 @@ export const LABELS = {
   'payroll.title': 'Export Payroll',
   'payroll.subtitle':
     'Satu baris setiap staf: hari dijadualkan, hari hadir, dan jumlah minit untuk tempoh yang dipilih. Jam dieksport sebagai jam perpuluhan, bentuk yang sistem gaji terima.',
-  'payroll.period': '{from} hingga {to}',
   'payroll.period.withDays': '{from} hingga {to} · {days} hari kalendar',
   'payroll.staffCount': '{count} staf aktif dalam tempoh ini',
   'payroll.error.load': 'Gagal membaca pratonton payroll',
@@ -2187,6 +2188,8 @@ export const LABELS = {
   'payroll.unsafe.note':
     '{emphasis} Export tetap dibenarkan — payroll ada tarikh akhir — dan amaran ini ditulis sebagai baris komen di dalam fail CSV. Tetapi angka bagi hari yang terlibat mungkin kurang daripada yang sebenar.',
 
+  'payroll.filter.previousMonth': 'Bulan sebelum',
+  'payroll.filter.nextMonth': 'Bulan seterusnya',
   'payroll.filter.fromDate': 'Dari tarikh',
   'payroll.filter.toDate': 'Hingga tarikh',
   'payroll.filter.between': 'hingga',
@@ -2216,17 +2219,30 @@ export const LABELS = {
   'payroll.check.clockDrift.clear':
     'Tiada scan direkod ketika jam terminal tersasar melebihi ambang.',
 
-  'payroll.exceptions.title': 'Pengecualian belum diselesaikan',
-  'payroll.exceptions.subtitle':
-    'Setiap satu adalah hari yang enjin tidak dapat selesaikan sendiri. Betulkan puncanya dan jalankan kira semula — jangan sunting hasilnya.',
-  'payroll.exceptions.open': 'Buka pengecualian',
-  'payroll.exceptions.empty': 'Tiada.',
-  'payroll.exceptions.column.kind': 'Jenis',
-  'payroll.exceptions.column.count': 'Bilangan',
+  /**
+   * What a failing check means, sent by `GET /api/reports/payroll/preview` as `detailKey` and written
+   * in source wording into the CSV's comment rows. They were sentences composed on the server.
+   */
+  'payroll.blocker.unresolvedExceptions':
+    'Setiap satu adalah hari yang enjin tidak dapat selesaikan. Yang paling kerap ialah tiada scan keluar, yang menjadikan hari itu pendek — dan gaji pendek.',
+  'payroll.blocker.staffWithoutRecords':
+    'Staf aktif tanpa satu pun rekod dalam tempoh ini. Biasanya bermakna mereka tidak boleh scan sama sekali, bukan bahawa mereka tidak bekerja.',
+  'payroll.blocker.clockDrift':
+    'Scan yang direkod ketika jam terminal tersasar melebihi ambang. Cap masanya mewarisi kesilapan itu, dan membetulkan jam kemudian tidak membetulkan rekod ini.',
+  'payroll.blocker.pendingOvertime':
+    '{hours} jam lebih masa dalam tempoh ini masih menunggu keputusan. Export hanya membawa yang diluluskan, jadi jam itu tidak akan dibayar sampai seseorang memutuskannya.',
+  'payroll.check.status.clear': 'Lulus',
+  'payroll.check.status.failing': 'Perlu perhatian',
+  /** `{screen}` is the name of the screen where the failure is fixed, from the navigation. */
+  'payroll.check.open': 'Buka {screen}',
+  'payroll.check.breakdown': 'Mengikut jenis',
+
 
   'payroll.export.hint':
     'Fail membawa BOM UTF-8 supaya Excel tidak merosakkan nama Melayu, dan baris komen {hash} di atas pengepala yang menyatakan tempoh, bilangan staf, dan amaran pengecualian.',
-  'payroll.export.readAt': ' Dibaca {time} · zon waktu {zone}.',
+  'payroll.export.zone': 'Hari dipotong mengikut zon waktu {zone}.',
+  'payroll.exceptions.note':
+    'Setiap satu adalah hari yang enjin tidak dapat selesaikan sendiri. Betulkan puncanya dan jalankan kira semula — jangan sunting hasilnya.',
   'payroll.export.submit': 'Export CSV payroll',
   'payroll.export.permission': 'Export Payroll › export',
   'payroll.export.denied':
@@ -2326,11 +2342,11 @@ export const LABELS = {
     'Had {limit} baris dicapai, jadi ini adalah sebahagian dan bukan keseluruhan{grouped}. Sempitkan tempoh atau penapis, atau export — fail mengambil lebih banyak baris daripada pratonton ini.',
   'builder.truncated.grouped': '. Jumlah dalam setiap kumpulan juga sebahagian',
 
-  'builder.hint.notRun':
+  'builder.count': '{count} baris',
+  'builder.count.truncated': '{count} baris pertama — bukan keseluruhan',
+  'builder.count.notRun': 'Belum dijana',
+  'builder.export.hint':
     'Pratonton dibaca sehingga had yang dipilih. Export mengambil sehingga 20,000 baris dan menyatakan di dalam fail jika had itu dicapai.',
-  'builder.hint.shown':
-    '{count} baris dipaparkan{cap} · dijana {time}. Export mengambil sehingga 20,000 baris.',
-  'builder.hint.cap': ' (had {limit} dicapai)',
   'builder.export': 'Export CSV',
 
   // -------------------------------------------------------------------------

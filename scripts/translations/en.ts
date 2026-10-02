@@ -41,6 +41,7 @@ export const EN_LABELS: Partial<Record<LabelKey, string>> = {
   'app.brand': 'Attendance System',
   'app.loading': 'Loading',
   'app.refresh': 'Refresh',
+  'app.month': 'Month',
   'app.remove': 'Remove',
   'app.error.save': 'Could not save',
   'app.error.remove': 'Could not remove',
@@ -755,9 +756,6 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
     'Select cells, then pick a shift or rest. Click a name to select the whole month. Leave comes from Leave Requests, not from here.',
   'roster.count': '{count} staff in this view',
   'roster.search': 'Search name or Staff No.…',
-  'roster.month': 'Month',
-  'roster.month.previous': 'Previous month',
-  'roster.month.next': 'Next month',
   'roster.error.load': 'Could not load the roster',
   'roster.error.save': 'Could not save the roster',
   'roster.error.clear': 'Could not clear',
@@ -1082,7 +1080,6 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
   'staff.view.attendance.count': '{count} days recorded',
   'staff.view.attendance.subtitle':
     'Work days as the engine computed them. Every row can be rebuilt from the raw scan log.',
-  'staff.view.attendance.month': 'Month',
   'staff.view.attendance.empty':
     'No records for this month. Run a recompute if scans have already arrived.',
 
@@ -4031,11 +4028,11 @@ export const EN_LABELS_BUILDER: Partial<Record<LabelKey, string>> = {
   'builder.truncated':
     'The {limit} row limit was reached, so this is a part and not the whole{grouped}. Narrow the period or the filters, or export — the file takes more rows than this preview.',
   'builder.truncated.grouped': '. The totals in each group are partial too',
-  'builder.hint.notRun':
+  'builder.count': '{count} rows',
+  'builder.count.truncated': 'First {count} rows — not the whole',
+  'builder.count.notRun': 'Not generated yet',
+  'builder.export.hint':
     'The preview reads up to the limit chosen. An export takes up to 20,000 rows and says inside the file if that limit was reached.',
-  'builder.hint.shown':
-    '{count} rows shown{cap} · generated {time}. An export takes up to 20,000 rows.',
-  'builder.hint.cap': ' ({limit} limit reached)',
   'builder.export': 'Export CSV',
 };
 
@@ -4152,9 +4149,11 @@ export const EN_LABELS_PAYROLL: Partial<Record<LabelKey, string>> = {
   'monthly.title': 'Monthly Summary',
   'monthly.subtitle':
     'Day counts and total minutes for each staff member, calculated from the attendance records.',
-  'monthly.loading': 'Loading…',
-  'monthly.section.subtitle': '{staff} staff · {days} calendar days in the period',
-  'monthly.export': 'Export CSV',
+  'monthly.tabs.aria': 'Summary views',
+  'monthly.tab.staff': 'Staff',
+  'monthly.tab.departments': 'Departments',
+  'monthly.count': '{count} staff',
+  'monthly.period': '{month} · {days} calendar days in the period',
   'monthly.error.load': 'Could not generate the summary',
   'monthly.empty': 'No staff match these filters.',
   'monthly.stat.presentDays': 'Days present',
@@ -4181,9 +4180,9 @@ export const EN_LABELS_PAYROLL: Partial<Record<LabelKey, string>> = {
   'monthly.column.workedHours': 'Hours worked',
   'monthly.column.overtime': 'OT',
   'monthly.row.expand': 'staff details',
-  'monthly.byDept.title': 'By department',
+  'monthly.byDept.count': '{count} departments',
   'monthly.byDept.subtitle':
-    'Sorted by days absent — the departments that most need attention sit at the top.',
+    '{month} · sorted by days absent, the ones that most need attention at the top.',
   'monthly.byDept.empty': 'No departments.',
   'monthly.byDept.column.incomplete': 'Incomplete',
   'monthly.byDept.column.exceptions': 'Exceptions',
@@ -4199,6 +4198,7 @@ export const EN_LABELS_PAYROLL: Partial<Record<LabelKey, string>> = {
   'monthly.detail.lateMinutes': 'Minutes late',
   'monthly.detail.earlyLeaveMinutes': 'Minutes left early',
   'monthly.detail.overtimeHours': 'Overtime hours',
+  'monthly.detail.exceptions': 'Unresolved exceptions',
   /*
    * The reading this note exists to prevent: no records looks like somebody who did not work, when it
    * almost always means somebody who could not scan at all.
@@ -4217,7 +4217,6 @@ export const EN_LABELS_PAYROLL: Partial<Record<LabelKey, string>> = {
   'payroll.title': 'Payroll Export',
   'payroll.subtitle':
     'One row per staff member: days scheduled, days present, and total minutes for the period chosen. Hours are exported as decimal hours, the form a payroll system accepts.',
-  'payroll.period': '{from} to {to}',
   'payroll.period.withDays': '{from} to {to} · {days} calendar days',
   'payroll.staffCount': '{count} staff active in this period',
   'payroll.error.load': 'Could not read the payroll preview',
@@ -4240,6 +4239,8 @@ export const EN_LABELS_PAYROLL: Partial<Record<LabelKey, string>> = {
    */
   'payroll.unsafe.note':
     '{emphasis} The export is still allowed — payroll has a deadline — and this warning is written as a comment row inside the CSV file. But the figures for the days involved may be lower than they really are.',
+  'payroll.filter.previousMonth': 'Previous month',
+  'payroll.filter.nextMonth': 'Next month',
   'payroll.filter.fromDate': 'From date',
   'payroll.filter.toDate': 'To date',
   'payroll.filter.between': 'to',
@@ -4256,18 +4257,24 @@ export const EN_LABELS_PAYROLL: Partial<Record<LabelKey, string>> = {
   'payroll.check.clockDrift': 'Scans taken while a terminal clock had drifted',
   'payroll.check.clockDrift.clear':
     'No scan was recorded while a terminal clock had drifted past the threshold.',
-  'payroll.exceptions.title': 'Unresolved exceptions',
-  'payroll.exceptions.subtitle':
-    'Each one is a day the engine could not resolve on its own. Fix the cause and run a recompute — do not edit the result.',
-  'payroll.exceptions.open': 'Open exceptions',
-  'payroll.exceptions.empty': 'None.',
-  'payroll.exceptions.column.kind': 'Type',
-  'payroll.exceptions.column.count': 'Count',
+  'payroll.blocker.unresolvedExceptions':
+    'Each one is a day the engine could not resolve. The most common is a missing checkout scan, which makes the day short — and the pay short.',
+  'payroll.blocker.staffWithoutRecords':
+    'Active staff without a single record in this period. It usually means they cannot scan at all, not that they did not work.',
+  'payroll.blocker.clockDrift':
+    'Scans recorded while a terminal clock had drifted past the threshold. Their timestamps inherit that error, and correcting the clock later does not correct these records.',
+  'payroll.blocker.pendingOvertime':
+    '{hours} hours of overtime in this period are still awaiting a decision. The export only carries what was approved, so those hours will not be paid until somebody decides them.',
+  'payroll.check.status.clear': 'Passed',
+  'payroll.check.status.failing': 'Needs attention',
+  'payroll.check.open': 'Open {screen}',
+  'payroll.check.breakdown': 'By type',
   // `{hash}` carries the "#" symbol. Excel and UTF-8 BOM are literal and stay.
   'payroll.export.hint':
     'The file carries a UTF-8 BOM so Excel does not mangle Malay names, and {hash} comment rows above the header stating the period, the staff count, and the exception warnings.',
-  // Appended to the hint above, so it keeps its leading space.
-  'payroll.export.readAt': ' Read {time} · timezone {zone}.',
+  'payroll.export.zone': 'Days are cut in the {zone} timezone.',
+  'payroll.exceptions.note':
+    'Each one is a day the engine could not resolve on its own. Fix the cause and run a recompute — do not edit the result.',
   'payroll.export.submit': 'Export payroll CSV',
   'payroll.export.permission': 'Payroll Export › export',
   'payroll.export.denied':

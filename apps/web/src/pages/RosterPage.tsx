@@ -301,7 +301,7 @@ export function RosterPage(): ReactNode {
         />
         <DateBox
           type="month"
-          label={t('roster.month')}
+          label={t('app.month')}
           value={month}
           onChange={(value) => {
             // A cleared month box would leave the grid with no month at all.

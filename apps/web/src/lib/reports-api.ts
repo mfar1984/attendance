@@ -338,8 +338,17 @@ export interface PayrollPreview {
   staffCount: number;
   organisation: StaffSummary & { staffCount: number };
   unresolvedExceptions: { total: number; byKind: Record<string, number> };
-  /** Things that make the export untrustworthy. Stated, never enforced. */
-  blockers: Array<{ kind: string; count: number; detail: string }>;
+  /**
+   * Things that make the export untrustworthy. Stated, never enforced.
+   *
+   * `detailKey` rather than a sentence, so the explanation reaches the reader in their language.
+   */
+  blockers: Array<{
+    kind: string;
+    count: number;
+    detailKey: LabelKey;
+    vars?: Record<string, string>;
+  }>;
   safeToExport: boolean;
   timeZone: string;
   generatedAt: string;
