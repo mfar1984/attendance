@@ -1,7 +1,8 @@
-import { Image as ImageIcon, Lock } from 'lucide-react';
+import type { LabelKey } from '@attendance/shared';
+import { Image as ImageIcon } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
-import { Dialog, Feedback } from '../components/Dialog';
+import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
 import {
   ChipBar,
   DateBox,
@@ -19,6 +20,7 @@ import {
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
+import { Badge } from '../components/ui';
 import { cn } from '../lib/cn';
 import {
   EVENT_KIND_LABELS,
@@ -34,6 +36,24 @@ import {
 } from '../lib/operations-api';
 import { T, TEnum, useLabels } from '../lib/translation';
 
+/** How the event reached the server, as the chip names it. Shown in the detail as words too. */
+const ARRIVAL_LABELS: Record<string, LabelKey> = {
+  push: 'rawlog.chip.push',
+  pull: 'rawlog.chip.pull',
+};
+
+const DIRECTION_LABELS: Record<string, LabelKey> = {
+  in: 'scan.in',
+  out: 'scan.out',
+};
+
+/** The terminal's own mask verdict. Anything else it reports is shown as it reported it. */
+const MASK_LABELS: Record<string, LabelKey> = {
+  yes: 'rawlog.mask.yes',
+  no: 'rawlog.mask.no',
+  unknown: 'rawlog.mask.unknown',
+};
+
 /**
  * The terminal's own log, exactly as it was reported.
  *
@@ -43,22 +63,26 @@ import { T, TEnum, useLabels } from '../lib/translation';
  * there is no edit or delete action here for anyone — including a Super Admin.
  */
 export function RawScanLogPage(): ReactNode {
+  const { t, tEnum } = useLabels();
+  // The default window, kept so Reset can return to it and `dirty` can tell when it has moved.
+  const [defaults] = useState(() => ({ from: daysAgoIso(7), to: todayIso() }));
   const [rows, setRows] = useState<RawEventRow[]>([]);
   const [total, setTotal] = useState(0);
+  const [byArrival, setByArrival] = useState<Partial<Record<'push' | 'pull', number>>>({});
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [lookups, setLookups] = useState<Lookups | null>(null);
   const [deviceId, setDeviceId] = useState('');
   const [major, setMajor] = useState('');
   const [arrivedVia, setArrivedVia] = useState<string | undefined>(undefined);
-  const [employeeNo, setEmployeeNo] = useState('');
-  const [from, setFrom] = useState(daysAgoIso(7));
-  const [to, setTo] = useState(todayIso());
+  const [search, setSearch] = useState('');
+  const [from, setFrom] = useState(defaults.from);
+  const [to, setTo] = useState(defaults.to);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [picture, setPicture] = useState<RawEventRow | null>(null);
-  const { t, tEnum } = useLabels();
 
   useEffect(() => {
     void lookupsApi
@@ -76,27 +100,26 @@ export function RawScanLogPage(): ReactNode {
         ...(deviceId ? { deviceId: Number(deviceId) } : {}),
         ...(major ? { major: Number(major) } : {}),
         ...(arrivedVia !== undefined ? { arrivedVia: arrivedVia as 'push' | 'pull' } : {}),
-        ...(employeeNo.trim() ? { employeeNo: employeeNo.trim() } : {}),
+        ...(search.trim() ? { search: search.trim() } : {}),
         from,
         to,
       });
       setRows(result.rows);
       setTotal(result.total);
+      setByArrival(result.byArrival);
+      setGeneratedAt(result.generatedAt);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('rawlog.error.load'));
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, deviceId, major, arrivedVia, employeeNo, from, to, t]);
+  }, [page, pageSize, deviceId, major, arrivedVia, search, from, to, t]);
 
   useEffect(() => {
     const timer = setTimeout(() => void load(), 250);
     return () => clearTimeout(timer);
   }, [load]);
-
-  const push = rows.filter((row) => row.arrivedVia === 'push').length;
-  const pull = rows.length - push;
 
   return (
     <PanelCard title={<T k="rawlog.title" />} subtitle={<T k="rawlog.subtitle" />}>
@@ -107,11 +130,6 @@ export function RawScanLogPage(): ReactNode {
         subtitle={<T k="rawlog.section.subtitle" />}
       />
 
-      {/*
-        Counted from the page in view rather than the whole range: the server does not
-        facet this, and a chip claiming a total it did not measure would be a number
-        that contradicts the table under it.
-      */}
       <ChipBar
         active={arrivedVia}
         onChange={(id) => {
@@ -119,29 +137,43 @@ export function RawScanLogPage(): ReactNode {
           setPage(1);
         }}
         chips={[
-          { id: 'push', label: <T k="rawlog.chip.push" />, count: push, dot: 'bg-emerald-500' },
-          { id: 'pull', label: <T k="rawlog.chip.pull" />, count: pull, dot: 'bg-sky-500' },
+          {
+            id: 'push',
+            label: <T k="rawlog.chip.push" />,
+            count: byArrival.push ?? 0,
+            dot: 'bg-emerald-500',
+          },
+          {
+            id: 'pull',
+            label: <T k="rawlog.chip.pull" />,
+            count: byArrival.pull ?? 0,
+            dot: 'bg-sky-500',
+          },
         ]}
       />
 
       <FilterRow
-        search={employeeNo}
+        search={search}
         onSearch={(value) => {
-          setEmployeeNo(value);
+          setSearch(value);
           setPage(1);
         }}
         placeholder={t('rawlog.search')}
         dirty={
-          employeeNo.length > 0 ||
+          search.length > 0 ||
           deviceId.length > 0 ||
           major.length > 0 ||
-          arrivedVia !== undefined
+          arrivedVia !== undefined ||
+          from !== defaults.from ||
+          to !== defaults.to
         }
         onReset={() => {
-          setEmployeeNo('');
+          setSearch('');
           setDeviceId('');
           setMajor('');
           setArrivedVia(undefined);
+          setFrom(defaults.from);
+          setTo(defaults.to);
           setPage(1);
         }}
       >
@@ -188,60 +220,45 @@ export function RawScanLogPage(): ReactNode {
         />
       </FilterRow>
 
-      <PanelBody className="pb-0">
-        <Feedback error={error} />
-        <PanelNote icon={<Lock className="size-3.5" aria-hidden />}>
-          {/*
-            The emphasised clause is its own label spliced into the sentence, rather than the
-            sentence being split around a `<strong>`. Splitting would fix where the bold part
-            sits, and in another language it does not sit there.
-          */}
-          <T
-            k="rawlog.immutable.note"
-            vars={{
-              emphasis: (
-                <strong className="font-semibold">
-                  <T k="rawlog.immutable" />
-                </strong>
-              ),
-            }}
-          />
-        </PanelNote>
-      </PanelBody>
+      {error !== null && (
+        <PanelBody className="pb-0">
+          <Feedback error={error} />
+        </PanelBody>
+      )}
 
-      <div className="mt-3">
-        <RecordTable
-          loading={loading}
-          rowCount={rows.length}
-          empty={<T k="rawlog.empty" />}
-          columns={[
-            { header: <T k="rawlog.column.serial" />, width: 'w-24' },
-            { header: <T k="rawlog.column.deviceTime" />, width: 'w-52' },
-            { header: <T k="rawlog.column.event" /> },
-            { header: <T k="rawlog.column.terminalId" />, width: 'w-28' },
-            { header: <T k="rawlog.column.terminalName" /> },
-            { header: <T k="rawlog.column.terminal" />, width: 'w-32' },
-            { header: <T k="rawlog.column.punch" />, width: 'w-32' },
-            { header: '', width: 'w-20', align: 'right' },
-          ]}
-        >
-          {rows.map((row) => (
-            <RawRow
-              key={row.id}
-              row={row}
-              expanded={open === row.id}
-              onToggle={() => setOpen(open === row.id ? null : row.id)}
-              onPicture={() => setPicture(row)}
-            />
-          ))}
-        </RecordTable>
-      </div>
+      <RecordTable
+        framed
+        loading={loading}
+        rowCount={rows.length}
+        empty={<T k="rawlog.empty" />}
+        columns={[
+          { header: <T k="rawlog.column.serial" />, width: 'w-24' },
+          { header: <T k="rawlog.column.deviceTime" />, width: 'w-52' },
+          { header: <T k="rawlog.column.event" /> },
+          { header: <T k="rawlog.column.terminalId" />, width: 'w-28' },
+          { header: <T k="rawlog.column.terminalName" /> },
+          { header: <T k="rawlog.column.terminal" />, width: 'w-32' },
+          { header: <T k="rawlog.column.punch" />, width: 'w-36' },
+          { header: <T k="panel.column.actions" />, width: 'w-24', align: 'right' },
+        ]}
+      >
+        {rows.map((row) => (
+          <RawRow
+            key={row.id}
+            row={row}
+            expanded={open === row.id}
+            onToggle={() => setOpen(open === row.id ? null : row.id)}
+            onPicture={() => setPicture(row)}
+          />
+        ))}
+      </RecordTable>
 
       <PanelFooter
         shown={rows.length}
         total={total}
         page={page}
         pageSize={pageSize}
+        generatedAt={generatedAt}
         loading={loading}
         onPage={setPage}
         onPageSize={(size) => {
@@ -295,10 +312,10 @@ function RawRow({
           protocol has none, and an em dash says that honestly rather than printing the
           word "null" or inventing a number this row does not have.
         */}
-        <td className="px-5 py-2 font-mono text-xs tabular-nums text-slate-500">
+        <td className="px-5 py-2.5 font-mono text-xs tabular-nums text-slate-500">
           {row.serialNo === null ? <span className="text-slate-400">—</span> : `#${row.serialNo}`}
         </td>
-        <td className="px-2 py-2 font-mono text-xs tabular-nums text-slate-600">
+        <td className="px-2 py-2.5 font-mono text-xs tabular-nums text-slate-600">
           {formatDateTime(row.eventTime)}
           {/*
             The clock error recorded when this arrived. Shown because a record taken
@@ -306,17 +323,17 @@ function RawRow({
             and correcting the clock afterwards does not change what was stored.
           */}
           {drifting && (
-            <span className="ml-1.5 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-800">
+            <Badge tone="warning" className="ml-1.5">
               <T
                 k="rawlog.row.drift"
                 vars={{
                   drift: `${row.deviceDriftS! > 0 ? '+' : ''}${String(row.deviceDriftS)}`,
                 }}
               />
-            </span>
+            </Badge>
           )}
         </td>
-        <td className="px-2 py-2 text-slate-700">
+        <td className="px-2 py-2.5 text-slate-700">
           {/*
             Three tiers, narrowing as less is known. A recognised vendor code reads as itself;
             an unrecognised one falls back to the category name plus the number, which is still
@@ -337,27 +354,28 @@ function RawRow({
             </span>
           )}
         </td>
-        <td className="px-2 py-2 font-mono text-xs text-slate-600">{row.employeeNo ?? '—'}</td>
-        <td className="px-2 py-2 text-slate-600">
+        <td className="px-2 py-2.5 font-mono text-xs text-slate-600">{row.employeeNo ?? '—'}</td>
+        <td className="px-2 py-2.5 text-slate-600">
           {row.personName ?? <span className="text-slate-400">—</span>}
         </td>
-        <td className="px-2 py-2 text-xs text-slate-600">{row.device.name}</td>
-        <td className="px-2 py-2">
+        <td className="px-2 py-2.5 text-xs text-slate-600">{row.device.name}</td>
+        <td className="px-2 py-2.5">
+          {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
           {row.punch === null ? (
             <span className="text-xs text-slate-400">
               <T k="rawlog.row.noPunch" />
             </span>
           ) : row.punch.suppressed ? (
-            <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-600">
+            <Badge tone="neutral" className="uppercase">
               <T k="scan.suppressed" />
-            </span>
+            </Badge>
           ) : (
-            <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-700">
+            <Badge tone="success" className="uppercase">
               <T k="rawlog.row.recorded" />
-            </span>
+            </Badge>
           )}
         </td>
-        <td className="px-2 py-2 pr-4">
+        <td className="px-2 py-2.5 pr-4">
           <RowActions>
             {row.pictureUrl !== null && (
               <RowAction
@@ -399,8 +417,16 @@ function RawRow({
                 label={<T k="rawlog.detail.door" />}
                 value={row.doorNo === null ? '—' : String(row.doorNo)}
               />
-              <Detail label={<T k="rawlog.detail.mask" />} value={row.maskWorn ?? '—'} />
-              <Detail label={<T k="rawlog.detail.arrivedVia" />} value={row.arrivedVia} />
+              <Detail
+                label={<T k="rawlog.detail.mask" />}
+                value={
+                  row.maskWorn === null ? '—' : <TEnum k={MASK_LABELS[row.maskWorn]} fallback={row.maskWorn} />
+                }
+              />
+              <Detail
+                label={<T k="rawlog.detail.arrivedVia" />}
+                value={<TEnum k={ARRIVAL_LABELS[row.arrivedVia]} fallback={row.arrivedVia} />}
+              />
               <Detail
                 label={<T k="rawlog.detail.receivedAt" />}
                 value={formatDateTime(row.receivedAt)}
@@ -425,7 +451,11 @@ function RawRow({
                 ) : (
                   <T
                     k="rawlog.detail.recorded"
-                    vars={{ punch: row.punch.id, direction: row.punch.direction }}
+                    vars={{
+                      punch: row.punch.id,
+                      // The word, not the stored value: this line read `arah "unknown"`.
+                      direction: t(DIRECTION_LABELS[row.punch.direction] ?? 'scan.undecided'),
+                    }}
                   />
                 )}
               </PanelNote>
@@ -472,16 +502,23 @@ function PictureDialog({
       title={<T k="rawlog.picture.title" vars={{ serial }} />}
       titleText={t('rawlog.picture.title', { serial })}
       description={`${event.personName ?? event.employeeNo ?? '—'} · ${formatDateTime(event.eventTime)}`}
+      width="lg"
       onClose={onClose}
     >
-      <img
-        src={rawEventsApi.pictureUrl(event.id)}
-        alt={t('rawlog.picture.alt', { serial })}
-        className="w-full rounded-lg border border-slate-200 bg-slate-100"
-      />
-      <PanelNote className="mt-3">
-        <T k="rawlog.picture.note" />
-      </PanelNote>
+      <div className="space-y-4">
+        <img
+          src={rawEventsApi.pictureUrl(event.id)}
+          alt={t('rawlog.picture.alt', { serial })}
+          className="w-full rounded-lg border border-slate-200 bg-slate-100"
+        />
+        {/* The last block before the footer, so it carries the `pb-2`. */}
+        <div className="pb-2">
+          <PanelNote>
+            <T k="rawlog.picture.note" />
+          </PanelNote>
+        </div>
+        <DialogFooter onClose={onClose} closeLabel={<T k="dialog.close" />} />
+      </div>
     </Dialog>
   );
 }

@@ -1,14 +1,8 @@
-import {
-  CircleAlert,
-  Fingerprint,
-  IdCard,
-  KeyRound,
-  Radio,
-  ScanFace,
-  WifiOff,
-} from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import type { LabelKey } from '@attendance/shared';
+import { CircleAlert, Fingerprint, IdCard, KeyRound, Radio, ScanFace, WifiOff } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
+import { Feedback } from '../components/Dialog';
 import {
   ChipBar,
   Detail,
@@ -16,13 +10,15 @@ import {
   ExpandButton,
   PanelBody,
   PanelCard,
+  PanelFooter,
   PanelNote,
   PanelSection,
   RecordTable,
 } from '../components/RecordPanel';
-import { StatTile } from '../components/ui';
+import { Badge } from '../components/ui';
+import { api } from '../lib/api';
 import { cn } from '../lib/cn';
-import { METHOD_LABELS } from '../lib/operations-api';
+import { METHOD_LABELS, formatTime } from '../lib/operations-api';
 import { T, TEnum, useLabels } from '../lib/translation';
 
 /**
@@ -49,7 +45,15 @@ interface LiveScan {
   method: string;
   direction: string;
   suppressed: boolean;
+  /** A code the server chose; the wording is this screen's. */
   problem: string | null;
+}
+
+/** What `/api/stream/scans/today` answers. */
+interface TodayScans {
+  /** True when today goes back further than the cap, so the list is the newest part of it. */
+  truncated: boolean;
+  scans: LiveScan[];
 }
 
 /**
@@ -66,35 +70,95 @@ const METHOD_ICONS: Record<string, typeof ScanFace> = {
   password: KeyRound,
 };
 
+/** Why a scan did not become anybody's punch. Keyed on the code `publishScan` sends. */
+const PROBLEM_LABELS: Record<string, LabelKey> = {
+  unrecognisedFace: 'monitor.problem.unrecognisedFace',
+  unmappedId: 'monitor.problem.unmappedId',
+};
+
+const DIRECTION_LABELS: Record<string, LabelKey> = {
+  in: 'scan.in',
+  out: 'scan.out',
+};
+
 /** Newest first, capped so a long shift cannot grow the list without bound. */
 const MAX_ROWS = 200;
 
+const keyOf = (scan: LiveScan): string => `${String(scan.deviceId)}-${scan.eventKey}`;
+
 /**
- * Live view of scans as they happen.
+ * Today's stored scans and the live ones, as one list.
  *
- * Fed by server-sent events. The browser reconnects on its own, and because the durable
- * record is already in the raw log, a gap in this feed costs nothing but a refresh.
+ * Keyed on the dedup key rather than the sequence number: a callback protocol has no sequence,
+ * so every scan from one of those terminals would collapse into a single row. Ordered on the
+ * instant the scan happened, so a scan the reconcile pull delivered a minute late lands where it
+ * belongs instead of on top as though it had just occurred.
+ */
+function merge(current: LiveScan[], incoming: LiveScan[]): LiveScan[] {
+  const byKey = new Map<string, LiveScan>();
+  for (const scan of [...current, ...incoming]) {
+    if (!byKey.has(keyOf(scan))) byKey.set(keyOf(scan), scan);
+  }
+  return [...byKey.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, MAX_ROWS);
+}
+
+/**
+ * Today's scans, and new ones as they happen.
  *
- * Rows are prepended rather than refetched so a scan appears the moment it is stored,
- * which is the whole point of the screen during a shift change.
+ * Opens with what today already holds, then prepends from server-sent events. It used to show
+ * only what arrived while the page was open, so a scan made before opening it — which is how
+ * anybody tests a terminal — was nowhere on a screen called today's monitor, and the empty table
+ * read as the scan having been lost. The same read runs again whenever the stream reconnects, so a
+ * dropped connection leaves no gap either.
  */
 export function LiveMonitorPage(): ReactNode {
   const [scans, setScans] = useState<LiveScan[]>([]);
+  const [truncated, setTruncated] = useState(false);
   const [connected, setConnected] = useState(false);
-  const [lastEventAt, setLastEventAt] = useState<Date | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<string | undefined>(undefined);
   const [open, setOpen] = useState<string | null>(null);
+  const { t } = useLabels();
+
+  const loadToday = useCallback(async () => {
+    setLoading(true);
+    try {
+      const reply = await api.get<TodayScans>('/api/stream/scans/today');
+      setScans((current) => merge(current, reply.scans));
+      setTruncated(reply.truncated);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('monitor.error.load'));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  /*
+    Held in a ref so the stream is opened once. As a dependency of the effect below, a new
+    `loadToday` — the wording arriving changes `t` — would tear the connection down and open
+    another.
+  */
+  const loadRef = useRef(loadToday);
+  useEffect(() => {
+    loadRef.current = loadToday;
+  }, [loadToday]);
 
   useEffect(() => {
     const source = new EventSource('/api/stream/scans', { withCredentials: true });
 
-    source.addEventListener('ready', () => setConnected(true));
+    // `ready` is sent on every connection, the first and each reconnect, so this also fills
+    // whatever a dropped connection missed.
+    source.addEventListener('ready', () => {
+      setConnected(true);
+      void loadRef.current();
+    });
 
     source.addEventListener('scan', (event) => {
       try {
         const scan = JSON.parse((event as MessageEvent<string>).data) as LiveScan;
-        setScans((current) => [scan, ...current].slice(0, MAX_ROWS));
-        setLastEventAt(new Date());
+        setScans((current) => merge([scan], current));
       } catch {
         // A malformed frame is not worth tearing the stream down for.
       }
@@ -119,13 +183,15 @@ export function LiveMonitorPage(): ReactNode {
     return true;
   });
 
+  // Today goes back further than the list, or live scans have pushed the oldest off it.
+  const capped = truncated || scans.length >= MAX_ROWS;
+  const newest = scans[0] ?? null;
+
   return (
     <PanelCard title={<T k="monitor.title" />} subtitle={<T k="monitor.subtitle" />}>
       <PanelSection
-        title={<T k={connected ? 'monitor.connected' : 'monitor.disconnected'} />}
-        subtitle={
-          <T k={connected ? 'monitor.connected.hint' : 'monitor.disconnected.hint'} />
-        }
+        title={<T k={capped ? 'monitor.count.recent' : 'monitor.count'} vars={{ count: scans.length }} />}
+        subtitle={<T k={connected ? 'monitor.connected.hint' : 'monitor.disconnected.hint'} />}
         action={
           <span
             className={cn(
@@ -138,50 +204,20 @@ export function LiveMonitorPage(): ReactNode {
             ) : (
               <WifiOff className="size-3.5" aria-hidden />
             )}
-            {lastEventAt === null ? (
-              <T k="monitor.waiting" />
-            ) : (
-              <T
-                k="monitor.lastAt"
-                vars={{ time: lastEventAt.toLocaleTimeString('ms-MY', { hour12: false }) }}
-              />
+            <T k={connected ? 'monitor.connected' : 'monitor.disconnected'} />
+            {connected && (
+              <>
+                {' · '}
+                {newest === null ? (
+                  <T k="monitor.waiting" />
+                ) : (
+                  <T k="monitor.lastAt" vars={{ time: formatTime(newest.at) }} />
+                )}
+              </>
             )}
           </span>
         }
       />
-
-      <PanelBody className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-3">
-          <StatTile
-            label={<T k="monitor.stat.accepted" />}
-            value={String(accepted)}
-            hint={<T k="monitor.stat.accepted.hint" />}
-            tone="success"
-          />
-          {/*
-            Shown rather than hidden. The terminal emits several scans for one person
-            seconds apart; the engine keeps one and flags the rest, and hiding that
-            would make this view disagree with the raw log.
-          */}
-          <StatTile
-            label={<T k="monitor.stat.suppressed" />}
-            value={String(suppressed)}
-            hint={<T k="monitor.stat.suppressed.hint" />}
-          />
-          <StatTile
-            label={<T k="monitor.stat.problems" />}
-            value={String(problems)}
-            hint={<T k="monitor.stat.problems.hint" />}
-            tone={problems > 0 ? 'warning' : 'neutral'}
-          />
-        </div>
-
-        {!connected && (
-          <PanelNote tone="warn" icon={<WifiOff className="size-3.5" aria-hidden />}>
-            <T k="monitor.offline.note" />
-          </PanelNote>
-        )}
-      </PanelBody>
 
       <ChipBar
         active={outcome}
@@ -193,6 +229,11 @@ export function LiveMonitorPage(): ReactNode {
             count: accepted,
             dot: 'bg-emerald-500',
           },
+          /*
+            Shown rather than hidden. The terminal emits several scans for one person seconds
+            apart; the engine keeps one and flags the rest, and hiding that would make this view
+            disagree with the raw log.
+          */
           {
             id: 'suppressed',
             label: <T k="monitor.chip.suppressed" />,
@@ -208,67 +249,62 @@ export function LiveMonitorPage(): ReactNode {
         ]}
       />
 
-      {scans.length === 0 ? (
-        <div className="py-16 text-center">
-          <Radio className="mx-auto size-6 text-slate-300" aria-hidden />
-          <p className="mt-2 text-sm text-slate-500">
-            <T k="monitor.idle" />
-          </p>
-        </div>
-      ) : (
-        <div
-          // A live region so a screen reader announces arrivals instead of leaving
-          // them silent.
-          aria-live="polite"
-          aria-relevant="additions"
-          className="max-h-[36rem] overflow-y-auto"
-        >
-          <RecordTable
-            loading={false}
-            rowCount={filtered.length}
-            empty={<T k="monitor.empty" />}
-            columns={[
-              { header: <T k="monitor.column.time" />, width: 'w-24' },
-              { header: <T k="monitor.column.staff" /> },
-              { header: <T k="monitor.column.terminal" />, width: 'w-40' },
-              { header: <T k="monitor.column.method" />, width: 'w-28' },
-              { header: <T k="monitor.column.outcome" />, width: 'w-44' },
-              { header: '', width: 'w-10' },
-            ]}
-          >
-            {filtered.map((scan) => (
-              /*
-                Keyed on the dedup key, not the sequence number. A callback protocol has no
-                sequence, so every scan from one of those terminals arrived with the same
-                null and React collapsed them into a single row that kept overwriting itself.
-              */
-              <ScanRow
-                key={`${String(scan.deviceId)}-${scan.eventKey}`}
-                scan={scan}
-                expanded={open === scan.rawEventId}
-                onToggle={() =>
-                  setOpen(open === scan.rawEventId ? null : scan.rawEventId)
-                }
-              />
-            ))}
-          </RecordTable>
-        </div>
+      {error !== null && (
+        <PanelBody className="pb-0">
+          <Feedback error={error} />
+        </PanelBody>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-3">
-        <p className="text-xs text-slate-500">
-          <T
-            k="monitor.footer.showing"
-            vars={{ shown: filtered.length, total: scans.length }}
-          />
-          {scans.length >= MAX_ROWS && (
-            <T k="monitor.footer.capped" vars={{ max: MAX_ROWS }} />
-          )}
-        </p>
-        <p className="text-xs text-slate-400">
-          <T k="monitor.footer.note" />
-        </p>
+      <div
+        // A live region so a screen reader announces arrivals instead of leaving them silent.
+        aria-live="polite"
+        aria-relevant="additions"
+      >
+        <RecordTable
+          framed
+          loading={loading}
+          rowCount={filtered.length}
+          empty={
+            scans.length === 0 ? (
+              <span className="flex flex-col items-center gap-2">
+                <Radio className="size-6 text-slate-300" aria-hidden />
+                <T k="monitor.idle" />
+              </span>
+            ) : (
+              <T k="monitor.empty" />
+            )
+          }
+          columns={[
+            { header: <T k="monitor.column.time" />, width: 'w-24' },
+            { header: <T k="monitor.column.staff" /> },
+            { header: <T k="monitor.column.terminal" />, width: 'w-40' },
+            { header: <T k="monitor.column.method" />, width: 'w-32' },
+            { header: <T k="monitor.column.outcome" />, width: 'w-48' },
+            { header: '', width: 'w-12' },
+          ]}
+        >
+          {filtered.map((scan) => (
+            <ScanRow
+              key={keyOf(scan)}
+              scan={scan}
+              expanded={open === keyOf(scan)}
+              onToggle={() => setOpen(open === keyOf(scan) ? null : keyOf(scan))}
+            />
+          ))}
+        </RecordTable>
       </div>
+
+      <PanelFooter
+        shown={filtered.length}
+        total={scans.length}
+        page={1}
+        pageSize={MAX_ROWS}
+        pageSizes={[MAX_ROWS]}
+        loading={loading}
+        onPage={() => undefined}
+        onPageSize={() => undefined}
+        onRefresh={() => void loadToday()}
+      />
     </PanelCard>
   );
 }
@@ -284,7 +320,7 @@ function ScanRow({
 }): ReactNode {
   const { t } = useLabels();
   const Icon = METHOD_ICONS[scan.method] ?? ScanFace;
-  const time = new Date(scan.at).toLocaleTimeString('ms-MY', { hour12: false });
+  const directionKey = DIRECTION_LABELS[scan.direction];
 
   return (
     <>
@@ -295,8 +331,10 @@ function ScanRow({
           scan.problem !== null && !expanded && 'bg-amber-50/40',
         )}
       >
-        <td className="px-5 py-2 font-mono text-xs tabular-nums text-slate-500">{time}</td>
-        <td className="px-2 py-2">
+        <td className="px-5 py-2.5 font-mono text-xs tabular-nums text-slate-500">
+          {formatTime(scan.at)}
+        </td>
+        <td className="px-2 py-2.5">
           {scan.name === null ? (
             <span className="text-sm text-slate-400 italic">
               {scan.employeeNo === null ? (
@@ -307,54 +345,39 @@ function ScanRow({
             </span>
           ) : (
             <>
-              <span className="block text-slate-800">{scan.name}</span>
+              <span className="block font-medium text-slate-800">{scan.name}</span>
               <span className="block font-mono text-[11px] text-slate-400">{scan.employeeNo}</span>
             </>
           )}
         </td>
-        <td className="px-2 py-2 text-xs text-slate-600">{scan.deviceName}</td>
-        <td className="px-2 py-2">
+        <td className="px-2 py-2.5 text-xs text-slate-600">{scan.deviceName}</td>
+        <td className="px-2 py-2.5">
           <span className="inline-flex items-center gap-1.5 text-xs text-slate-600">
             <Icon
-              className={cn(
-                'size-3.5',
-                scan.problem === null ? 'text-slate-400' : 'text-amber-500',
-              )}
+              className={cn('size-3.5', scan.problem === null ? 'text-slate-400' : 'text-amber-500')}
               aria-hidden
             />
             <TEnum k={METHOD_LABELS[scan.method]} fallback={scan.method} />
           </span>
         </td>
-        <td className="px-2 py-2">
-          {/*
-            Upper case on the problem badge comes from the class, not from the string.
-
-            `.toUpperCase()` on a sentence is not safe in every language — Turkish dotless i and
-            German eszett both change letter or length — and this value is prose the server wrote,
-            not a code somebody typed.
-          */}
+        <td className="px-2 py-2.5">
+          {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
           {scan.problem !== null ? (
-            <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-800 uppercase">
+            <Badge tone="warning" className="uppercase">
               <CircleAlert className="size-3" aria-hidden />
-              {scan.problem}
-            </span>
+              <TEnum k={PROBLEM_LABELS[scan.problem]} fallback={scan.problem} />
+            </Badge>
           ) : scan.suppressed ? (
-            <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-600">
+            <Badge tone="neutral" className="uppercase">
               <T k="scan.suppressed" />
-            </span>
+            </Badge>
           ) : (
-            <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-700">
-              {scan.direction === 'in' ? (
-                <T k="scan.in" />
-              ) : scan.direction === 'out' ? (
-                <T k="scan.out" />
-              ) : (
-                <T k="monitor.row.recorded" />
-              )}
-            </span>
+            <Badge tone="success" className="uppercase">
+              <T k={directionKey ?? 'monitor.row.recorded'} />
+            </Badge>
           )}
         </td>
-        <td className="w-10 pr-4">
+        <td className="px-2 py-2.5 pr-4">
           <ExpandButton expanded={expanded} onClick={onToggle} label={t('monitor.row.expand')} />
         </td>
       </tr>
@@ -383,12 +406,15 @@ function ScanRow({
                 }
                 mono
               />
-              <Detail label={<T k="monitor.detail.direction" />} value={scan.direction} />
+              <Detail
+                label={<T k="monitor.detail.direction" />}
+                value={<T k={directionKey ?? 'scan.undecided'} />}
+              />
             </DetailGrid>
 
             {scan.problem !== null && (
               <PanelNote tone="warn" className="mt-3">
-                {scan.employeeNo !== null && scan.staffId === null ? (
+                {scan.problem === 'unmappedId' && scan.employeeNo !== null ? (
                   <T
                     k="monitor.detail.unmappedWarning"
                     vars={{ employeeNo: scan.employeeNo, device: scan.deviceName }}

@@ -1,5 +1,12 @@
 import { DEVICE_LIMITS, type LabelKey } from '@attendance/shared';
-import { CircleAlert, CircleCheck, Loader2 } from 'lucide-react';
+import {
+  CircleAlert,
+  CircleCheck,
+  Loader2,
+  ScanFace,
+  TriangleAlert,
+  UserCheck,
+} from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { z } from 'zod';
 
@@ -10,10 +17,12 @@ import {
   type StaffFormValues,
 } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { cn } from '../lib/cn';
 import type { Lookups } from '../lib/operations-api';
 import { T, useLabels, type LabelVars } from '../lib/translation';
 import { Dialog, DialogFooter, Feedback } from './Dialog';
-import { Badge, Field, SelectField } from './ui';
+import { PanelNote } from './RecordPanel';
+import { Badge, CheckCard, Field, SelectField } from './ui';
 
 /**
  * Validation mirrors the server's schema.
@@ -94,12 +103,18 @@ type FieldErrors = Partial<
 export function StaffFormDialog({
   staffId,
   lookups,
+  reactivate = false,
   onClose,
   onSaved,
 }: {
   /** Null creates a new record. */
   staffId: number | null;
   lookups: Lookups | null;
+  /**
+   * Opened from the directory's reactivate action: the record loads with "active" already ticked,
+   * so the one thing that action is for is not left for somebody to find in the form.
+   */
+  reactivate?: boolean;
   onClose: () => void;
   onSaved: (message: string) => Promise<void>;
 }): ReactNode {
@@ -112,6 +127,8 @@ export function StaffFormDialog({
     active: true,
     deviceIds: [],
   });
+  // What the record was when it loaded, so the form can say what unticking "active" will do.
+  const [wasActive, setWasActive] = useState(true);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -137,6 +154,7 @@ export function StaffFormDialog({
       try {
         const detail: StaffDetail = await staffApi.get(staffId);
         if (cancelled) return;
+        setWasActive(detail.active);
         setValues({
           employeeNo: detail.employeeNo,
           fullName: detail.fullName,
@@ -144,7 +162,9 @@ export function StaffFormDialog({
           ...(detail.gender !== null ? { gender: detail.gender } : {}),
           ...(detail.phone !== null ? { phone: detail.phone } : {}),
           ...(detail.email !== null ? { email: detail.email } : {}),
-          active: detail.active,
+          active: reactivate ? true : detail.active,
+          ...(detail.departmentId !== null ? { departmentId: detail.departmentId } : {}),
+          ...(detail.locationId !== null ? { locationId: detail.locationId } : {}),
           ...(detail.notes !== null ? { notes: detail.notes } : {}),
           deviceIds: detail.enrolments.map((row) => row.deviceId),
         });
@@ -165,7 +185,7 @@ export function StaffFormDialog({
     return () => {
       cancelled = true;
     };
-  }, [staffId, t]);
+  }, [staffId, reactivate, t]);
 
   function set<K extends keyof StaffFormValues>(key: K, value: StaffFormValues[K]): void {
     setValues((current) => ({ ...current, [key]: value }));
@@ -236,42 +256,56 @@ export function StaffFormDialog({
     };
 
     try {
-      const result = editing
-        ? await staffApi.update(staffId, payload)
-        : await staffApi.create(payload);
-
-      const failed = result.sync.filter((row) => !row.ok);
-      setSync(result.sync);
-
-      if (failed.length === 0) {
-        await onSaved(
-          result.sync.length > 0
-            ? t('staffForm.saved.enrolled', {
-                name: payload.fullName,
-                count: result.sync.length,
-              })
-            : t('staffForm.saved', { name: payload.fullName }),
-        );
+      if (editing) {
+        const result = await staffApi.update(staffId, payload);
+        // Switched off here: the server took the person off every terminal, as deactivating does.
+        if (wasActive && !payload.active) {
+          await onSaved(
+            t('staff.deactivate.done', { name: payload.fullName, count: result.removal.length }),
+          );
+          return;
+        }
+        if (await reportSync(result.sync)) return;
       } else {
-        // Kept open on partial success. The record exists but the person cannot
-        // use those doors yet, and closing the dialog would hide that.
-        setBusy(false);
+        const result = await staffApi.create(payload);
+        if (await reportSync(result.sync)) return;
       }
     } catch (cause) {
       setFormError(cause instanceof Error ? cause.message : t('staffForm.error.save'));
-      setBusy(false);
+    }
+    setBusy(false);
+
+    /** True once the dialog has handed off; false while a terminal failure keeps it open. */
+    async function reportSync(outcomes: DeviceSyncOutcome[]): Promise<boolean> {
+      setSync(outcomes);
+      // Kept open on partial success. The record exists but the person cannot use those doors
+      // yet, and closing the dialog would hide that.
+      if (outcomes.some((row) => !row.ok)) return false;
+      await onSaved(
+        outcomes.length > 0
+          ? t('staffForm.saved.enrolled', { name: payload.fullName, count: outcomes.length })
+          : t('staffForm.saved', { name: payload.fullName }),
+      );
+      return true;
     }
   }
+
+  const titleKey: LabelKey = reactivate
+    ? 'staffForm.title.reactivate'
+    : editing
+      ? 'staffForm.title.edit'
+      : 'staffForm.title.create';
+  const devices = lookups?.devices ?? [];
 
   return (
     // Uses the shared modal shell rather than its own. A second hand-rolled shell is
     // how the centring and the rule under the title drifted apart from every other
     // dialog in the first place.
     <Dialog
-      title={<T k={editing ? 'staffForm.title.edit' : 'staffForm.title.create'} />}
-      titleText={t(editing ? 'staffForm.title.edit' : 'staffForm.title.create')}
+      title={<T k={titleKey} />}
+      titleText={t(titleKey)}
       description={<T k="staffForm.description" />}
-      width="lg"
+      width="2xl"
       onClose={onClose}
     >
       {loading ? (
@@ -282,13 +316,15 @@ export function StaffFormDialog({
         <div className="space-y-4">
           <Feedback error={formError} />
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          {/* Identity first: the number the terminals know the person by, then the name. */}
+          <div className="grid items-start gap-4 sm:grid-cols-[16rem_1fr]">
             <Field
               label={<T k="staffForm.employeeNo" />}
               value={values.employeeNo}
               onChange={(event) => set('employeeNo', event.target.value)}
               error={errors.employeeNo}
               disabled={editing}
+              autoFocus={!editing}
               hint={
                 editing ? (
                   <T k="staffForm.employeeNo.locked" />
@@ -306,6 +342,9 @@ export function StaffFormDialog({
               onChange={(event) => set('fullName', event.target.value)}
               error={errors.fullName}
             />
+          </div>
+
+          <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field
               label={<T k="staffForm.icNo" />}
               value={values.icNo ?? ''}
@@ -343,6 +382,38 @@ export function StaffFormDialog({
               onChange={(event) => set('email', event.target.value)}
               error={errors.email}
             />
+          </div>
+
+          <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {/* "None" is a real answer for both, so it is written out rather than left to a facet. */}
+            <SelectField
+              label={<T k="staffForm.department" />}
+              value={values.departmentId === undefined ? '' : String(values.departmentId)}
+              onChange={(event) =>
+                set('departmentId', event.target.value ? Number(event.target.value) : undefined)
+              }
+            >
+              <option value="">{t('staffForm.none')}</option>
+              {(lookups?.departments ?? []).map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+            </SelectField>
+            <SelectField
+              label={<T k="staffForm.location" />}
+              value={values.locationId === undefined ? '' : String(values.locationId)}
+              onChange={(event) =>
+                set('locationId', event.target.value ? Number(event.target.value) : undefined)
+              }
+            >
+              <option value="">{t('staffForm.none')}</option>
+              {(lookups?.locations ?? []).map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+            </SelectField>
             <Field
               label={<T k="staffForm.doorPin" />}
               inputMode="numeric"
@@ -362,7 +433,6 @@ export function StaffFormDialog({
                 />
               }
             />
-
             {maySetSalary && (
               <Field
                 label={<T k="staffForm.basicSalary" />}
@@ -376,118 +446,107 @@ export function StaffFormDialog({
                 hint={<T k="staffForm.basicSalary.hint" />}
               />
             )}
-
-            <div>
-              <label htmlFor="staff-dept" className="block text-sm font-medium text-slate-700">
-                <T k="staffForm.department" />
-              </label>
-              <select
-                id="staff-dept"
-                value={values.departmentId ?? ''}
-                onChange={(event) =>
-                  set('departmentId', event.target.value ? Number(event.target.value) : undefined)
-                }
-                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-              >
-                <option value="">{t('staffForm.none')}</option>
-                {(lookups?.departments ?? []).map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="staff-loc" className="block text-sm font-medium text-slate-700">
-                <T k="staffForm.location" />
-              </label>
-              <select
-                id="staff-loc"
-                value={values.locationId ?? ''}
-                onChange={(event) =>
-                  set('locationId', event.target.value ? Number(event.target.value) : undefined)
-                }
-                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-              >
-                <option value="">{t('staffForm.none')}</option>
-                {(lookups?.locations ?? []).map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.name}
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
 
-          <fieldset className="rounded-lg border border-slate-200 p-3">
-            <legend className="px-1 text-sm font-medium text-slate-700">
-              <T k="staffForm.devices" />
-            </legend>
-            <p className="mb-2 text-xs text-slate-500">
-              <T k="staffForm.devices.hint" />
-            </p>
-            <div className="space-y-1.5">
-              {(lookups?.devices ?? []).length === 0 && (
-                <p className="text-xs text-slate-500">
-                  <T k="staffForm.devices.none" />
-                </p>
-              )}
-              {(lookups?.devices ?? []).map((device) => (
-                <label key={device.id} className="flex items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={values.deviceIds.includes(device.id)}
-                    onChange={() => toggleDevice(device.id)}
-                    className="size-4 rounded border-slate-300"
-                  />
-                  {device.name}
-                </label>
-              ))}
+          {/* The terminals this person is written to, one box each. */}
+          <div className="space-y-2">
+            <div>
+              <p className="text-sm font-medium text-slate-700">
+                <T k="staffForm.devices" />
+              </p>
+              <p className="text-xs text-slate-500">
+                <T k={values.active ? 'staffForm.devices.hint' : 'staffForm.devices.inactive'} />
+              </p>
             </div>
-          </fieldset>
+            {devices.length === 0 ? (
+              <p className="text-xs text-slate-500">
+                <T k="staffForm.devices.none" />
+              </p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {devices.map((device) => (
+                  <CheckCard
+                    key={device.id}
+                    checked={values.active && values.deviceIds.includes(device.id)}
+                    disabled={!values.active}
+                    onChange={() => toggleDevice(device.id)}
+                    icon={<ScanFace className="size-4" aria-hidden />}
+                    title={device.name}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
 
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
+          <div className={cn('space-y-4', (sync === null || sync.length === 0) && 'pb-2')}>
+            <CheckCard
               checked={values.active}
-              onChange={(event) => set('active', event.target.checked)}
-              className="size-4 rounded border-slate-300"
+              onChange={(checked) => set('active', checked)}
+              icon={<UserCheck className="size-4" aria-hidden />}
+              title={<T k="staffForm.active" />}
+              hint={
+                <T
+                  k={
+                    editing && wasActive && !values.active
+                      ? 'staffForm.active.removing'
+                      : 'staffForm.active.hint'
+                  }
+                />
+              }
             />
-            <T k="staffForm.active" />
-          </label>
+
+            {editing && wasActive && !values.active && (
+              <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+                <T
+                  k="staff.deactivate.note"
+                  vars={{
+                    emphasis: (
+                      <strong>
+                        <T k="staff.deactivate.kept" />
+                      </strong>
+                    ),
+                  }}
+                />
+              </PanelNote>
+            )}
+          </div>
 
           {/*
             Per-terminal results. Shown because a staff record can be saved
             while one door remains unreachable, and that person simply cannot
-            get in there until it is retried.
+            get in there until it is retried. The last block when present, so it carries the `pb-2`.
           */}
           {sync !== null && sync.length > 0 && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <p className="mb-2 text-xs font-medium text-slate-700">
-                <T k="staffForm.sync.heading" />
-              </p>
-              <ul className="space-y-1.5">
-                {sync.map((row) => (
-                  <li key={row.deviceId} className="flex items-start gap-2 text-xs">
-                    {row.ok ? (
-                      <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-600" aria-hidden />
-                    ) : (
-                      <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-rose-500" aria-hidden />
-                    )}
-                    <span className="min-w-0">
-                      <span className="font-medium text-slate-700">{row.deviceName}</span>
+            <div className="pb-2">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="mb-2 text-xs font-medium text-slate-700">
+                  <T k="staffForm.sync.heading" />
+                </p>
+                <ul className="space-y-1.5">
+                  {sync.map((row) => (
+                    <li key={row.deviceId} className="flex items-start gap-2 text-xs">
                       {row.ok ? (
-                        <Badge tone="success">
-                          <T k="staffForm.sync.ok" />
-                        </Badge>
+                        <CircleCheck
+                          className="mt-0.5 size-3.5 shrink-0 text-emerald-600"
+                          aria-hidden
+                        />
                       ) : (
-                        <span className="ml-1.5 text-rose-700">{row.error}</span>
+                        <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-rose-500" aria-hidden />
                       )}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+                      <span className="min-w-0">
+                        <span className="font-medium text-slate-700">{row.deviceName}</span>{' '}
+                        {row.ok ? (
+                          <Badge tone="success" className="uppercase">
+                            <T k="staffForm.sync.ok" />
+                          </Badge>
+                        ) : (
+                          <span className="ml-1.5 text-rose-700">{row.error}</span>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           )}
 
@@ -501,7 +560,17 @@ export function StaffFormDialog({
             closeLabel={
               <T k={sync?.some((row) => !row.ok) === true ? 'dialog.close' : 'dialog.cancel'} />
             }
-            submitLabel={<T k={editing ? 'dialog.save' : 'staffForm.submit.create'} />}
+            submitLabel={
+              <T
+                k={
+                  reactivate
+                    ? 'staffForm.submit.reactivate'
+                    : editing
+                      ? 'dialog.save'
+                      : 'staffForm.submit.create'
+                }
+              />
+            }
           />
         </div>
       )}

@@ -336,14 +336,17 @@ export function DateBox({
   label,
   value,
   onChange,
+  type = 'date',
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  /** `month` for a list read one month at a time, such as one person's attendance. */
+  type?: 'date' | 'month';
 }): ReactNode {
   return (
     <input
-      type="date"
+      type={type}
       value={value}
       onChange={(event) => onChange(event.target.value)}
       aria-label={label}
@@ -417,13 +420,7 @@ export function RecordTable({
    * when somebody is least sure whether the screen is working.
    */
   const frame = (content: ReactNode): ReactNode =>
-    framed ? (
-      <div className="bg-slate-50/60 px-4 py-4">
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">{content}</div>
-      </div>
-    ) : (
-      content
-    );
+    framed ? <TableFrame>{content}</TableFrame> : content;
 
   if (loading && rowCount === 0) {
     return frame(
@@ -474,6 +471,22 @@ export function RecordTable({
         <tbody className={cn(framed && '[&>tr:last-child]:border-0')}>{children}</tbody>
       </table>
     </div>,
+  );
+}
+
+/**
+ * The bordered card on a tinted field that `RecordTable framed` sits in.
+ *
+ * Exported for the one table that cannot be a `RecordTable`: the work calendar's grid, which is a
+ * day per column rather than a record per row. It sat full-bleed with its own padding beside framed
+ * tables everywhere else, so it was the one surface on the schedule screens that did not read as an
+ * object of its own.
+ */
+export function TableFrame({ children }: { children: ReactNode }): ReactNode {
+  return (
+    <div className="bg-slate-50/60 px-4 py-4">
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">{children}</div>
+    </div>
   );
 }
 

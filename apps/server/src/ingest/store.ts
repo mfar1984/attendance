@@ -11,7 +11,7 @@ import type { Device } from '@prisma/client';
 import { db } from '../db.js';
 import type { TerminalEvent } from '@attendance/terminal-drivers';
 import { loadEnv } from '../env.js';
-import { liveBus } from '../events/bus.js';
+import { liveBus, type LiveScanProblem } from '../events/bus.js';
 import { recordUnmapped, resolveStaffId } from '../identity/resolve.js';
 import { logger } from '../logger.js';
 import { zonedDateOnly } from '../time.js';
@@ -206,7 +206,7 @@ async function derivePunch(
       name: null,
       direction: PunchDirection.unknown,
       suppressed: false,
-      problem: 'Muka tidak dikenali',
+      problem: 'unrecognisedFace',
     });
     return;
   }
@@ -263,7 +263,7 @@ async function derivePunch(
       name: event.personName,
       direction: PunchDirection.unknown,
       suppressed: false,
-      problem: 'ID terminal belum dipetakan',
+      problem: 'unmappedId',
     });
     return;
   }
@@ -346,7 +346,7 @@ function publishScan(input: {
   name: string | null;
   direction: string;
   suppressed: boolean;
-  problem: string | null;
+  problem: LiveScanProblem | null;
 }): void {
   try {
     liveBus.emit('scan', {

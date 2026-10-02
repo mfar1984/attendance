@@ -131,7 +131,9 @@ export async function staffRoutes(app: FastifyInstance): Promise<void> {
       },
     });
 
-    const sync = await pushStaffToDevices(staff, body.deviceIds);
+    // A record created inactive goes onto no terminal, for the same reason an edit that switches
+    // somebody off takes them off every terminal: inactive must not be able to open a door.
+    const sync = staff.active ? await pushStaffToDevices(staff, body.deviceIds) : [];
 
     await writeAudit(request.user, 'create', staff.id, {
       employeeNo: { before: null, after: staff.employeeNo },
@@ -205,6 +207,19 @@ export async function staffRoutes(app: FastifyInstance): Promise<void> {
     }
     if (Object.keys(changes).length > 0) {
       await writeAudit(request.user, 'update', staff.id, changes);
+    }
+
+    /**
+     * Inactive means off every terminal, whichever way somebody got there.
+     *
+     * The directory's deactivate action removes the person from each door it served. Unticking
+     * "active" in this form did not: the record turned inactive and was then re-pushed to the same
+     * terminals below — so a person HR had switched off could still open every door, and nothing on
+     * any screen said so. Both paths now end in the same state.
+     */
+    if (!staff.active) {
+      const removal = existing.active ? await removeStaffFromDevices(staff) : [];
+      return jsonSafe({ id: staff.id, sync: [], removal });
     }
 
     const currentDevices = (
@@ -497,10 +512,30 @@ export async function staffRoutes(app: FastifyInstance): Promise<void> {
     '/api/staff/:id/face',
     { preHandler: requirePermission('staff.biometrics', 'delete') },
     async (request) => {
+      if (!request.user) throw unauthorized();
+
       const id = idParam(request.params);
       const staff = await db().staff.findUnique({ where: { id } });
       if (!staff) throw notFound('Staf tidak dijumpai');
-      return jsonSafe({ results: await removeFace(staff) });
+
+      const results = await removeFace(staff);
+
+      /*
+       * Audited, as enrolling is. Removing a face can be what stops somebody scanning at all, and
+       * the trail recorded who put one on and never who took it off.
+       */
+      await db().auditLog.create({
+        data: {
+          accountId: request.user.accountId,
+          actorLabel: request.user.fullName,
+          action: 'update',
+          entityType: 'Staff',
+          entityId: String(id),
+          changes: { face: { before: 'didaftar', after: null } },
+        },
+      });
+
+      return jsonSafe({ results });
     },
   );
 
@@ -558,11 +593,25 @@ export async function staffRoutes(app: FastifyInstance): Promise<void> {
       if (!request.user) throw unauthorized();
       const csv = typeof request.body === 'string' ? request.body : String(request.body ?? '');
       if (csv.trim().length === 0) throw conflict('Fail kosong');
-      return jsonSafe(
-        await previewImport(csv, {
-          maySetSalary: can(request.user, 'staff.directory', 'salary'),
-        }),
-      );
+      const preview = await previewImport(csv, {
+        maySetSalary: can(request.user, 'staff.directory', 'salary'),
+      });
+
+      /*
+       * Only what the preview table shows. The full rows carry door PINs and wages, and five
+       * thousand of them were echoed back to the browser for a screen that lists names — the
+       * commit re-reads the file itself, so nothing downstream needs them from here.
+       */
+      return jsonSafe({
+        ...preview,
+        valid: preview.valid.map((row) => ({
+          line: row.line,
+          employeeNo: row.employeeNo,
+          fullName: row.fullName,
+          department: row.department ?? null,
+          location: row.location ?? null,
+        })),
+      });
     },
   );
 

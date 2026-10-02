@@ -18,6 +18,15 @@ import { notify } from '../notify/dispatch.js';
 import { dateOnlyFromKey, dateOnlyKey, eachDateOnly, zonedDateOnly } from '../time.js';
 
 /**
+ * How a roster day written by an approved request is marked: `Cuti #<request id>`.
+ *
+ * Exported because the work calendar has to recognise these days and leave them alone. A day the
+ * calendar overwrote or cleared would leave the request approved and its balance charged with
+ * nothing to show for it, and the cancellation here is what is meant to take them off.
+ */
+export const LEAVE_NOTE_PREFIX = 'Cuti #';
+
+/**
  * Leave applications.
  *
  * The point of this module is the side effect, not the status field. Approving a
@@ -985,9 +994,13 @@ async function applyToRoster(
         workDate: day,
         entryType: 'leave',
         shiftId: null,
-        notes: `Cuti #${String(requestId)}`,
+        notes: `${LEAVE_NOTE_PREFIX}${String(requestId)}`,
       },
-      update: { entryType: 'leave', shiftId: null, notes: `Cuti #${String(requestId)}` },
+      update: {
+        entryType: 'leave',
+        shiftId: null,
+        notes: `${LEAVE_NOTE_PREFIX}${String(requestId)}`,
+      },
     });
     written += 1;
   }

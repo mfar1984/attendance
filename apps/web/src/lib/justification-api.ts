@@ -43,12 +43,21 @@ export const JUSTIFICATION_STATUS_ORDER: JustificationStatus[] = [
   'rejected',
 ];
 
-/** Tones chosen so `reverted` never reads as a rejection. It is amber, not red. */
-export const JUSTIFICATION_TONES: Record<JustificationStatus, string> = {
-  pending: 'bg-slate-100 text-slate-700',
-  approved: 'bg-emerald-50 text-emerald-700',
-  rejected: 'bg-rose-50 text-rose-700',
-  reverted: 'bg-amber-50 text-amber-700',
+/**
+ * `Badge` tones.
+ *
+ * Pending is amber because it is the work this screen exists for. `reverted` is `info` — a register,
+ * not a verdict — so a day sent back for a better reason never reads as a rejection, and does not
+ * share pending's colour either: it is waiting on the employee, not on the person reading the list.
+ */
+export const JUSTIFICATION_TONES: Record<
+  JustificationStatus,
+  'warning' | 'success' | 'danger' | 'info'
+> = {
+  pending: 'warning',
+  approved: 'success',
+  rejected: 'danger',
+  reverted: 'info',
 };
 
 export type JustificationDecision = 'approved' | 'rejected' | 'reverted';
@@ -101,6 +110,8 @@ export interface QueuePage {
   rows: QueueRow[];
   total: number;
   counts: Partial<Record<JustificationStatus, number>>;
+  /** The department facet's options, on this screen's own permission rather than the org chart's. */
+  departments: Array<{ id: number; name: string }>;
   generatedAt: string;
 }
 
@@ -120,6 +131,7 @@ export const justificationApi = {
     hingga?: string;
     departmentId?: number;
     staffId?: number;
+    search?: string;
     status?: JustificationStatus;
     jenis?: JustifiableKind;
     page?: number;

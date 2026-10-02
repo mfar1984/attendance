@@ -251,6 +251,19 @@ export interface StaffPage {
     withBiometrics: number;
     inactive: number;
   };
+  generatedAt: string;
+}
+
+/**
+ * The face enrolment screen's copy of a directory row: everything but the login account.
+ *
+ * Read from `/api/staff/biometrics`, on that screen's own permission. It used to read the
+ * directory's list, so a clerk granted enrolment alone opened the screen to an error.
+ */
+export type EnrolmentStaffRow = Omit<StaffRow, 'account'>;
+
+export interface EnrolmentStaffPage extends Omit<StaffPage, 'rows'> {
+  rows: EnrolmentStaffRow[];
 }
 
 /** Result of pushing one staff member to one terminal. */
@@ -280,6 +293,14 @@ export interface StaffDetail extends StaffRow {
   gender: 'male' | 'female' | null;
   phone: string | null;
   email: string | null;
+  /**
+   * The ids behind `department` and `location`, for the edit form's selects.
+   *
+   * The form used to leave both out when it loaded a record, so editing anybody showed "none" in
+   * both boxes whatever was stored — and choosing a value there was the only way to see it.
+   */
+  departmentId: number | null;
+  locationId: number | null;
   position: string | null;
   addressLine1: string | null;
   addressLine2: string | null;
@@ -432,6 +453,23 @@ export const staffApi = {
     if (query.locationId) params.set('locationId', String(query.locationId));
     return api.get<StaffPage>(`/api/staff?${params.toString()}`);
   },
+  /** The same list for the face enrolment screen, on `staff.biometrics` and without accounts. */
+  listForEnrolment: (query: {
+    page: number;
+    pageSize: number;
+    search?: string;
+    biometrics?: 'missing' | 'enrolled';
+    departmentId?: number;
+  }) => {
+    const params = new URLSearchParams({
+      page: String(query.page),
+      pageSize: String(query.pageSize),
+    });
+    if (query.search) params.set('search', query.search);
+    if (query.biometrics) params.set('biometrics', query.biometrics);
+    if (query.departmentId) params.set('departmentId', String(query.departmentId));
+    return api.get<EnrolmentStaffPage>(`/api/staff/biometrics?${params.toString()}`);
+  },
   get: (id: number) => api.get<StaffDetail>(`/api/staff/${id}`),
   identities: (id: number) => api.get<StaffIdentities>(`/api/staff/${id}/identities`),
   scans: (id: number, query: { from?: string; to?: string; limit?: number }) => {
@@ -458,7 +496,22 @@ export const staffApi = {
     ),
 };
 
+/** One terminal on the mapping screen's import tab, with how much of its roster is paired. */
+export interface MappingDevice {
+  id: number;
+  name: string;
+  host: string;
+  status: string;
+  location: string | null;
+  viaConnector: boolean;
+  mapped: number;
+  unconfirmed: number;
+  unmapped: number;
+}
+
 export const identityApi = {
+  devices: () =>
+    api.get<{ generatedAt: string; devices: MappingDevice[] }>('/api/identity/devices'),
   unmapped: () => api.get<UnmappedUser[]>('/api/identity/unmapped'),
   unconfirmed: () => api.get<UnconfirmedMapping[]>('/api/identity/unconfirmed'),
   searchStaff: (query: string, deviceId?: number) => {

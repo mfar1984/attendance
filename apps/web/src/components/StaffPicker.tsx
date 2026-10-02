@@ -30,14 +30,22 @@ export function StaffPicker({
   onChange,
   search,
   hint,
+  initialQuery = '',
 }: {
   value: PickedStaff | null;
   onChange: (staff: PickedStaff | null) => void;
   search: (query: string) => Promise<PickedStaff[]>;
   /** What choosing somebody loads, or how the list is filtered. Module-specific. */
   hint: ReactNode;
+  /**
+   * What the box opens with.
+   *
+   * For the mapping screen, which knows the name typed into the terminal at the keypad. That name
+   * is never used to match, but it is the best first guess at who to search for.
+   */
+  initialQuery?: string;
 }): ReactNode {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery);
   const [candidates, setCandidates] = useState<PickedStaff[]>([]);
   const [searching, setSearching] = useState(false);
   const { t } = useLabels();

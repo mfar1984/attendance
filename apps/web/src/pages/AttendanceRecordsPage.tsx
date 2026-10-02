@@ -1,3 +1,4 @@
+import type { LabelKey } from '@attendance/shared';
 import { RefreshCw, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
@@ -16,7 +17,8 @@ import {
   PanelSection,
   RecordTable,
 } from '../components/RecordPanel';
-import { Button } from '../components/ui';
+import { Badge, Button } from '../components/ui';
+import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import {
   STATUS_LABELS,
@@ -39,13 +41,17 @@ import { T, TEnum, useLabels } from '../lib/translation';
  * the immutable raw log rather than edited by hand.
  */
 export function AttendanceRecordsPage(): ReactNode {
+  const { t } = useLabels();
+  const { can } = useAuth();
+  // The default window, kept so Reset can return to it and `dirty` can tell when it has moved.
+  const [defaults] = useState(() => ({ from: daysAgoIso(7), to: todayIso() }));
   const [rows, setRows] = useState<AttendanceRecordRow[]>([]);
   const [byStatus, setByStatus] = useState<Record<string, number>>({});
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
-  const [from, setFrom] = useState(daysAgoIso(7));
-  const [to, setTo] = useState(todayIso());
+  const [from, setFrom] = useState(defaults.from);
+  const [to, setTo] = useState(defaults.to);
   const [status, setStatus] = useState<string | undefined>(undefined);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -53,7 +59,7 @@ export function AttendanceRecordsPage(): ReactNode {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<number | null>(null);
-  const { t } = useLabels();
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,6 +75,7 @@ export function AttendanceRecordsPage(): ReactNode {
       setRows(result.rows);
       setTotal(result.total);
       setByStatus(result.byStatus);
+      setGeneratedAt(new Date().toISOString());
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('records.error.load'));
@@ -107,36 +114,43 @@ export function AttendanceRecordsPage(): ReactNode {
     <PanelCard title={<T k="records.title" />} subtitle={<T k="records.subtitle" />}>
       <PanelSection
         title={
-          <T
-            k="records.count"
-            vars={{ count: new Intl.NumberFormat('ms-MY').format(total) }}
-          />
+          <T k="records.count" vars={{ count: new Intl.NumberFormat('ms-MY').format(total) }} />
         }
         subtitle={
           <T k="records.range" vars={{ from: formatDateOnly(from), to: formatDateOnly(to) }} />
         }
         action={
-          <Button variant="ghost" onClick={() => void recompute()} disabled={busy}>
-            <RefreshCw className={busy ? 'size-4 animate-spin' : 'size-4'} aria-hidden />
-            <T k="records.recompute" />
-          </Button>
+          /*
+            Hidden without the permission rather than shown and refused. The route is gated on
+            `settings.maintenance:recompute`, so a clerk who may read records pressed it and got a
+            403 — which reads as recomputing being broken, not as a permission they lack.
+          */
+          can('settings.maintenance', 'recompute') ? (
+            <Button onClick={() => void recompute()} disabled={busy || from === '' || to === ''}>
+              <RefreshCw className={cn('size-4', busy && 'animate-spin')} aria-hidden />
+              <T k="records.recompute" />
+            </Button>
+          ) : undefined
         }
       />
 
+      {/*
+        Every status, in the same place each time. Chips at zero used to be dropped, so the bar
+        changed length as the range moved and a status vanished exactly when somebody looked for
+        it. A zero chip is information; the bar disables it rather than hiding it.
+      */}
       <ChipBar
         active={status}
         onChange={(id) => {
           setStatus(id);
           setPage(1);
         }}
-        chips={STATUS_ORDER.filter((key) => (byStatus[key] ?? 0) > 0 || key === status).map(
-          (key) => ({
-            id: key,
-            label: <TEnum k={STATUS_LABELS[key]} fallback={key} />,
-            count: byStatus[key] ?? 0,
-            dot: STATUS_DOT[key] ?? 'bg-slate-400',
-          }),
-        )}
+        chips={STATUS_ORDER.map((key) => ({
+          id: key,
+          label: <TEnum k={STATUS_LABELS[key]} fallback={key} />,
+          count: byStatus[key] ?? 0,
+          dot: STATUS_DOT[key] ?? 'bg-slate-400',
+        }))}
       />
 
       <FilterRow
@@ -146,10 +160,14 @@ export function AttendanceRecordsPage(): ReactNode {
           setPage(1);
         }}
         placeholder={t('records.search')}
-        dirty={search.length > 0 || status !== undefined}
+        dirty={
+          search.length > 0 || status !== undefined || from !== defaults.from || to !== defaults.to
+        }
         onReset={() => {
           setSearch('');
           setStatus(undefined);
+          setFrom(defaults.from);
+          setTo(defaults.to);
           setPage(1);
         }}
       >
@@ -178,6 +196,7 @@ export function AttendanceRecordsPage(): ReactNode {
       )}
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={rows.length}
         empty={<T k="records.empty" />}
@@ -192,7 +211,7 @@ export function AttendanceRecordsPage(): ReactNode {
           { header: <T k="records.column.worked" />, width: 'w-24' },
           { header: <T k="records.column.status" />, width: 'w-32' },
           // The expander column has no heading: the control names itself.
-          { header: '', width: 'w-10' },
+          { header: '', width: 'w-12' },
         ]}
       >
         {rows.map((row) => (
@@ -210,6 +229,7 @@ export function AttendanceRecordsPage(): ReactNode {
         total={total}
         page={page}
         pageSize={pageSize}
+        generatedAt={generatedAt}
         loading={loading}
         onPage={setPage}
         onPageSize={(size) => {
@@ -242,18 +262,31 @@ const STATUS_DOT: Record<string, string> = {
   absent: 'bg-rose-500',
   on_leave: 'bg-sky-500',
   rest_day: 'bg-slate-400',
-  holiday: 'bg-violet-500',
+  holiday: 'bg-fuchsia-500',
 };
 
-const STATUS_BADGE: Record<string, string> = {
-  on_time: 'bg-emerald-50 text-emerald-700',
-  late: 'bg-amber-50 text-amber-800',
-  early_leave: 'bg-amber-50 text-amber-800',
-  incomplete: 'bg-orange-50 text-orange-800',
-  absent: 'bg-rose-50 text-rose-700',
-  on_leave: 'bg-sky-50 text-sky-700',
-  rest_day: 'bg-slate-100 text-slate-600',
-  holiday: 'bg-violet-50 text-violet-700',
+/**
+ * Verdict tones for the faults, register tones for the rest.
+ *
+ * Leave and public holidays are categories, not problems, so they take `info` and `accent`
+ * rather than a colour that reads as a judgement.
+ */
+const STATUS_TONES: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'accent' | 'neutral'> = {
+  on_time: 'success',
+  late: 'warning',
+  early_leave: 'warning',
+  incomplete: 'warning',
+  absent: 'danger',
+  on_leave: 'info',
+  rest_day: 'neutral',
+  holiday: 'accent',
+};
+
+/** `auto` is the engine's; the other two say a person changed it, which is the point of the field. */
+const ORIGIN_LABELS: Record<string, LabelKey> = {
+  auto: 'records.origin.auto',
+  manual: 'records.origin.manual',
+  adjusted: 'records.origin.adjusted',
 };
 
 function RecordRow({
@@ -277,57 +310,49 @@ function RecordRow({
           problem && !expanded && 'bg-rose-50/40',
         )}
       >
-        <td className="px-5 py-2 text-xs whitespace-nowrap tabular-nums text-slate-600">
+        <td className="px-5 py-2.5 text-xs whitespace-nowrap tabular-nums text-slate-600">
           {formatDateOnly(row.workDate)}
         </td>
-        <td className="px-2 py-2">
-          <span className="block text-slate-800">{row.staff.fullName}</span>
+        <td className="px-2 py-2.5">
+          <span className="block font-medium text-slate-800">{row.staff.fullName}</span>
           <span className="block font-mono text-[11px] text-slate-400">{row.staff.employeeNo}</span>
         </td>
-        <td className="px-2 py-2 text-xs text-slate-600">
+        <td className="px-2 py-2.5 text-xs text-slate-600">
           {row.shift?.code ?? (
             <span className="text-slate-400">
               <T k="records.row.defaultShift" />
             </span>
           )}
         </td>
-        <td className="px-2 py-2 font-mono text-xs tabular-nums text-slate-500">
+        <td className="px-2 py-2.5 font-mono text-xs tabular-nums text-slate-500">
           {row.scheduledStart === null
             ? '—'
             : `${formatTime(row.scheduledStart)}–${formatTime(row.scheduledEnd)}`}
         </td>
-        <td className="px-2 py-2 font-mono text-xs tabular-nums text-slate-700">
+        <td className="px-2 py-2.5 font-mono text-xs tabular-nums text-slate-700">
           {formatTime(row.checkInAt)}
         </td>
-        <td className="px-2 py-2 font-mono text-xs tabular-nums text-slate-700">
+        <td className="px-2 py-2.5 font-mono text-xs tabular-nums text-slate-700">
           {formatTime(row.checkOutAt)}
         </td>
-        <td className="px-2 py-2 font-mono text-xs tabular-nums">
+        <td className="px-2 py-2.5 font-mono text-xs tabular-nums">
           {row.lateMinutes > 0 ? (
             <span className="text-amber-700">{formatMinutes(row.lateMinutes)}</span>
           ) : (
             <span className="text-slate-300">—</span>
           )}
         </td>
-        <td className="px-2 py-2 font-mono text-xs tabular-nums text-slate-700">
+        <td className="px-2 py-2.5 font-mono text-xs tabular-nums text-slate-700">
           {formatMinutes(row.workedMinutes)}
           {row.overtimeMinutes > 0 && (
             <span className="ml-1 text-emerald-700">+{formatMinutes(row.overtimeMinutes)}</span>
           )}
         </td>
-        <td className="px-2 py-2">
-          <span
-            className={cn(
-              'inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide',
-              STATUS_BADGE[row.status] ?? 'bg-slate-100 text-slate-600',
-            )}
-          >
-            {/* Uppercased in CSS rather than on the string: a translated word cannot be
-                upper-cased safely in every language. */}
-            <span className="uppercase">
-              <TEnum k={STATUS_LABELS[row.status]} fallback={row.status} />
-            </span>
-          </span>
+        <td className="px-2 py-2.5">
+          {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
+          <Badge tone={STATUS_TONES[row.status] ?? 'neutral'} className="uppercase">
+            <TEnum k={STATUS_LABELS[row.status]} fallback={row.status} />
+          </Badge>
           {/* A day with more than one worked interval cannot be read from the single
               in/out pair, so it is flagged in the row and detailed in the expansion. */}
           {row.blocks.length > 1 && (
@@ -336,7 +361,7 @@ function RecordRow({
             </span>
           )}
         </td>
-        <td className="w-10 pr-4">
+        <td className="px-2 py-2.5 pr-4">
           <ExpandButton expanded={expanded} onClick={onToggle} label={t('records.row.expand')} />
         </td>
       </tr>
@@ -363,7 +388,10 @@ function RecordRow({
                 label={<T k="records.detail.overtime" />}
                 value={formatMinutes(row.overtimeMinutes)}
               />
-              <Detail label={<T k="records.detail.origin" />} value={row.origin} />
+              <Detail
+                label={<T k="records.detail.origin" />}
+                value={<TEnum k={ORIGIN_LABELS[row.origin]} fallback={row.origin} />}
+              />
               <Detail
                 label={<T k="records.detail.calculatedAt" />}
                 value={formatDateTime(row.calculatedAt)}

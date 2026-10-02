@@ -6,7 +6,7 @@ import { requireAuth, requirePermission } from '../auth/plugin.js';
 import { db, jsonSafe } from '../db.js';
 import { loadEnv } from '../env.js';
 import { notFound, parseBody, unauthorized } from '../http.js';
-import { asDateOnly, zonedDateOnly } from '../time.js';
+import { addDateOnlyDays, asDateOnly, timeOnDateOnly, zonedDateOnly } from '../time.js';
 
 const pagingSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -38,6 +38,8 @@ export async function operationsRoutes(app: FastifyInstance): Promise<void> {
           resolved: z.stringbool().optional(),
           staffId: z.coerce.number().int().positive().optional(),
           deviceId: z.coerce.number().int().positive().optional(),
+          /** Name or staff number of the person the exception is about. */
+          search: z.string().trim().max(128).optional(),
           from: z.coerce.date().optional(),
           to: z.coerce.date().optional(),
         })
@@ -45,6 +47,16 @@ export async function operationsRoutes(app: FastifyInstance): Promise<void> {
 
       const where = {
         ...(query.kind ? { kind: query.kind } : {}),
+        ...(query.search
+          ? {
+              staff: {
+                OR: [
+                  { fullName: { contains: query.search } },
+                  { employeeNo: { contains: query.search } },
+                ],
+              },
+            }
+          : {}),
         ...(query.resolved === undefined
           ? {}
           : query.resolved
@@ -53,16 +65,11 @@ export async function operationsRoutes(app: FastifyInstance): Promise<void> {
         ...(query.staffId ? { staffId: query.staffId } : {}),
         ...(query.deviceId ? { deviceId: query.deviceId } : {}),
         ...(query.from || query.to
-          ? {
-              occurredAt: {
-                ...(query.from ? { gte: query.from } : {}),
-                ...(query.to ? { lte: endOfDay(query.to) } : {}),
-              },
-            }
+          ? { occurredAt: localDayBounds(query.from, query.to, env.ORG_TIMEZONE) }
           : {}),
       };
 
-      const [total, rows, byKind] = await Promise.all([
+      const [total, rows, byKind, openTotal] = await Promise.all([
         db().attendanceException.count({ where }),
         db().attendanceException.findMany({
           where,
@@ -73,13 +80,20 @@ export async function operationsRoutes(app: FastifyInstance): Promise<void> {
             staff: { select: { id: true, employeeNo: true, fullName: true } },
           },
         }),
-        // Counts per kind so the UI can offer filters that reflect what is
-        // actually queued rather than a fixed list of every possible kind.
+        /*
+         * The kind chips, counted with every filter but their own.
+         *
+         * They used to count open items across all time whatever the filters said, so with
+         * "resolved" chosen every chip still reported the open queue and none of them matched the
+         * table under it.
+         */
         db().attendanceException.groupBy({
           by: ['kind'],
-          where: { resolvedAt: null },
+          where: { ...where, kind: undefined },
           _count: { _all: true },
         }),
+        // The queue size, for the heading: what is still open anywhere, whatever is filtered.
+        db().attendanceException.count({ where: { resolvedAt: null } }),
       ]);
 
       const devices = await db().device.findMany({ select: { id: true, name: true } });
@@ -89,7 +103,9 @@ export async function operationsRoutes(app: FastifyInstance): Promise<void> {
         total,
         page: query.page,
         pageSize: query.pageSize,
-        openByKind: Object.fromEntries(byKind.map((row) => [row.kind, row._count._all])),
+        byKind: Object.fromEntries(byKind.map((row) => [row.kind, row._count._all])),
+        openTotal,
+        generatedAt: new Date().toISOString(),
         rows: rows.map((row) => ({
           id: row.id,
           kind: row.kind,
@@ -179,6 +195,7 @@ export async function operationsRoutes(app: FastifyInstance): Promise<void> {
           arrivedVia: z.enum(['push', 'pull']).optional(),
           /** Only events that identified a person. */
           identifiedOnly: z.stringbool().optional(),
+          search: z.string().trim().max(64).optional(),
         })
         .parse(request.query);
 
@@ -196,18 +213,36 @@ export async function operationsRoutes(app: FastifyInstance): Promise<void> {
          * and the screen would report that no scan had ever identified anybody there.
          */
         ...(query.identifiedOnly ? { eventKind: RawEventKind.identified } : {}),
-        ...(query.from || query.to
+        /*
+         * Name or terminal ID, partially typed. The box used to match the terminal ID exactly, so
+         * it returned nothing until the last digit was in and never matched the name on the unit.
+         */
+        ...(query.search
           ? {
-              eventTime: {
-                ...(query.from ? { gte: query.from } : {}),
-                ...(query.to ? { lte: endOfDay(query.to) } : {}),
-              },
+              OR: [
+                { employeeNo: { startsWith: query.search } },
+                { personName: { contains: query.search } },
+              ],
             }
+          : {}),
+        ...(query.from || query.to
+          ? { eventTime: localDayBounds(query.from, query.to, env.ORG_TIMEZONE) }
           : {}),
       };
 
-      const [total, rows] = await Promise.all([
+      const [total, byArrival, rows] = await Promise.all([
         db().rawEvent.count({ where }),
+        /*
+         * The push and pull chips, counted over the whole range with every filter but their own.
+         *
+         * The screen used to count the page in view, so a chip read 30 on a range of thousands and
+         * changed as somebody paged — a figure that contradicted the total above it.
+         */
+        db().rawEvent.groupBy({
+          by: ['arrivedVia'],
+          where: { ...where, arrivedVia: undefined },
+          _count: { _all: true },
+        }),
         db().rawEvent.findMany({
           where,
           /**
@@ -249,7 +284,14 @@ export async function operationsRoutes(app: FastifyInstance): Promise<void> {
         }),
       ]);
 
-      return jsonSafe({ total, page: query.page, pageSize: query.pageSize, rows });
+      return jsonSafe({
+        total,
+        page: query.page,
+        pageSize: query.pageSize,
+        byArrival: Object.fromEntries(byArrival.map((row) => [row.arrivedVia, row._count._all])),
+        rows,
+        generatedAt: new Date().toISOString(),
+      });
     },
   );
 
@@ -307,9 +349,14 @@ export async function operationsRoutes(app: FastifyInstance): Promise<void> {
             blocks: { orderBy: { blockOrder: 'asc' } },
           },
         }),
+        /*
+          Counted with every filter except the status one, so choosing a chip does not zero the
+          others. They were counted inside the status filter, and the screen hid chips at zero —
+          so picking "absent" made every other status disappear from the bar.
+        */
         db().attendanceRecord.groupBy({
           by: ['status'],
-          where,
+          where: { ...where, status: undefined },
           _count: { _all: true },
         }),
       ]);
@@ -370,10 +417,31 @@ export async function operationsRoutes(app: FastifyInstance): Promise<void> {
   });
 }
 
-function endOfDay(date: Date): Date {
-  const end = new Date(date);
-  end.setHours(23, 59, 59, 999);
-  return end;
+/**
+ * A calendar range from the date pickers, as instants on the organisation's own days.
+ *
+ * Both routes that use this filter a timestamp (`eventTime`, `occurredAt`). They used to compare it
+ * with the picker value directly — `'2026-10-01'` coerced to midnight UTC, which is 08:00 in
+ * Malaysia — and with `setHours(23, 59)` on the server's own clock for the far end. So the raw log
+ * for 1 October left out every scan before eight that morning, night shift included, and took the
+ * first eight hours of 2 October instead. The time-and-dates rule this repository writes down for
+ * exactly that: a calendar date is not an instant until it is placed in a zone.
+ *
+ * The far end is exclusive, the start of the next local day, so the last minute is not lost to a
+ * `23:59:59.999` that a different precision would round past.
+ */
+function localDayBounds(
+  from: Date | undefined,
+  to: Date | undefined,
+  timeZone: string,
+): { gte?: Date; lt?: Date } | undefined {
+  if (from === undefined && to === undefined) return undefined;
+  return {
+    ...(from === undefined ? {} : { gte: timeOnDateOnly(asDateOnly(from), '00:00', timeZone) }),
+    ...(to === undefined
+      ? {}
+      : { lt: timeOnDateOnly(addDateOnlyDays(asDateOnly(to), 1), '00:00', timeZone) }),
+  };
 }
 
 function idParam(params: unknown): number {

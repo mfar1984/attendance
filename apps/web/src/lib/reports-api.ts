@@ -137,9 +137,9 @@ export interface RosterPage {
  * translated separately and could disagree about what a rest day is called.
  */
 export const ROSTER_ENTRY_LABELS: Record<string, LabelKey> = {
-  work: 'roster.cell.work',
-  rest: 'roster.apply.rest',
-  leave: 'roster.apply.leave',
+  work: 'roster.entry.work',
+  rest: 'roster.entry.rest',
+  leave: 'roster.entry.leave',
 };
 
 export const rosterApi = {

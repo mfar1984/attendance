@@ -1,4 +1,4 @@
-﻿import { CircleAlert, CircleCheck } from 'lucide-react';
+﻿import { CircleCheck } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
@@ -19,6 +19,8 @@ import {
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
+import { Badge, TextArea } from '../components/ui';
+import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import {
   EXCEPTION_LABELS,
@@ -26,10 +28,37 @@ import {
   exceptionsApi,
   formatDateOnly,
   formatDateTime,
+  lookupsApi,
   todayIso,
   type ExceptionRow,
+  type Lookups,
 } from '../lib/operations-api';
 import { T, TEnum, useLabels } from '../lib/translation';
+
+const SCREEN = 'attendance.exceptions';
+
+/** Chip order, fixed: the ones that cost somebody a recorded day first. */
+const KIND_ORDER = [
+  'unknown_employee',
+  'missing_check_out',
+  'missing_check_in',
+  'unrecognised_face',
+  'clock_drift',
+  'outside_roster',
+  'outside_geofence',
+  'duplicate_scan',
+];
+
+const KIND_DOT: Record<string, string> = {
+  missing_check_out: 'bg-amber-500',
+  missing_check_in: 'bg-amber-500',
+  duplicate_scan: 'bg-slate-400',
+  unrecognised_face: 'bg-orange-500',
+  unknown_employee: 'bg-rose-500',
+  outside_roster: 'bg-fuchsia-500',
+  clock_drift: 'bg-rose-500',
+  outside_geofence: 'bg-orange-500',
+};
 
 /**
  * The queue of things the engine could not resolve on its own.
@@ -39,21 +68,38 @@ import { T, TEnum, useLabels } from '../lib/translation';
  * get missed until payroll day.
  */
 export function ExceptionsPage(): ReactNode {
+  const { t } = useLabels();
+  const { can } = useAuth();
+  // The default window, kept so Reset can return to it and `dirty` can tell when it has moved.
+  const [defaults] = useState(() => ({ from: daysAgoIso(30), to: todayIso() }));
   const [rows, setRows] = useState<ExceptionRow[]>([]);
-  const [openByKind, setOpenByKind] = useState<Record<string, number>>({});
+  const [byKind, setByKind] = useState<Record<string, number>>({});
+  const [openTotal, setOpenTotal] = useState(0);
   const [total, setTotal] = useState(0);
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  const [lookups, setLookups] = useState<Lookups | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [kind, setKind] = useState<string | undefined>(undefined);
   const [resolved, setResolved] = useState<'open' | 'resolved' | 'all'>('open');
-  const [from, setFrom] = useState(daysAgoIso(30));
-  const [to, setTo] = useState(todayIso());
+  const [deviceId, setDeviceId] = useState('');
+  const [search, setSearch] = useState('');
+  const [from, setFrom] = useState(defaults.from);
+  const [to, setTo] = useState(defaults.to);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [open, setOpen] = useState<number | null>(null);
   const [active, setActive] = useState<ExceptionRow | null>(null);
-  const { t } = useLabels();
+
+  const mayResolve = can(SCREEN, 'approve');
+
+  useEffect(() => {
+    void lookupsApi
+      .load()
+      .then(setLookups)
+      .catch(() => undefined);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,42 +109,46 @@ export function ExceptionsPage(): ReactNode {
         pageSize,
         ...(kind !== undefined ? { kind } : {}),
         ...(resolved === 'all' ? {} : { resolved: resolved === 'resolved' }),
+        ...(deviceId ? { deviceId: Number(deviceId) } : {}),
+        ...(search.trim() ? { search: search.trim() } : {}),
         from,
         to,
       });
       setRows(result.rows);
       setTotal(result.total);
-      setOpenByKind(result.openByKind);
+      setByKind(result.byKind);
+      setOpenTotal(result.openTotal);
+      setGeneratedAt(result.generatedAt);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('exceptions.error.load'));
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, kind, resolved, from, to, t]);
+  }, [page, pageSize, kind, resolved, deviceId, search, from, to, t]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 250);
+    return () => clearTimeout(timer);
   }, [load]);
-
-  const outstanding = Object.values(openByKind).reduce((running, value) => running + value, 0);
 
   return (
     <PanelCard title={<T k="exceptions.title" />} subtitle={<T k="exceptions.subtitle" />}>
       <PanelSection
         title={
-          outstanding === 0 ? (
+          openTotal === 0 ? (
             <T k="exceptions.none" />
           ) : (
-            <T k="exceptions.outstanding" vars={{ count: outstanding }} />
+            <T k="exceptions.outstanding" vars={{ count: openTotal }} />
           )
         }
         subtitle={<T k="exceptions.section.subtitle" />}
       />
 
       {/*
-        Counts are of open items regardless of the resolved filter, so the queue size
-        stays visible while browsing what has already been closed.
+        Every kind, in a fixed order. The bar used to list only kinds with something open, sorted
+        by size, so it changed length and order between mornings and a kind could not be found in
+        the same place twice.
       */}
       <ChipBar
         active={kind}
@@ -106,21 +156,36 @@ export function ExceptionsPage(): ReactNode {
           setKind(id);
           setPage(1);
         }}
-        chips={Object.entries(openByKind)
-          .sort((left, right) => right[1] - left[1])
-          .map(([key, count]) => ({
-            id: key,
-            label: <TEnum k={EXCEPTION_LABELS[key]} fallback={key} />,
-            count,
-            dot: KIND_DOT[key] ?? 'bg-slate-400',
-          }))}
+        chips={KIND_ORDER.map((key) => ({
+          id: key,
+          label: <TEnum k={EXCEPTION_LABELS[key]} fallback={key} />,
+          count: byKind[key] ?? 0,
+          dot: KIND_DOT[key] ?? 'bg-slate-400',
+        }))}
       />
 
       <FilterRow
-        dirty={kind !== undefined || resolved !== 'open'}
+        search={search}
+        onSearch={(value) => {
+          setSearch(value);
+          setPage(1);
+        }}
+        placeholder={t('exceptions.search')}
+        dirty={
+          search.length > 0 ||
+          kind !== undefined ||
+          resolved !== 'open' ||
+          deviceId !== '' ||
+          from !== defaults.from ||
+          to !== defaults.to
+        }
         onReset={() => {
+          setSearch('');
           setKind(undefined);
           setResolved('open');
+          setDeviceId('');
+          setFrom(defaults.from);
+          setTo(defaults.to);
           setPage(1);
         }}
       >
@@ -137,6 +202,18 @@ export function ExceptionsPage(): ReactNode {
             { value: 'open', label: t('exceptions.filter.open') },
             { value: 'resolved', label: t('exceptions.filter.resolved') },
           ]}
+        />
+        <FacetSelect
+          label={t('exceptions.filter.allTerminals')}
+          value={deviceId}
+          onChange={(value) => {
+            setDeviceId(value);
+            setPage(1);
+          }}
+          options={(lookups?.devices ?? []).map((device) => ({
+            value: String(device.id),
+            label: device.name,
+          }))}
         />
         <DateBox
           label={t('filter.from')}
@@ -163,6 +240,7 @@ export function ExceptionsPage(): ReactNode {
       )}
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={rows.length}
         empty={<T k="exceptions.empty" />}
@@ -170,15 +248,17 @@ export function ExceptionsPage(): ReactNode {
           { header: <T k="exceptions.column.kind" />, width: 'w-52' },
           { header: <T k="exceptions.column.staff" /> },
           { header: <T k="exceptions.column.terminal" />, width: 'w-32' },
-          { header: <T k="exceptions.column.occurred" />, width: 'w-44' },
+          { header: <T k="exceptions.column.occurred" />, width: 'w-40' },
           { header: <T k="exceptions.column.detail" /> },
-          { header: <T k="panel.column.actions" />, width: 'w-28', align: 'right' },
+          { header: <T k="panel.column.status" />, width: 'w-28' },
+          { header: <T k="panel.column.actions" />, width: 'w-24', align: 'right' },
         ]}
       >
         {rows.map((row) => (
           <ExceptionRowView
             key={row.id}
             row={row}
+            mayResolve={mayResolve}
             expanded={open === row.id}
             onToggle={() => setOpen(open === row.id ? null : row.id)}
             onResolve={() => setActive(row)}
@@ -191,6 +271,7 @@ export function ExceptionsPage(): ReactNode {
         total={total}
         page={page}
         pageSize={pageSize}
+        generatedAt={generatedAt}
         loading={loading}
         onPage={setPage}
         onPageSize={(size) => {
@@ -215,24 +296,15 @@ export function ExceptionsPage(): ReactNode {
   );
 }
 
-const KIND_DOT: Record<string, string> = {
-  missing_check_out: 'bg-amber-500',
-  missing_check_in: 'bg-amber-500',
-  duplicate_scan: 'bg-slate-400',
-  unrecognised_face: 'bg-orange-500',
-  unknown_employee: 'bg-rose-500',
-  outside_roster: 'bg-violet-500',
-  clock_drift: 'bg-rose-500',
-  outside_geofence: 'bg-orange-500',
-};
-
 function ExceptionRowView({
   row,
+  mayResolve,
   expanded,
   onToggle,
   onResolve,
 }: {
   row: ExceptionRow;
+  mayResolve: boolean;
   expanded: boolean;
   onToggle: () => void;
   onResolve: () => void;
@@ -249,52 +321,53 @@ function ExceptionRowView({
           outstanding && !expanded && 'bg-amber-50/40',
         )}
       >
-        <td className="px-5 py-2">
+        <td className="px-5 py-2.5">
           <span className="inline-flex items-center gap-1.5">
-            {outstanding ? (
-              <CircleAlert className="size-4 shrink-0 text-amber-500" aria-hidden />
-            ) : (
-              <CircleCheck className="size-4 shrink-0 text-emerald-600" aria-hidden />
-            )}
+            <span
+              className={cn('size-1.5 shrink-0 rounded-full', KIND_DOT[row.kind] ?? 'bg-slate-400')}
+              aria-hidden
+            />
             <span className="text-xs font-medium text-slate-700">
               <TEnum k={EXCEPTION_LABELS[row.kind]} fallback={row.kind} />
             </span>
           </span>
         </td>
-        <td className="px-2 py-2">
+        <td className="px-2 py-2.5">
           {row.staff === null ? (
             <span className="text-xs text-slate-400 italic">
               <T k="exceptions.row.unmapped" />
             </span>
           ) : (
             <>
-              <span className="block text-slate-800">{row.staff.fullName}</span>
+              <span className="block font-medium text-slate-800">{row.staff.fullName}</span>
               <span className="block font-mono text-[11px] text-slate-400">
                 {row.staff.employeeNo}
               </span>
             </>
           )}
         </td>
-        <td className="px-2 py-2 text-xs text-slate-600">{row.deviceName ?? '—'}</td>
-        <td className="px-2 py-2 text-xs whitespace-nowrap tabular-nums text-slate-600">
+        <td className="px-2 py-2.5 text-xs text-slate-600">{row.deviceName ?? '—'}</td>
+        <td className="px-2 py-2.5 text-xs whitespace-nowrap tabular-nums text-slate-600">
           {formatDateTime(row.occurredAt)}
         </td>
-        <td className="px-2 py-2 text-xs text-slate-500">
+        <td className="px-2 py-2.5 text-xs text-slate-500">
           <span className="line-clamp-1">{row.detail ?? '—'}</span>
         </td>
-        <td className="px-2 py-2 pr-4">
+        <td className="px-2 py-2.5">
+          {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
+          <Badge tone={outstanding ? 'warning' : 'success'} className="uppercase">
+            <T k={outstanding ? 'exceptions.status.open' : 'exceptions.row.done'} />
+          </Badge>
+        </td>
+        <td className="px-2 py-2.5 pr-4">
           <RowActions>
-            {outstanding ? (
+            {outstanding && mayResolve && (
               <RowAction
                 icon={<CircleCheck className="size-4" aria-hidden />}
                 label={t('exceptions.row.resolve')}
                 tone="success"
                 onClick={onResolve}
               />
-            ) : (
-              <span className="pr-1 text-[10px] font-semibold tracking-wide text-emerald-700">
-                <T k="exceptions.row.done" />
-              </span>
             )}
             <ExpandButton
               expanded={expanded}
@@ -307,7 +380,7 @@ function ExceptionRowView({
 
       {expanded && (
         <tr className="border-b border-slate-200 bg-slate-50">
-          <td colSpan={6} className="px-5 py-3">
+          <td colSpan={7} className="px-5 py-3">
             <DetailGrid>
               <Detail
                 label={<T k="exceptions.detail.kind" />}
@@ -393,6 +466,7 @@ function ResolveDialog({
   const { t, tEnum } = useLabels();
 
   const kindText = tEnum(EXCEPTION_LABELS[target.kind], target.kind);
+  const who = target.staff?.fullName ?? target.deviceName ?? '—';
 
   const presets = [
     t('exceptions.resolve.preset.forgotOut'),
@@ -406,58 +480,58 @@ function ResolveDialog({
     setError(null);
     try {
       await exceptionsApi.resolve(target.id, note.trim());
-      await onDone(t('exceptions.resolve.done', { kind: kindText }));
+      await onDone(t('exceptions.resolve.done', { kind: kindText, name: who }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('exceptions.resolve.error'));
       setBusy(false);
     }
   }
 
+  const tooShort = note.trim().length < 3;
+
   return (
     <Dialog
       title={<TEnum k={EXCEPTION_LABELS[target.kind]} fallback={target.kind} />}
       titleText={kindText}
-      description={`${target.staff?.fullName ?? target.deviceName ?? '—'} · ${formatDateTime(target.occurredAt)}`}
+      description={`${who} · ${formatDateTime(target.occurredAt)}`}
       width="lg"
       onClose={onClose}
     >
-      <div className="space-y-3">
+      <div className="space-y-4">
         <Feedback error={error} />
 
         {target.detail !== null && <PanelNote>{target.detail}</PanelNote>}
 
-        <div>
-          <label htmlFor="resolve-note" className="block text-sm font-medium text-slate-700">
-            <T k="exceptions.resolve.note" />
-          </label>
-          <textarea
-            id="resolve-note"
-            autoFocus
-            rows={3}
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            placeholder={t('exceptions.resolve.placeholder')}
-          />
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {presets.map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => setNote(preset)}
-                className="rounded-full border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
-              >
-                {preset}
-              </button>
-            ))}
-          </div>
+        <TextArea
+          label={<T k="exceptions.resolve.note" />}
+          hint={<T k="exceptions.resolve.placeholder" />}
+          autoFocus
+          rows={3}
+          maxLength={500}
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+        />
+
+        {/* The last block before the footer, so it carries the `pb-2`. */}
+        <div className="flex flex-wrap gap-1.5 pb-2">
+          {presets.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              onClick={() => setNote(preset)}
+              className="rounded-full border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+            >
+              {preset}
+            </button>
+          ))}
         </div>
 
         <DialogFooter
           onClose={onClose}
           onSubmit={() => void submit()}
           busy={busy}
-          disabled={note.trim().length < 3}
+          disabled={tooShort}
+          {...(tooShort ? { submitTitle: t('exceptions.resolve.placeholder') } : {})}
           submitLabel={<T k="exceptions.resolve.submit" />}
         />
       </div>

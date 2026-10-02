@@ -225,6 +225,24 @@ export function useLabels(): {
 }
 
 /**
+ * The `Intl` locale for the reader's language, in this country.
+ *
+ * Month and weekday names come from `Intl` rather than from the registry, which is only true to
+ * the reader if `Intl` is asked in their language. The calendar and the monthly summary passed
+ * `'ms-MY'` literally, so an English reader got "Ogos 2026" over an English screen. `-MY` keeps
+ * the local conventions — day before month — whichever language the words are in.
+ */
+export function intlLocale(locale: string): string {
+  const tag = locale.includes('-') ? locale : `${locale}-MY`;
+  try {
+    return Intl.DateTimeFormat.supportedLocalesOf([tag]).length > 0 ? tag : 'ms-MY';
+  } catch {
+    // A malformed tag throws rather than returning an empty list.
+    return 'ms-MY';
+  }
+}
+
+/**
  * One translatable string, as a node.
  *
  * Takes only the key: the Malay wording lives in the registry, so there is nothing to repeat

@@ -80,6 +80,8 @@ export const settingsApi = {
  */
 export interface HolidayRow {
   id: number;
+  /** Every stored row this line stands for, one per observing state. Removing the line removes all. */
+  ids: number[];
   name: string;
   /** Calendar date, not an instant. Render with `formatDateOnly`. */
   date: string;
@@ -109,11 +111,23 @@ export interface HolidayListPayload {
    * otherwise a narrowed office selection reads as a sync that lost rows.
    */
   hidden: number;
+  generatedAt: string;
 }
 
 export const holidayApi = {
   list: (year: number, mode: 'offices' | 'all') =>
     api.get<HolidayListPayload>(`/api/holidays?year=${String(year)}&mode=${mode}`),
+
+  /**
+   * `recomputeNeeded` is true only when the date has already been computed. The engine never
+   * computes a day that has not happened, so a future holiday needs nothing further.
+   */
+  add: (input: { name: string; date: string; stateCode: string; companyDeclared: boolean }) =>
+    api.post<{ id: number; recomputeNeeded: boolean }>('/api/holidays', input),
+
+  /** One line of the list: every row it stands for, in one statement. */
+  remove: (ids: number[]) =>
+    api.deleteWithBody<{ removed: number; recomputeNeeded: boolean }>('/api/holidays', { ids }),
 
   /**
    * Pulls the gazetted list for a year.

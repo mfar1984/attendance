@@ -120,13 +120,23 @@ export interface RowProblem {
   /** 1-based, counting the header as line 1, so it matches what a spreadsheet shows. */
   line: number;
   employeeNo: string;
+  /**
+   * The name cell as written, so the preview can show whose row it is.
+   *
+   * A line number and a staff number are what a spreadsheet is searched by, but the name is what
+   * somebody recognises — and a name split by an unquoted comma is itself the problem being shown.
+   */
+  fullName: string;
   field: string;
   message: string;
 }
 
+/** A row that passed, with the line it came from so the preview can list it in file order. */
+export type PreviewRow = ImportRow & { line: number };
+
 export interface ImportPreview {
   totalLines: number;
-  valid: ImportRow[];
+  valid: PreviewRow[];
   problems: RowProblem[];
   /** Already present in the directory; these are skipped rather than duplicated. */
   existing: string[];
@@ -181,6 +191,7 @@ export async function previewImport(
     preview.problems.push({
       line: 1,
       employeeNo: '',
+      fullName: '',
       field: 'header',
       message:
         'Fail ini mengandungi kolum Gaji, yang memerlukan kebenaran "Gaji Bulanan" pada ' +
@@ -193,6 +204,7 @@ export async function previewImport(
     preview.problems.push({
       line: 1,
       employeeNo: '',
+      fullName: '',
       field: 'header',
       message:
         'Fail mesti mempunyai kolum No. Staf dan Nama. Kolum dikenali: No. Staf, Nama, No. KP, ' +
@@ -225,7 +237,8 @@ export async function previewImport(
         preview.problems.push({
           line: lineNumber,
           employeeNo: record['employeeNo'] ?? '',
-          field: String(issue.path[0] ?? 'baris'),
+          fullName: record['fullName'] ?? '',
+          field: String(issue.path[0] ?? 'row'),
           message: issue.message,
         });
       }
@@ -237,6 +250,7 @@ export async function previewImport(
       preview.problems.push({
         line: lineNumber,
         employeeNo: parsed.data.employeeNo,
+        fullName: parsed.data.fullName,
         field: 'employeeNo',
         message: `Berulang dalam fail ini, sudah ada pada baris ${duplicateOf}`,
       });
@@ -244,7 +258,7 @@ export async function previewImport(
     }
 
     seen.set(parsed.data.employeeNo, lineNumber);
-    preview.valid.push(parsed.data);
+    preview.valid.push({ ...parsed.data, line: lineNumber });
   }
 
   if (preview.valid.length === 0) return preview;

@@ -34,9 +34,17 @@ export interface LiveScan {
   method: string;
   direction: string;
   suppressed: boolean;
-  /** Set when the scan could not be attributed to anybody. */
-  problem: string | null;
+  /**
+   * Set when the scan could not be attributed to anybody.
+   *
+   * A code, not a sentence. This went out as Malay prose (`'Muka tidak dikenali'`), which the
+   * monitor rendered verbatim in its badge — so a reader on English saw the one Malay phrase on
+   * the screen, on the row they most needed to read. The screen resolves the code to a label.
+   */
+  problem: LiveScanProblem | null;
 }
+
+export type LiveScanProblem = 'unrecognisedFace' | 'unmappedId';
 
 export interface LiveDeviceStatus {
   deviceId: number;

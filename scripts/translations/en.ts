@@ -517,6 +517,9 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
   'records.detail.earlyLeave': 'Left early',
   'records.detail.overtime': 'Overtime worked',
   'records.detail.origin': 'Origin',
+  'records.origin.auto': 'Computed by the engine',
+  'records.origin.manual': 'Entered by hand',
+  'records.origin.adjusted': 'Adjusted',
   'records.detail.calculatedAt': 'Calculated at',
   'records.detail.recordId': 'Record ID',
   'records.block.column.block': 'Block',
@@ -546,6 +549,9 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
     'Each one is closed with a written reason, because that is what answers a pay dispute later.',
   'exceptions.error.load': 'Could not load exceptions',
   'exceptions.empty': 'No exceptions in this range.',
+  'exceptions.search': 'Search name or staff no.…',
+  'exceptions.filter.allTerminals': 'All terminals',
+  'exceptions.status.open': 'OPEN',
   'exceptions.filter.allStatuses': 'All statuses',
   'exceptions.filter.open': 'Not resolved',
   'exceptions.filter.resolved': 'Resolved',
@@ -574,7 +580,7 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
   'exceptions.resolve.placeholder':
     'Required. This record becomes the evidence if the attendance is disputed.',
   'exceptions.resolve.submit': 'Resolve',
-  'exceptions.resolve.done': '{kind} exception resolved.',
+  'exceptions.resolve.done': '{kind} exception for {name} resolved.',
   'exceptions.resolve.error': 'Could not save',
   'exceptions.resolve.preset.forgotOut': 'Staff forgot to scan out, confirmed by supervisor',
   'exceptions.resolve.preset.fieldWork': 'Staff was out on field duty, no scan',
@@ -587,8 +593,6 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
   'justify.title': 'Justification Approvals',
   'justify.subtitle':
     'The reasons staff gave for days recorded as late, left early, incomplete or absent. A decision here does not change any attendance figure — the record is correct, and what is being decided is whether the reason is accepted.',
-  'justify.note.notExceptions':
-    'This is separate from Exceptions. Exceptions are the eight conditions the engine could not resolve — an unrecognised face, a drifted terminal clock — and resolving one corrects data. This screen does not touch data at all.',
   'justify.note.noChain':
     'There is no level chain. One submission, one decision, one message to the person who sent it.',
   'justify.kind.late': 'Late In',
@@ -609,24 +613,36 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
   'justify.column.decided': 'Decided',
   'justify.empty': 'No justifications in this period.',
   'justify.error.load': 'Could not load the justification list.',
-  'justify.filter.from': 'From',
-  'justify.filter.to': 'To',
+  'justify.search': 'Search name or staff no.…',
   'justify.filter.department': 'All departments',
   'justify.filter.kind': 'All kinds',
-  'justify.action.view': 'Open detail',
   'justify.action.approve': 'Approve',
   'justify.action.reject': 'Reject',
   'justify.action.revert': 'Send back',
-  'justify.form.title': 'Reason for {date}',
+  'justify.action.revert.already': 'Already sent back — waiting for the person to write a new reason',
+  'justify.row.expand': 'justification detail',
+  'justify.detail.decisionNote': 'Decision note: {note}',
   'justify.form.reason': 'Reason',
-  'justify.form.record': 'That day’s record',
   'justify.decision.note': 'Note',
   'justify.decision.note.hint':
     'Required to reject and to send back. A decision with no words is a decision the person can neither accept nor act on.',
   'justify.decision.note.optional': 'Optional for an approval — the person has already written why.',
-  'justify.decided': 'Decision recorded.',
   'justify.decision.recordMissing':
     'The attendance record for this day has since been recomputed and no longer matches. This row stands as a record of what was asked and answered.',
+  'justify.record.missing': 'Since recomputed',
+  'justify.decision.approve.title': 'Approve justification',
+  'justify.decision.reject.title': 'Reject justification',
+  'justify.decision.revert.title': 'Send back to the person',
+  'justify.decision.description': '{kind} on {date}, filed by {name}.',
+  'justify.decision.approveNote':
+    'Approving changes no attendance figure — the record stays as the engine computed it. The monthly summary counts this day as explained.',
+  'justify.decision.rejectNote':
+    'This decision is final: it cannot be decided again, and the person cannot file a new reason for this day. Your note is what they will read.',
+  'justify.decision.revertNote':
+    'The day goes back to the person for a clearer reason. It stays open, and can be decided once they send it again.',
+  'justify.notice.approved': 'Justification for {name} on {date} approved.',
+  'justify.notice.rejected': 'Justification for {name} on {date} rejected.',
+  'justify.notice.reverted': 'Justification for {name} on {date} sent back to them.',
   'justify.refuse.alreadyPending': 'There is already a reason awaiting a decision for that day.',
   'justify.record.shift': 'Shift',
   'justify.record.scheduled': 'Scheduled',
@@ -640,21 +656,19 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
   // ---------------------------------------------------------------------------
   'monitor.title': 'Today’s Monitor',
   'monitor.subtitle':
-    'Scans as they happen. This feed is best-effort — records are still stored in the Raw Scan Log even if the connection drops.',
+    'Today’s scans, and new ones as soon as a terminal reports them. Records are still stored in the Raw Scan Log even if the connection drops.',
+  'monitor.count': '{count} scans today',
+  'monitor.count.recent': '{count} most recent scans today',
   'monitor.connected': 'Connected',
   'monitor.disconnected': 'Connection lost',
-  'monitor.connected.hint': 'Scans will appear below as soon as a terminal reports them.',
-  'monitor.disconnected.hint': 'The browser will retry on its own. No records are lost.',
+  'monitor.connected.hint': 'New scans appear at the top as soon as a terminal reports them.',
+  'monitor.disconnected.hint':
+    'The browser will retry on its own, and scans it missed are loaded again when it reconnects. No records are lost.',
   'monitor.waiting': 'waiting for scans',
   'monitor.lastAt': 'last {time}',
-  'monitor.stat.accepted': 'Accepted this session',
-  'monitor.stat.accepted.hint': 'punches recorded',
-  'monitor.stat.suppressed': 'Duplicates filtered',
-  'monitor.stat.suppressed.hint': 'repeat scans inside the dedup window',
-  'monitor.stat.problems': 'Needs attention',
-  'monitor.stat.problems.hint': 'unrecognised face or unmapped ID',
-  'monitor.offline.note':
-    'This live feed is not the source of truth. Every scan is written to the Raw Scan Log before it reaches this screen, so a gap here does not mean attendance was lost.',
+  'monitor.error.load': 'Could not load today’s scans',
+  'monitor.problem.unrecognisedFace': 'Face not recognised',
+  'monitor.problem.unmappedId': 'Terminal ID not mapped',
   'monitor.chip.accepted': 'Accepted',
   'monitor.chip.suppressed': 'Duplicate',
   'monitor.chip.problem': 'Needs attention',
@@ -680,11 +694,6 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
     'ID {employeeNo} on {device} is not mapped to anybody, so this person’s attendance is not being recorded. Fix it under Staff › Terminal ID Mapping.',
   'monitor.detail.noPunchWarning':
     'This scan did not become a punch. Check Exceptions for the detail.',
-  'monitor.footer.showing': 'Showing {shown} of {total} scans this session',
-  // The leading space and separator are deliberate: this clause sits mid-sentence.
-  'monitor.footer.capped': ' · capped at the {max} most recent rows',
-  'monitor.footer.note':
-    'The full history is in the Raw Scan Log — this screen is only for watching a shift changeover.',
 
   // ---------------------------------------------------------------------------
   // Raw scan log
@@ -697,15 +706,11 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
     'Push is real-time delivery from the terminal; pull is the reconcile pass that catches what push missed.',
   'rawlog.error.load': 'Could not load the log',
   'rawlog.empty': 'No events in this range.',
-  'rawlog.search': 'Search the ID on the terminal, e.g. 1001…',
+  'rawlog.search': 'Search the ID or name on the terminal…',
   'rawlog.chip.push': 'Push',
   'rawlog.chip.pull': 'Pull',
   'rawlog.filter.allDevices': 'All terminals',
   'rawlog.filter.allCategories': 'All categories',
-  'rawlog.immutable': 'cannot be altered or removed',
-  // `{emphasis}` carries the phrase above, already wrapped in a <strong>. Do not fold it into the text.
-  'rawlog.immutable.note':
-    'This log {emphasis} by anybody, including a Super Admin. To correct an attendance record, fix the cause and run a recompute — do not edit the result.',
   'rawlog.column.serial': 'Serial',
   'rawlog.column.deviceTime': 'Terminal time',
   'rawlog.column.event': 'Event',
@@ -724,6 +729,9 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
   'rawlog.detail.cardNo': 'Card no.',
   'rawlog.detail.door': 'Door',
   'rawlog.detail.mask': 'Face mask',
+  'rawlog.mask.yes': 'Wearing one',
+  'rawlog.mask.no': 'Not wearing one',
+  'rawlog.mask.unknown': 'Unknown',
   'rawlog.detail.arrivedVia': 'Arrived via',
   'rawlog.detail.receivedAt': 'Received by server',
   'rawlog.detail.drift': 'Terminal clock drift',
@@ -744,33 +752,41 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
   // ---------------------------------------------------------------------------
   'roster.title': 'Work Calendar',
   'roster.subtitle':
-    'Select cells then pick a shift. Click a name to select that person’s whole month.',
+    'Select cells, then pick a shift or rest. Click a name to select the whole month. Leave comes from Leave Requests, not from here.',
   'roster.count': '{count} staff in this view',
+  'roster.search': 'Search name or Staff No.…',
+  'roster.month': 'Month',
   'roster.month.previous': 'Previous month',
   'roster.month.next': 'Next month',
-  'roster.recompute': 'Recompute this month',
   'roster.error.load': 'Could not load the roster',
   'roster.error.save': 'Could not save the roster',
   'roster.error.clear': 'Could not clear',
-  'roster.error.recompute': 'Recompute failed',
   'roster.empty': 'No staff to show.',
   'roster.selected': '{count} days selected',
+  'roster.apply.shift': 'Roster {code} ({name})',
   'roster.apply.rest': 'Rest',
-  'roster.apply.leave': 'Leave',
   'roster.apply.clear': 'Clear',
   'roster.selection.drop': 'Drop the selection',
-  'roster.saved':
-    '{count} days updated. Run an attendance recompute for this range so the records reflect the new roster.',
-  'roster.cleared': '{count} days cleared.',
-  'roster.recomputed': '{count} attendance records rebuilt for this month.',
+  'roster.saved': '{count} days updated and their attendance recomputed.',
+  'roster.cleared': '{count} days cleared and their attendance recomputed.',
+  'roster.kept': '{count} approved leave days were left as they are — cancel the leave request to change them.',
   'roster.caption': 'Monthly work calendar. Click a cell to select it, then pick a shift.',
   'roster.column.staff': 'Staff',
   'roster.selectMonth': 'Select the whole month for {name}',
   'roster.cell.aria': '{name}, {day} {month}, {state}',
   'roster.cell.unscheduled': 'not scheduled',
   'roster.cell.work': 'work',
-  'roster.note':
-    'A work day with no shift is refused by the server — there would be nothing to measure attendance against. Setting a shift on the same day overwrites it rather than adding a second row.',
+  'roster.cell.rest': 'rest',
+  'roster.cell.leave': 'leave',
+  'roster.cell.held': 'Approved leave, request {ref}. Cancel that request to change this day.',
+  // First letters of the English words, matching what the legend beside the grid says.
+  'roster.cell.rest.short': 'R',
+  'roster.cell.leave.short': 'L',
+  'roster.cell.work.short': 'W',
+  'roster.entry.work': 'Work',
+  'roster.entry.rest': 'Rest',
+  'roster.entry.leave': 'Leave',
+  'roster.legend.unscheduled': 'Not scheduled',
 
   // ---------------------------------------------------------------------------
   // Public holidays
@@ -783,33 +799,26 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
   'holidays.section.subtitle':
     'Sarawak holidays differ from other states, and Islamic holiday dates can move on a late announcement.',
   'holidays.add': 'Add Holiday',
-  'holidays.year.previous': 'Previous year',
-  'holidays.year.next': 'Next year',
   'holidays.error.load': 'Could not load holidays',
   'holidays.empty': 'No holidays recorded for {year} yet.',
   'holidays.search': 'Search holiday name…',
   'holidays.chip.public': 'Public holiday',
   'holidays.chip.company': 'Company holiday',
-  'holidays.filter.allScopes': 'All scopes',
-  'holidays.scope.nationwide': 'Nationwide',
-  'holidays.recomputeNote':
-    'After adding or removing a holiday, run an attendance recompute for the affected date range under General Configuration › Maintenance. Records that have already been computed do not change on their own.',
+  'holidays.filter.allScopes': 'All states',
   'holidays.column.date': 'Date',
   'holidays.column.day': 'Day',
   'holidays.column.name': 'Name',
   'holidays.column.scope': 'Scope',
   'holidays.column.kind': 'Kind',
   'holidays.weekend': 'weekend',
-  'holidays.kind.company': 'Company',
-  'holidays.kind.public': 'Public',
   'holidays.row.remove': 'Remove holiday',
   'holidays.remove.title': 'Remove “{name}”?',
   'holidays.remove.body': '{date} becomes an ordinary working day again.',
-  'holidays.remove.warning':
-    'Attendance records already computed for that day do not change on their own. Run a recompute afterwards, or anybody who was absent that day will still be reported as on leave.',
-  'holidays.removed':
-    '“{name}” removed. Run an attendance recompute for {date} — that day now counts as an ordinary working day.',
-  'holidays.error.remove': 'Could not remove',
+  'holidays.remove.gazetted':
+    'This day comes from the gazette, so the next sync for that year will bring it back.',
+  'holidays.removed': '“{name}” removed.',
+  'holidays.recompute':
+    'Attendance for {date} has already been computed — run a recompute for that date so its records follow this change.',
   'holidays.dialog.title': 'Add a holiday',
   'holidays.dialog.description':
     'A public holiday, or a day the organisation has declared for itself.',
@@ -817,10 +826,12 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
   'holidays.dialog.name.placeholder': 'e.g. Hari Gawai',
   'holidays.dialog.company': 'Company holiday',
   'holidays.dialog.company.hint':
-    'A day declared by the organisation, not a public holiday. Marked separately so it can be told apart from the official calendar later.',
+    'A day declared by the organisation, not a public holiday. The gazette sync never touches it.',
+  'holidays.dialog.company.hint.off':
+    'Without this tick the day is treated as gazetted, and the next sync for {year} will replace it.',
   'holidays.dialog.submit': 'Add',
   'holidays.error.add': 'Could not add',
-  'holidays.added': '“{name}” added on {date}. Run a recompute for that date.',
+  'holidays.added': '“{name}” added on {date}.',
 };
 
 /** Batch 3: the staff directory, the staff form, and the organisation structure. */
@@ -893,8 +904,6 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
   'org.loc.detail.radius': 'Geofence radius',
   'org.loc.detail.devices': 'Terminals here',
   'org.loc.detail.id': 'Location ID',
-  'org.loc.detail.noCoords':
-    'Coordinates are not set, so a geofence cannot be enforced for this site.',
   'org.loc.remove.title': 'Remove location “{name}”?',
   'org.loc.remove.body': 'No staff or terminals are attached to it, so it is safe to remove.',
   'org.loc.dialog.edit': 'Update location',
@@ -979,9 +988,6 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
   'staff.view.avatarAlt': 'Photo of {name}',
   'staff.view.edit': 'Update',
   'staff.view.deactivate': 'Deactivate',
-  'staff.view.deactivated': '{name} deactivated and removed from every terminal.',
-  'staff.view.deactivated.partial':
-    '{name} deactivated, but {count} terminals could not be reached. The mapping has already been removed, so scans from those IDs will land in the review queue.',
   'staff.view.error.load': 'Could not load the staff detail',
   'staff.view.tabs.aria': 'Staff detail sections',
   'staff.view.tab.details': 'Details',
@@ -1073,30 +1079,26 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
   'staff.view.terminal.resynced.partial': 'Pushed to {count} terminals, some failed: {failed}',
   'staff.view.terminal.resync.error': 'Could not push again',
 
-  'staff.view.attendance.title': 'Attendance',
+  'staff.view.attendance.count': '{count} days recorded',
   'staff.view.attendance.subtitle':
     'Work days as the engine computed them. Every row can be rebuilt from the raw scan log.',
   'staff.view.attendance.month': 'Month',
-  'staff.view.attendance.allStatuses': 'All statuses',
-  'staff.view.attendance.summary': 'Month summary',
-  'staff.view.attendance.none': 'No records',
   'staff.view.attendance.empty':
     'No records for this month. Run a recompute if scans have already arrived.',
 
-  'staff.view.exceptions.title': 'Exceptions',
+  'staff.view.exceptions.count': '{count} exceptions',
   'staff.view.exceptions.subtitle':
     'Things the engine could not resolve on its own for this person.',
   'staff.view.exceptions.empty': 'No exceptions for this staff member.',
 
-  'staff.view.roster.title': 'Work roster',
+  'staff.view.roster.count': '{count} days scheduled',
   'staff.view.roster.subtitle':
     'What was scheduled, as distinct from what happened. A scheduled day with no scan becomes an absence; a scan on a rest day becomes an exception.',
   'staff.view.roster.error': 'Could not load the roster',
-  'staff.view.roster.pattern': 'Work pattern',
-  'staff.view.roster.summary': 'Month summary',
-  'staff.view.roster.none': 'No rows',
   'staff.view.roster.note':
     'A day with no row here is not a rest day — it is not scheduled at all, and the engine falls back to the work pattern for that day.',
+  'staff.view.roster.note.pattern':
+    'A day with no row here is not a rest day — it is not scheduled at all, and the engine falls back to the work pattern “{pattern}” for that day.',
   'staff.view.roster.column.type': 'Type',
   'staff.view.roster.column.notes': 'Notes',
   'staff.view.roster.empty': 'No roster rows for this month.',
@@ -1112,7 +1114,7 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
   'staff.view.leave.unlimited': 'no limit',
   'staff.view.leave.unpaid': 'Unpaid — the balance is not the control',
   'staff.view.leave.noTypes': 'No active leave types.',
-  'staff.view.leave.group.requests': 'Applications',
+  'staff.view.leave.requests.count': '{count} applications',
   'staff.view.leave.group.requests.subtitle':
     'Only charged days are written to the roster. Rest days and public holidays inside the range are skipped, so the balance and the monthly report agree.',
   'staff.view.leave.column.days': 'Days',
@@ -1120,15 +1122,13 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
   'staff.view.leave.column.reason': 'Reason',
   'staff.view.leave.empty': 'No leave applications for this staff member.',
 
-  'staff.view.scans.title': 'Scan log',
+  'staff.view.scans.count': '{count} scans',
   'staff.view.scans.subtitle':
     'What the terminals reported about this person, and what became of it. The rows with no punch are what you look for when a day is missing.',
   'staff.view.scans.error': 'Could not load the scan log',
   'staff.view.scans.matchedOn': 'Matched on ID',
   'staff.view.scans.matchedOn.hint':
     'The terminal’s local ID, not the Staff No. Filtering by Staff No. would miss every scan from a terminal where this person carries a different number.',
-  'staff.view.scans.summary': 'Summary',
-  'staff.view.scans.counts': '{total} rows · {unresolved} with no punch',
   'staff.view.scans.truncated':
     'Capped at the {limit} most recent rows, so this is not the whole month. Narrow the range to see earlier ones.',
   'staff.view.scans.column.at': 'Time',
@@ -1136,7 +1136,7 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
   'staff.view.scans.noPunch': 'NO PUNCH',
   'staff.view.scans.empty': 'No scans for this month.',
 
-  'staff.view.audit.title': 'Audit trail',
+  'staff.view.audit.count': '{count} changes',
   'staff.view.audit.subtitle':
     'Who changed what about this person, and when. Only fields that actually changed are recorded.',
   'staff.view.audit.error': 'Could not load the audit trail',
@@ -1150,6 +1150,8 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
   // Staff form
   // ---------------------------------------------------------------------------
   'staffForm.title.edit': 'Update staff',
+  'staffForm.title.reactivate': 'Reactivate staff',
+  'staffForm.submit.reactivate': 'Reactivate',
   'staffForm.title.create': 'Add staff',
   'staffForm.description': 'The staff record and the terminals they can scan at.',
   'staffForm.error.load': 'Could not load',
@@ -1169,6 +1171,12 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
   'staffForm.location': 'Location',
   'staffForm.none': 'None',
   'staffForm.active': 'Active',
+  'staffForm.active.hint':
+    'Active staff are written to the terminals chosen above. Inactive staff are on no terminal at all.',
+  'staffForm.active.removing':
+    'When saved, this person is removed from every terminal and can no longer open a door.',
+  'staffForm.devices.inactive':
+    'Inactive staff are written to no terminal. Tick “Active” to choose terminals.',
   'staffForm.devices': 'Terminals',
   'staffForm.devices.hint':
     'Staff can only scan at the terminals selected here. Each unit stores a limited number of faces, so spread people across terminals.',
@@ -1214,10 +1222,17 @@ export const EN_LABELS_ENROLMENT: Partial<Record<LabelKey, string>> = {
   'biometrics.column.canScan': 'Can scan',
   'biometrics.face.enrolled': 'Enrolled',
   'biometrics.face.none': 'None',
-  'biometrics.canScan.yes': 'yes',
-  'biometrics.canScan.no': 'no',
+  'biometrics.canScan.yes': 'Can scan',
+  'biometrics.canScan.no': 'Cannot scan',
   'biometrics.row.replace': 'Replace face',
   'biometrics.row.enrol': 'Enrol face',
+  'biometrics.row.remove': 'Remove face from terminals',
+  'biometrics.remove.title': 'Remove {name}’s face?',
+  'biometrics.remove.description': 'The face is removed from every terminal this person is enrolled on.',
+  'biometrics.remove.otherCredentials':
+    'This person can still scan with the fingerprint or card already enrolled.',
+  'biometrics.remove.lastCredential':
+    'The face is this person’s only credential on the terminals, so afterwards they cannot scan at all until enrolled again — and the terminal will report no error.',
   'biometrics.row.expand': 'biometric detail',
   'biometrics.row.faceAlt': 'Face enrolled for {name}',
   'biometrics.detail.active': 'Active',
@@ -1263,9 +1278,16 @@ export const EN_LABELS_ENROLMENT: Partial<Record<LabelKey, string>> = {
   'mapping.tab.import': 'Read From Terminal',
   'mapping.error.load': 'Could not load data',
 
-  'mapping.import.title': 'Read the user list from a terminal',
+  'mapping.import.count': '{count} terminals',
   'mapping.import.subtitle':
     'For terminals already filled in by another tool, or by hand at the keypad.',
+  'mapping.import.search': 'Search terminal, address or location…',
+  'mapping.import.viaConnector': 'via connector',
+  'mapping.import.action': 'Read the user list',
+  'mapping.import.dialog.title': 'Read the user list on {device}',
+  'mapping.import.dialog.description': 'The list is read from the terminal; nothing is written to it.',
+  'mapping.import.dialog.submit': 'Read the list',
+  'mapping.import.dialog.pending': 'Reading…',
   'mapping.import.unconfirmed': 'not confirmed',
   // `{emphasis}` carries the phrase above, already wrapped in a <strong>.
   'mapping.import.note':
@@ -1289,9 +1311,14 @@ export const EN_LABELS_ENROLMENT: Partial<Record<LabelKey, string>> = {
   'mapping.column.biometrics': 'Biometrics',
   'mapping.column.lostScans': 'Lost scans',
   'mapping.column.matchedTo': 'Matched to',
+  'mapping.column.matchedAt': 'Matched at',
+  'mapping.column.mapped': 'Mapped',
+  'mapping.column.unconfirmed': 'Not confirmed',
+  'mapping.column.unmapped': 'Not mapped',
   'mapping.row.noName': 'none',
   'mapping.row.lost': '{count} lost',
   'mapping.row.map': 'Map to a staff member',
+  'mapping.row.dismiss': 'Dismiss this ID',
   'mapping.row.expand': 'ID detail',
   'mapping.detail.firstSeen': 'First seen',
   'mapping.detail.lastSeen': 'Last seen',
@@ -1311,29 +1338,49 @@ export const EN_LABELS_ENROLMENT: Partial<Record<LabelKey, string>> = {
   'mapping.unconfirmed.subtitle':
     'Matched because the terminal ID equals the Staff No. exactly. That is strong evidence, not proof.',
   'mapping.unconfirmed.empty': 'No mappings awaiting confirmation.',
+  'mapping.unconfirmed.search': 'Search the ID, name or Staff No.…',
   'mapping.unconfirmed.confirm': 'Confirm this mapping',
   'mapping.unconfirmed.error': 'Confirmation failed',
   'mapping.unconfirmed.warning':
     'Only confirm after establishing that it is the right person. Once confirmed, missed past scans are regenerated into punches — so a wrong mapping writes somebody else’s attendance history.',
 
+  'mapping.confirm.title': 'Confirm the mapping of ID {employeeNo}',
+  'mapping.confirm.description': '{device} · matched to {name} ({staffNo})',
+  'mapping.confirm.submit': 'Confirm',
+  'mapping.remap.action': 'Map to someone else',
+  'mapping.remap.description': '{device} · ID {employeeNo} · currently matched to {name}',
+  'mapping.remap.note':
+    '{name} keeps the punches already recorded through this match. Only later scans, and past scans not yet turned into punches, are credited to the new choice.',
+  'mapping.remap.unchanged': 'This is the person already matched',
+  'mapping.remap.submit': 'Remap',
+  'mapping.remap.done': 'ID {employeeNo} is now mapped to {name}. {note}',
+  'mapping.dismiss.title': 'Dismiss ID {employeeNo}',
+  'mapping.dismiss.note':
+    'This ID stays on the terminal and can still scan. It is only hidden from this list, and later scans will not bring it back.',
+  'mapping.dismiss.note.scanning':
+    'This ID has scanned {count} times, so it is probably somebody whose attendance is being lost. It stays on the terminal; dismissing only hides it, and later scans will not bring it back.',
+  'mapping.dismiss.submit': 'Dismiss',
+  'mapping.dismiss.done': 'ID {employeeNo} on {device} dismissed.',
+  'mapping.dismiss.error': 'Could not dismiss the ID',
   'mapping.dialog.title': 'Map a terminal ID',
   'mapping.dialog.description': '{device} · ID {employeeNo}',
   'mapping.dialog.description.named':
     '{device} · ID {employeeNo} · name on the terminal “{name}”',
-  'mapping.dialog.search': 'Search staff',
-  'mapping.dialog.search.placeholder': 'Name, Staff No. or NRIC',
-  'mapping.dialog.searching': 'Searching…',
-  'mapping.dialog.noMatch': 'No staff match.',
-  'mapping.dialog.clash': 'already ID {employeeNo}',
+  'mapping.dialog.pickHint':
+    'Active staff only, by name, Staff No. or NRIC. The name on the terminal is only where the search starts.',
+  'mapping.dialog.pickFirst': 'Choose a staff member first',
+  'mapping.dialog.clash.reason': 'This person already holds another ID on this terminal',
+  'mapping.dialog.clash.note':
+    '{name} already holds ID {employeeNo} on this terminal. One person cannot hold two IDs on one terminal — their attendance would be split between both.',
   'mapping.dialog.note':
     'Mapping this ID regenerates punches for missed past scans, so the attendance history is restored too.',
-  'mapping.dialog.searchError': 'Search failed',
+  'mapping.dialog.submit': 'Map',
   'mapping.dialog.error': 'Mapping failed',
   'mapping.dialog.done': '{name} mapped to ID {employeeNo}. {note}',
   'mapping.confirmed.backfilled':
     '{count} past scans have been regenerated. Run an attendance recompute for the affected date range.',
   'mapping.confirmed.nothingToBackfill': 'No past scans to regenerate.',
-  'mapping.unconfirmed.done': '{name}: {note}',
+  'mapping.unconfirmed.done': 'Mapping of ID {employeeNo} to {name} confirmed. {note}',
 
   // ---------------------------------------------------------------------------
   // Bulk import
@@ -1360,22 +1407,28 @@ export const EN_LABELS_ENROLMENT: Partial<Record<LabelKey, string>> = {
   'import.error.status': 'Failed ({status})',
   'import.error.start': 'Could not start the import',
 
-  'import.preview.title': 'Preview result',
-  'import.preview.subtitle': 'Nothing is written at this stage.',
-  'import.stat.linesRead': 'Lines read',
-  'import.stat.valid': 'Valid',
-  'import.stat.errors': 'Errors',
-  'import.stat.existing': 'Already exist',
-  'import.stat.existing.hint': 'will be skipped',
-  'import.problems.title': '{count} errors need fixing',
-  'import.problems.subtitle':
-    'Nothing is written until every error is fixed. The line numbers match what Excel shows.',
-  'import.problems.caption': 'Errors in the import file',
-  'import.problems.column.line': 'Line',
-  'import.problems.column.employeeNo': 'Staff No.',
-  'import.problems.column.field': 'Field',
-  'import.problems.column.message': 'Problem',
-  'import.problems.capped': 'Showing the first 200 errors of {total}.',
+  'import.preview.count': '{count} lines read',
+  'import.preview.subtitle':
+    'Nothing is written at this stage. The line numbers match what Excel shows.',
+  'import.preview.search': 'Search Staff No. or name…',
+  'import.preview.empty': 'No lines match.',
+  'import.state.create': 'To be created',
+  'import.state.existing': 'Already exists',
+  'import.state.problem': 'Error',
+  'import.column.line': 'Line',
+  'import.problem': '{field}: {message}',
+  // The column names as `import.step1.subtitle` lists them, which are spellings the parser accepts.
+  'import.field.employeeNo': 'Staff No.',
+  'import.field.fullName': 'Name',
+  'import.field.icNo': 'NRIC',
+  'import.field.phone': 'Phone',
+  'import.field.email': 'Email',
+  'import.field.department': 'Department',
+  'import.field.location': 'Location',
+  'import.field.doorPin': 'PIN',
+  'import.field.basicSalary': 'Salary',
+  'import.field.header': 'Header row',
+  'import.field.row': 'Line',
   'import.newRefs': 'The following departments and locations will be created automatically:',
   'import.newRefs.departments': 'Departments: {names}',
   'import.newRefs.locations': 'Locations: {names}',
@@ -1385,6 +1438,9 @@ export const EN_LABELS_ENROLMENT: Partial<Record<LabelKey, string>> = {
     'Can be skipped. Staff will be created in the directory but cannot scan until they are assigned to a terminal and have a face enrolled.',
   'import.devices': 'Enrol to terminals',
   'import.commit': 'Import {count} staff',
+  'import.commit.hint': 'Staff are created in the directory, then sent to the terminals chosen.',
+  'import.commit.hint.existing': '{count} lines already in the directory are skipped, not overwritten.',
+  'import.blocked.problems': '{count} lines still have errors. Fix them in the file and upload it again.',
   'import.allExisting': 'Every row in the file already exists in the directory.',
 
   'import.step3': '3. Progress',
@@ -1398,7 +1454,9 @@ export const EN_LABELS_ENROLMENT: Partial<Record<LabelKey, string>> = {
   'import.stat.skipped': 'Skipped',
   'import.stat.pushed': 'To terminals',
   'import.stat.pushFailed': 'Failed to terminals',
-  'import.failures.heading': 'Staff created but not yet on the terminals',
+  'import.failures.count': '{count} terminal deliveries failed',
+  'import.failures.column.terminal': 'Terminal',
+  'import.failures.column.error': 'Error',
   'import.failures.hint':
     'Use the resync button on the staff record once the terminal can be reached.',
   'import.done':
@@ -1426,12 +1484,6 @@ export const EN_LABELS_SCHEDULE: Partial<Record<LabelKey, string>> = {
   'shifts.pattern.error.load': 'Could not load patterns',
   'shifts.pattern.removed': 'Pattern “{name}” removed.',
   'shifts.pattern.saved': 'Pattern “{name}” saved.',
-  /*
-   * The consequence clause is the one that matters: an overlap makes the answer depend on processing
-   * order, which is not something an operator can reason about from the screen.
-   */
-  'shifts.pattern.graceNote':
-    'The tolerance window decides how early or late a scan still counts for that block. Windows cannot overlap between blocks — if they do, one scan can satisfy two blocks and the choice depends on processing order rather than on anything an operator could reason about.',
   'shifts.pattern.column.name': 'Name',
   'shifts.pattern.column.kind': 'Kind',
   'shifts.pattern.column.blocks': 'Time blocks',
@@ -1439,7 +1491,6 @@ export const EN_LABELS_SCHEDULE: Partial<Record<LabelKey, string>> = {
   'shifts.pattern.column.staff': 'Staff',
   'shifts.pattern.column.shifts': 'Shifts',
   'shifts.pattern.overnight': 'overnight',
-  'shifts.pattern.inactive': 'inactive',
   'shifts.pattern.row.edit': 'Update pattern',
   'shifts.pattern.row.remove': 'Remove pattern',
   'shifts.pattern.row.locked': '{staff} staff and {shifts} shifts still reference it',
@@ -1453,9 +1504,6 @@ export const EN_LABELS_SCHEDULE: Partial<Record<LabelKey, string>> = {
   'shifts.block.column.graceAfter': 'Tolerance after',
   'shifts.block.nextDay': '+1 day',
 
-  'shifts.pattern.detail.dailyHours': 'Hours per day',
-  'shifts.pattern.detail.staffUsing': 'Staff using it',
-  'shifts.pattern.detail.shiftsUsing': 'Shifts referencing it',
   // The times stay as digits; the rule is that the night is filed against the day it starts.
   'shifts.pattern.detail.overnight':
     'This pattern crosses midnight. A 22:00–07:00 shift is filed against the work date it starts on, not the date it ends — otherwise one night of work would split across two days in every report.',
@@ -1467,11 +1515,18 @@ export const EN_LABELS_SCHEDULE: Partial<Record<LabelKey, string>> = {
   'shifts.pattern.dialog.blocks': 'Time blocks',
   'shifts.pattern.dialog.blockLabel': 'Block {order}',
   'shifts.pattern.dialog.removeBlock': 'Remove block {order}',
+  'shifts.pattern.field.description': 'Description',
   'shifts.pattern.dialog.break': 'Break (min)',
   'shifts.pattern.dialog.endsNextDay': 'Ends the next day',
-  'shifts.pattern.dialog.graceBefore': 'Tolerance before the start (min)',
-  'shifts.pattern.dialog.graceAfter': 'Tolerance after the end (min)',
+  'shifts.pattern.dialog.endsNextDay.hint': 'Filed against the date this block starts.',
+  'shifts.pattern.dialog.graceBefore': 'Tolerance before (min)',
+  'shifts.pattern.dialog.graceAfter': 'Tolerance after (min)',
   'shifts.pattern.dialog.addBlock': 'Add block',
+  'shifts.dialog.active': 'Active',
+  'shifts.pattern.dialog.active.hint':
+    'An inactive pattern is not offered for new shifts. Staff and shifts that already refer to it are unchanged.',
+  'shifts.shift.dialog.active.hint':
+    'An inactive shift is not offered on the work calendar. Days already rostered with it are unchanged.',
   'shifts.pattern.dialog.overlapWarning':
     'Tolerance windows cannot overlap between blocks. If they do, one scan can satisfy two blocks and the choice becomes dependent on processing order. The server will refuse it.',
   'shifts.pattern.blocksChanged':
@@ -1499,11 +1554,6 @@ export const EN_LABELS_SCHEDULE: Partial<Record<LabelKey, string>> = {
   'shifts.shift.row.edit': 'Update shift',
   'shifts.shift.row.remove': 'Remove shift',
   'shifts.shift.row.locked': '{count} calendar days still use it',
-  'shifts.shift.row.expand': 'shift detail',
-  // A yes/no answer, kept apart from the Active/Inactive badge: the register is different.
-  'shifts.shift.detail.active': 'Active',
-  'shifts.shift.detail.active.yes': 'Yes',
-  'shifts.shift.detail.active.no': 'No',
   'shifts.shift.remove.title': 'Remove shift “{code}”?',
   'shifts.shift.remove.body': 'No calendar days use it, so it is safe to remove.',
   'shifts.shift.dialog.edit': 'Update shift',

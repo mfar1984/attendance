@@ -314,8 +314,7 @@ export const LABELS = {
   'justify.title': 'Kelulusan Justifikasi',
   'justify.subtitle':
     'Sebab yang staf beri bagi hari yang direkodkan sebagai lewat, keluar awal, tidak lengkap atau tidak hadir. Keputusan di sini tidak mengubah mana-mana angka kehadiran — rekodnya betul, dan yang diputuskan ialah sama ada sebabnya diterima.',
-  'justify.note.notExceptions':
-    'Ini berasingan daripada Pengecualian. Pengecualian ialah lapan keadaan yang enjin tidak dapat selesaikan — muka tidak dikenali, jam terminal hanyut — dan menyelesaikannya membetulkan data. Skrin ini pula tidak menyentuh data sama sekali.',
+  /** The queue's subtitle: how a decision travels, which is the one thing the heading cannot say. */
   'justify.note.noChain':
     'Tiada rantaian aras. Satu penghantaran, satu keputusan, satu mesej kepada orang yang menghantarnya.',
 
@@ -345,19 +344,19 @@ export const LABELS = {
   'justify.empty': 'Tiada justifikasi dalam tempoh ini.',
   'justify.error.load': 'Senarai justifikasi tidak dapat dimuatkan.',
 
-  'justify.filter.from': 'Dari',
-  'justify.filter.to': 'Hingga',
+  'justify.search': 'Cari nama atau no. staf…',
   'justify.filter.department': 'Semua jabatan',
   'justify.filter.kind': 'Semua jenis',
 
-  'justify.action.view': 'Buka butiran',
   'justify.action.approve': 'Luluskan',
   'justify.action.reject': 'Tolak',
   'justify.action.revert': 'Hantar semula',
+  /** On the greyed send-back action, so the reason is read where somebody reaches for it. */
+  'justify.action.revert.already': 'Sudah dihantar semula — menunggu staf menulis sebab baharu',
+  'justify.row.expand': 'butiran justifikasi',
+  'justify.detail.decisionNote': 'Catatan keputusan: {note}',
 
-  'justify.form.title': 'Sebab bagi {date}',
   'justify.form.reason': 'Sebab',
-  'justify.form.record': 'Rekod hari itu',
 
   /**
    * Columns describing the attendance day the explanation is about.
@@ -377,9 +376,25 @@ export const LABELS = {
   'justify.decision.note.hint':
     'Wajib untuk menolak dan untuk menghantar semula. Keputusan tanpa perkataan ialah keputusan yang orang itu tidak boleh terima atau perbaiki.',
   'justify.decision.note.optional': 'Pilihan untuk kelulusan — orang itu sudah menulis sebabnya.',
-  'justify.decided': 'Keputusan direkodkan.',
   'justify.decision.recordMissing':
     'Rekod kehadiran bagi hari ini sudah dikira semula dan tidak lagi sepadan. Baris ini kekal sebagai rekod apa yang ditanya dan dijawab.',
+  /** The table cell's short form of the sentence above. */
+  'justify.record.missing': 'Sudah dikira semula',
+
+  /** One dialog per decision, as leave has, rather than one dialog holding all three. */
+  'justify.decision.approve.title': 'Luluskan justifikasi',
+  'justify.decision.reject.title': 'Tolak justifikasi',
+  'justify.decision.revert.title': 'Hantar semula kepada staf',
+  'justify.decision.description': '{kind} pada {date}, dihantar oleh {name}.',
+  'justify.decision.approveNote':
+    'Meluluskan tidak mengubah angka kehadiran — rekodnya kekal seperti yang enjin kira. Ringkasan bulanan mengira hari ini sebagai sudah dijelaskan.',
+  'justify.decision.rejectNote':
+    'Keputusan ini muktamad: ia tidak boleh diputuskan semula, dan staf tidak boleh menghantar sebab baharu bagi hari ini. Catatan anda ialah apa yang staf baca.',
+  'justify.decision.revertNote':
+    'Hari ini kembali kepada staf untuk sebab yang lebih jelas. Ia kekal terbuka, dan boleh diputuskan selepas staf menghantar semula.',
+  'justify.notice.approved': 'Justifikasi {name} bagi {date} diluluskan.',
+  'justify.notice.rejected': 'Justifikasi {name} bagi {date} ditolak.',
+  'justify.notice.reverted': 'Justifikasi {name} bagi {date} dihantar semula kepadanya.',
 
   // Penolakan yang pelayan hantar sebagai prosa; didaftar di sini untuk sepanduk pada skrin.
   'justify.refuse.alreadyPending': 'Sudah ada sebab yang menunggu keputusan untuk hari itu.',
@@ -661,6 +676,10 @@ export const LABELS = {
   'exceptions.error.load': 'Gagal memuatkan pengecualian',
   'exceptions.empty': 'Tiada pengecualian dalam julat ini.',
 
+  'exceptions.search': 'Cari nama atau no. staf…',
+  'exceptions.filter.allTerminals': 'Semua terminal',
+  /** The status badge beside `exceptions.row.done`. */
+  'exceptions.status.open': 'TERBUKA',
   'exceptions.filter.allStatuses': 'Semua status',
   'exceptions.filter.open': 'Belum diselesaikan',
   'exceptions.filter.resolved': 'Sudah diselesaikan',
@@ -693,7 +712,7 @@ export const LABELS = {
   'exceptions.resolve.placeholder':
     'Wajib. Rekod ini akan menjadi bukti jika kehadiran dipertikaikan.',
   'exceptions.resolve.submit': 'Selesaikan',
-  'exceptions.resolve.done': 'Pengecualian {kind} diselesaikan.',
+  'exceptions.resolve.done': 'Pengecualian {kind} bagi {name} diselesaikan.',
   'exceptions.resolve.error': 'Gagal menyimpan',
   'exceptions.resolve.preset.forgotOut': 'Staf lupa scan keluar, dikonfirmasi oleh penyelia',
   'exceptions.resolve.preset.fieldWork': 'Staf keluar tugas luar, tiada scan',
@@ -735,6 +754,10 @@ export const LABELS = {
   'records.detail.earlyLeave': 'Keluar awal',
   'records.detail.overtime': 'Kerja lebih masa',
   'records.detail.origin': 'Sumber',
+  /** `attendance_records.origin`. Shown as words: the raw value read `auto` on the screen. */
+  'records.origin.auto': 'Dikira enjin',
+  'records.origin.manual': 'Dimasukkan manual',
+  'records.origin.adjusted': 'Dilaraskan',
   'records.detail.calculatedAt': 'Dikira pada',
   'records.detail.recordId': 'ID rekod',
 
@@ -753,23 +776,21 @@ export const LABELS = {
   // -------------------------------------------------------------------------
   'monitor.title': 'Monitor Hari Ini',
   'monitor.subtitle':
-    'Scan seperti ia berlaku. Suapan ini best-effort — rekod kekal disimpan dalam Log Scan Mentah walaupun sambungan terputus.',
+    'Scan hari ini, dan yang baharu sebaik terminal melaporkannya. Rekod kekal disimpan dalam Log Scan Mentah walaupun sambungan terputus.',
+  /** The heading is the count. `recent` once today goes back further than the list holds. */
+  'monitor.count': '{count} scan hari ini',
+  'monitor.count.recent': '{count} scan terkini hari ini',
   'monitor.connected': 'Bersambung',
   'monitor.disconnected': 'Sambungan terputus',
-  'monitor.connected.hint': 'Scan akan muncul di bawah sebaik terminal melaporkannya.',
-  'monitor.disconnected.hint': 'Pelayar akan mencuba semula sendiri. Tiada rekod hilang.',
+  'monitor.connected.hint': 'Scan baharu muncul di atas sebaik terminal melaporkannya.',
+  'monitor.disconnected.hint':
+    'Pelayar akan mencuba semula sendiri, dan scan yang terlepas dimuatkan semula bila ia bersambung. Tiada rekod hilang.',
   'monitor.waiting': 'menunggu scan',
   'monitor.lastAt': 'terakhir {time}',
-
-  'monitor.stat.accepted': 'Diterima sesi ini',
-  'monitor.stat.accepted.hint': 'punch direkod',
-  'monitor.stat.suppressed': 'Pendua ditapis',
-  'monitor.stat.suppressed.hint': 'scan berulang dalam tetingkap dedup',
-  'monitor.stat.problems': 'Perlu perhatian',
-  'monitor.stat.problems.hint': 'muka tak dikenali atau ID belum dipetakan',
-
-  'monitor.offline.note':
-    'Suapan langsung ini bukan sumber kebenaran. Setiap scan sudah ditulis ke Log Scan Mentah sebelum ia dihantar ke skrin ini, jadi jurang di sini tidak bermakna kehadiran hilang.',
+  'monitor.error.load': 'Gagal memuatkan scan hari ini',
+  /** Why a scan did not become anybody's punch. The server sends the code, never the words. */
+  'monitor.problem.unrecognisedFace': 'Muka tidak dikenali',
+  'monitor.problem.unmappedId': 'ID terminal belum dipetakan',
 
   'monitor.chip.accepted': 'Diterima',
   'monitor.chip.suppressed': 'Pendua',
@@ -802,11 +823,6 @@ export const LABELS = {
   'monitor.detail.noPunchWarning':
     'Scan ini tidak menjadi punch. Semak Pengecualian untuk butirannya.',
 
-  'monitor.footer.showing': 'Memaparkan {shown} daripada {total} scan sesi ini',
-  'monitor.footer.capped': ' · dihadkan kepada {max} baris terkini',
-  'monitor.footer.note':
-    'Sejarah penuh ada di Log Scan Mentah — skrin ini hanya untuk melihat waktu pertukaran shift.',
-
   /** Verification method, shared with the raw scan log. */
   'method.face': 'Muka',
   'method.fingerprint': 'Cap jari',
@@ -836,16 +852,13 @@ export const LABELS = {
     'Push adalah penghantaran realtime dari terminal; pull adalah pas penyelarasan yang menangkap apa yang push terlepas.',
   'rawlog.error.load': 'Gagal memuatkan log',
   'rawlog.empty': 'Tiada event dalam julat ini.',
-  'rawlog.search': 'Cari ID di terminal, cth. 1001…',
+  'rawlog.search': 'Cari ID atau nama di terminal…',
 
   'rawlog.chip.push': 'Push',
   'rawlog.chip.pull': 'Pull',
   'rawlog.filter.allDevices': 'Semua terminal',
   'rawlog.filter.allCategories': 'Semua kategori',
 
-  'rawlog.immutable': 'tidak boleh diubah atau dibuang',
-  'rawlog.immutable.note':
-    'Log ini {emphasis} oleh sesiapa, termasuk Super Admin. Untuk membetulkan rekod kehadiran, betulkan puncanya dan jalankan kira semula — jangan sunting hasilnya.',
 
   'rawlog.column.serial': 'Serial',
   'rawlog.column.deviceTime': 'Masa terminal',
@@ -868,6 +881,10 @@ export const LABELS = {
   'rawlog.detail.cardNo': 'No. kad',
   'rawlog.detail.door': 'Pintu',
   'rawlog.detail.mask': 'Pelitup muka',
+  /** The terminal's mask verdict, as words: the raw value used to print here. */
+  'rawlog.mask.yes': 'Memakai',
+  'rawlog.mask.no': 'Tidak memakai',
+  'rawlog.mask.unknown': 'Tidak diketahui',
   'rawlog.detail.arrivedVia': 'Sampai melalui',
   'rawlog.detail.receivedAt': 'Diterima pelayan',
   'rawlog.detail.drift': 'Sasaran jam terminal',
@@ -991,9 +1008,6 @@ export const LABELS = {
   'staff.view.avatarAlt': 'Gambar {name}',
   'staff.view.edit': 'Kemas kini',
   'staff.view.deactivate': 'Nyahaktifkan',
-  'staff.view.deactivated': '{name} dinyahaktifkan dan dibuang dari setiap terminal.',
-  'staff.view.deactivated.partial':
-    '{name} dinyahaktifkan, tetapi {count} terminal tidak dapat dihubungi. Pemetaan sudah dibuang, jadi scan dari ID itu akan masuk giliran semakan.',
   'staff.view.error.load': 'Gagal memuatkan butiran staf',
 
   'staff.view.tabs.aria': 'Bahagian butiran staf',
@@ -1084,32 +1098,30 @@ export const LABELS = {
   'staff.view.terminal.resync.error': 'Gagal menolak semula',
 
   // Tab Kehadiran
-  'staff.view.attendance.title': 'Kehadiran',
+  /** The list tabs head with their count, as every list does. */
+  'staff.view.attendance.count': '{count} hari direkod',
   'staff.view.attendance.subtitle':
     'Hari kerja seperti yang dikira oleh enjin. Setiap baris boleh dibina semula daripada log scan mentah.',
   'staff.view.attendance.month': 'Bulan',
-  'staff.view.attendance.allStatuses': 'Semua status',
-  'staff.view.attendance.summary': 'Ringkasan bulan',
-  'staff.view.attendance.none': 'Tiada rekod',
   'staff.view.attendance.empty':
     'Tiada rekod untuk bulan ini. Jalankan kira semula jika scan sudah masuk.',
 
   // Tab Pengecualian
-  'staff.view.exceptions.title': 'Pengecualian',
+  'staff.view.exceptions.count': '{count} pengecualian',
   'staff.view.exceptions.subtitle':
     'Perkara yang enjin tidak dapat selesaikan sendiri untuk orang ini.',
   'staff.view.exceptions.empty': 'Tiada pengecualian untuk staf ini.',
 
   // Tab Jadual
-  'staff.view.roster.title': 'Jadual kerja',
+  'staff.view.roster.count': '{count} hari dijadualkan',
   'staff.view.roster.subtitle':
     'Apa yang dijadualkan, berbeza daripada apa yang berlaku. Hari yang dijadualkan tanpa scan menjadi ketidakhadiran; scan pada hari rehat menjadi pengecualian.',
   'staff.view.roster.error': 'Gagal memuatkan jadual',
-  'staff.view.roster.pattern': 'Pola kerja',
-  'staff.view.roster.summary': 'Ringkasan bulan',
-  'staff.view.roster.none': 'Tiada baris',
   'staff.view.roster.note':
     'Hari tanpa baris di sini bukan hari rehat — ia tidak dijadualkan sama sekali, dan enjin jatuh balik kepada pola kerja untuk hari itu.',
+  /** The same sentence with the pattern named, when the person has one. */
+  'staff.view.roster.note.pattern':
+    'Hari tanpa baris di sini bukan hari rehat — ia tidak dijadualkan sama sekali, dan enjin jatuh balik kepada pola kerja "{pattern}" untuk hari itu.',
   'staff.view.roster.column.type': 'Jenis',
   'staff.view.roster.column.notes': 'Nota',
   'staff.view.roster.empty': 'Tiada baris jadual untuk bulan ini.',
@@ -1126,7 +1138,7 @@ export const LABELS = {
   'staff.view.leave.unlimited': 'tiada had',
   'staff.view.leave.unpaid': 'Tanpa gaji — baki bukan kawalannya',
   'staff.view.leave.noTypes': 'Tiada jenis cuti aktif.',
-  'staff.view.leave.group.requests': 'Permohonan',
+  'staff.view.leave.requests.count': '{count} permohonan',
   'staff.view.leave.group.requests.subtitle':
     'Hari yang dicaj sahaja ditulis ke roster. Hari rehat dan cuti umum dalam julat dilangkau, supaya baki dan laporan bulanan sepadan.',
   'staff.view.leave.column.days': 'Hari',
@@ -1138,15 +1150,13 @@ export const LABELS = {
   //
   // The evidence tab. Guarded by the raw log permission, not the directory one, so the
   // wording assumes a reader who is allowed to see the untouched device log.
-  'staff.view.scans.title': 'Log scan',
+  'staff.view.scans.count': '{count} scan',
   'staff.view.scans.subtitle':
     'Apa yang terminal laporkan tentang orang ini, dan apa yang jadi kepadanya. Baris tanpa punch adalah yang dicari apabila sehari hilang.',
   'staff.view.scans.error': 'Gagal memuatkan log scan',
   'staff.view.scans.matchedOn': 'Dipadan pada ID',
   'staff.view.scans.matchedOn.hint':
     'ID tempatan terminal, bukan No. Staf. Menapis dengan No. Staf akan terlepas setiap scan dari terminal di mana orang ini membawa nombor berbeza.',
-  'staff.view.scans.summary': 'Ringkasan',
-  'staff.view.scans.counts': '{total} baris · {unresolved} tanpa punch',
   'staff.view.scans.truncated':
     'Dihadkan kepada {limit} baris terkini, jadi ini bukan keseluruhan bulan. Persempitkan julat untuk melihat yang lebih awal.',
   'staff.view.scans.column.at': 'Masa',
@@ -1155,7 +1165,7 @@ export const LABELS = {
   'staff.view.scans.empty': 'Tiada scan untuk bulan ini.',
 
   // Tab Audit
-  'staff.view.audit.title': 'Jejak audit',
+  'staff.view.audit.count': '{count} perubahan',
   'staff.view.audit.subtitle':
     'Siapa menukar apa tentang orang ini, dan bila. Hanya medan yang benar-benar berubah direkodkan.',
   'staff.view.audit.error': 'Gagal memuatkan jejak audit',
@@ -1171,6 +1181,8 @@ export const LABELS = {
   // Borang staf (dialog)
   // -------------------------------------------------------------------------
   'staffForm.title.edit': 'Kemas kini staf',
+  'staffForm.title.reactivate': 'Aktifkan semula staf',
+  'staffForm.submit.reactivate': 'Aktifkan semula',
   'staffForm.title.create': 'Tambah staf',
   'staffForm.description': 'Rekod staf dan terminal yang mereka boleh scan.',
   'staffForm.error.load': 'Gagal memuatkan',
@@ -1200,6 +1212,16 @@ export const LABELS = {
   'staffForm.location': 'Lokasi',
   'staffForm.none': 'Tiada',
   'staffForm.active': 'Aktif',
+  /**
+   * What the box does, both ways, because unticking it used to do less than it looked like: the
+   * record went inactive and stayed on every terminal. The server now removes the person.
+   */
+  'staffForm.active.hint':
+    'Staf aktif ditulis pada terminal yang dipilih di atas. Staf tidak aktif tidak berada pada mana-mana terminal.',
+  'staffForm.active.removing':
+    'Bila disimpan, orang ini dibuang daripada setiap terminal dan tidak lagi boleh membuka pintu.',
+  'staffForm.devices.inactive':
+    'Staf tidak aktif tidak ditulis pada mana-mana terminal. Tanda "Aktif" untuk memilih terminal.',
 
   'staffForm.devices': 'Terminal',
   'staffForm.devices.hint':
@@ -1259,10 +1281,19 @@ export const LABELS = {
 
   'biometrics.face.enrolled': 'Didaftar',
   'biometrics.face.none': 'Tiada',
-  'biometrics.canScan.yes': 'ya',
-  'biometrics.canScan.no': 'tidak',
+  /** A mark's name, so it says which column it answers rather than a bare "ya". */
+  'biometrics.canScan.yes': 'Boleh scan',
+  'biometrics.canScan.no': 'Tidak boleh scan',
   'biometrics.row.replace': 'Ganti muka',
   'biometrics.row.enrol': 'Daftar muka',
+  'biometrics.row.remove': 'Buang muka dari terminal',
+  /** Removing a face, confirmed, with what it leaves the person able to do. */
+  'biometrics.remove.title': 'Buang muka {name}?',
+  'biometrics.remove.description': 'Muka dibuang daripada setiap terminal yang orang ini didaftarkan.',
+  'biometrics.remove.otherCredentials':
+    'Orang ini masih boleh scan dengan cap jari atau kad yang sudah didaftar.',
+  'biometrics.remove.lastCredential':
+    'Muka ialah satu-satunya kelayakan orang ini pada terminal, jadi selepas ini mereka tidak boleh scan langsung sehingga didaftar semula — dan terminal tidak akan melaporkan apa-apa ralat.',
   'biometrics.row.expand': 'butiran biometrik',
   'biometrics.row.faceAlt': 'Muka yang didaftar untuk {name}',
 
@@ -1313,23 +1344,34 @@ export const LABELS = {
   'import.error.status': 'Gagal ({status})',
   'import.error.start': 'Gagal memulakan import',
 
-  'import.preview.title': 'Hasil pratonton',
-  'import.preview.subtitle': 'Tiada apa ditulis pada peringkat ini.',
-  'import.stat.linesRead': 'Baris dibaca',
-  'import.stat.valid': 'Sah',
-  'import.stat.errors': 'Ralat',
-  'import.stat.existing': 'Sudah ada',
-  'import.stat.existing.hint': 'akan dilangkau',
+  'import.preview.count': '{count} baris dibaca',
+  'import.preview.subtitle':
+    'Tiada apa ditulis pada peringkat ini. Nombor baris sepadan dengan yang dipaparkan dalam Excel.',
+  'import.preview.search': 'Cari No. Staf atau nama…',
+  'import.preview.empty': 'Tiada baris sepadan.',
+  /** Shown as a chip and as a row badge; one label because it is the same state. */
+  'import.state.create': 'Akan dicipta',
+  'import.state.existing': 'Sudah ada',
+  'import.state.problem': 'Ralat',
+  'import.column.line': 'Baris',
+  /** `{field}` is one of the column names below. */
+  'import.problem': '{field}: {message}',
+  /**
+   * The CSV columns, as the header row and the step-one subtitle name them. The server reports its
+   * own field key, which used to reach the screen as `doorPin`.
+   */
+  'import.field.employeeNo': 'No. Staf',
+  'import.field.fullName': 'Nama',
+  'import.field.icNo': 'No. KP',
+  'import.field.phone': 'Telefon',
+  'import.field.email': 'Emel',
+  'import.field.department': 'Jabatan',
+  'import.field.location': 'Lokasi',
+  'import.field.doorPin': 'PIN',
+  'import.field.basicSalary': 'Gaji',
+  'import.field.header': 'Baris pengepala',
+  'import.field.row': 'Baris',
 
-  'import.problems.title': '{count} ralat perlu dibetulkan',
-  'import.problems.subtitle':
-    'Tiada apa akan ditulis sehingga semua ralat dibetulkan. Nombor baris sepadan dengan yang dipaparkan dalam Excel.',
-  'import.problems.caption': 'Senarai ralat dalam fail import',
-  'import.problems.column.line': 'Baris',
-  'import.problems.column.employeeNo': 'No. Staf',
-  'import.problems.column.field': 'Medan',
-  'import.problems.column.message': 'Masalah',
-  'import.problems.capped': 'Menunjukkan 200 ralat pertama daripada {total}.',
 
   'import.newRefs': 'Jabatan dan lokasi berikut akan dicipta secara automatik:',
   'import.newRefs.departments': 'Jabatan: {names}',
@@ -1340,6 +1382,10 @@ export const LABELS = {
     'Boleh dilangkau. Staf akan dicipta dalam direktori tetapi belum boleh scan sehingga diagihkan ke terminal dan didaftarkan muka.',
   'import.devices': 'Daftar ke terminal',
   'import.commit': 'Import {count} staf',
+  'import.commit.hint': 'Staf dicipta dalam direktori, kemudian dihantar ke terminal yang dipilih.',
+  'import.commit.hint.existing': '{count} baris yang sudah ada akan dilangkau, tidak ditulis ganti.',
+  'import.blocked.problems':
+    '{count} baris masih ada ralat. Betulkan dalam fail dan muat naik semula.',
   'import.allExisting': 'Semua baris dalam fail sudah ada dalam direktori.',
 
   'import.step3': '3. Kemajuan',
@@ -1355,7 +1401,9 @@ export const LABELS = {
   'import.stat.pushed': 'Ke terminal',
   'import.stat.pushFailed': 'Gagal ke terminal',
 
-  'import.failures.heading': 'Staf dicipta tetapi belum sampai ke terminal',
+  'import.failures.count': '{count} penghantaran ke terminal gagal',
+  'import.failures.column.terminal': 'Terminal',
+  'import.failures.column.error': 'Ralat',
   'import.failures.hint':
     'Guna butang segerak semula pada rekod staf selepas terminal dapat dihubungi.',
   'import.done':
@@ -1373,9 +1421,16 @@ export const LABELS = {
   'mapping.tab.import': 'Baca Dari Terminal',
   'mapping.error.load': 'Gagal memuatkan data',
 
-  'mapping.import.title': 'Baca senarai pengguna dari terminal',
+  'mapping.import.count': '{count} terminal',
   'mapping.import.subtitle':
     'Untuk terminal yang sudah diisi oleh alat lain atau secara manual di keypad.',
+  'mapping.import.search': 'Cari terminal, alamat atau lokasi…',
+  'mapping.import.viaConnector': 'melalui connector',
+  'mapping.import.action': 'Baca senarai pengguna',
+  'mapping.import.dialog.title': 'Baca senarai pengguna {device}',
+  'mapping.import.dialog.description': 'Senarai dibaca dari terminal; tiada apa ditulis kepadanya.',
+  'mapping.import.dialog.submit': 'Baca senarai',
+  'mapping.import.dialog.pending': 'Membaca…',
   'mapping.import.unconfirmed': 'belum disahkan',
   'mapping.import.note':
     'ID yang sama tepat dengan No. Staf akan dipadan automatik tetapi kekal {emphasis} — padanan nombor yang tepat adalah bukti kuat, bukan bukti mutlak.',
@@ -1399,10 +1454,15 @@ export const LABELS = {
   'mapping.column.biometrics': 'Biometrik',
   'mapping.column.lostScans': 'Scan hilang',
   'mapping.column.matchedTo': 'Dipadan kepada',
+  'mapping.column.matchedAt': 'Dipadan pada',
+  'mapping.column.mapped': 'Dipetakan',
+  'mapping.column.unconfirmed': 'Belum disahkan',
+  'mapping.column.unmapped': 'Belum dipetakan',
 
   'mapping.row.noName': 'tiada',
   'mapping.row.lost': '{count} hilang',
   'mapping.row.map': 'Petakan kepada staf',
+  'mapping.row.dismiss': 'Ketepikan ID ini',
   'mapping.row.expand': 'butiran ID',
 
   'mapping.detail.firstSeen': 'Kali pertama dilihat',
@@ -1419,22 +1479,45 @@ export const LABELS = {
   'mapping.unconfirmed.subtitle':
     'Dipadan kerana ID terminal sama tepat dengan No. Staf. Itu bukti kuat, bukan bukti mutlak.',
   'mapping.unconfirmed.empty': 'Tiada pemetaan menunggu pengesahan.',
+  'mapping.unconfirmed.search': 'Cari ID, nama atau No. Staf…',
   'mapping.unconfirmed.confirm': 'Sahkan pemetaan ini',
   'mapping.unconfirmed.error': 'Pengesahan gagal',
   'mapping.unconfirmed.warning':
     'Sahkan hanya selepas memastikan orangnya betul. Selepas disahkan, scan lampau yang terlepas akan dijana semula menjadi punch — jadi pemetaan yang salah akan menulis sejarah kehadiran orang lain.',
 
+  'mapping.confirm.title': 'Sahkan pemetaan ID {employeeNo}',
+  'mapping.confirm.description': '{device} · dipadan kepada {name} ({staffNo})',
+  'mapping.confirm.submit': 'Sahkan',
+
+  'mapping.remap.action': 'Petakan kepada staf lain',
+  'mapping.remap.description': '{device} · ID {employeeNo} · kini dipadan kepada {name}',
+  'mapping.remap.note':
+    '{name} kekal memegang punch yang sudah direkodkan melalui padanan ini. Hanya scan seterusnya, dan scan lampau yang belum menjadi punch, akan dikreditkan kepada pilihan baharu.',
+  'mapping.remap.unchanged': 'Ini orang yang sudah dipadan',
+  'mapping.remap.submit': 'Petakan semula',
+  'mapping.remap.done': 'ID {employeeNo} kini dipetakan kepada {name}. {note}',
+
+  'mapping.dismiss.title': 'Ketepikan ID {employeeNo}',
+  'mapping.dismiss.note':
+    'ID ini kekal pada terminal dan masih boleh scan. Ia hanya disembunyikan dari senarai ini, dan scan seterusnya tidak akan memaparkannya semula.',
+  'mapping.dismiss.note.scanning':
+    'ID ini sudah scan {count} kali, jadi ia mungkin seseorang yang kehadirannya sedang hilang. Ia kekal pada terminal; mengetepikannya hanya menyembunyikannya, dan scan seterusnya tidak akan memaparkannya semula.',
+  'mapping.dismiss.submit': 'Ketepikan',
+  'mapping.dismiss.done': 'ID {employeeNo} pada {device} diketepikan.',
+  'mapping.dismiss.error': 'Gagal mengetepikan ID',
+
   'mapping.dialog.title': 'Petakan ID terminal',
   'mapping.dialog.description': '{device} · ID {employeeNo}',
   'mapping.dialog.description.named': '{device} · ID {employeeNo} · nama di terminal "{name}"',
-  'mapping.dialog.search': 'Cari staf',
-  'mapping.dialog.search.placeholder': 'Nama, No. Staf atau No. KP',
-  'mapping.dialog.searching': 'Mencari…',
-  'mapping.dialog.noMatch': 'Tiada staf sepadan.',
-  'mapping.dialog.clash': 'sudah ID {employeeNo}',
+  'mapping.dialog.pickHint':
+    'Staf aktif sahaja, ikut nama, No. Staf atau No. KP. Nama di terminal hanya titik mula carian.',
+  'mapping.dialog.pickFirst': 'Pilih staf dahulu',
+  'mapping.dialog.clash.reason': 'Staf ini sudah memegang ID lain pada terminal ini',
+  'mapping.dialog.clash.note':
+    '{name} sudah memegang ID {employeeNo} pada terminal ini. Seorang tidak boleh memegang dua ID pada satu terminal — kehadirannya akan terbelah antara kedua-duanya.',
   'mapping.dialog.note':
     'Memetakan ID ini akan menjana semula punch untuk scan lampau yang terlepas, jadi sejarah kehadiran turut dipulihkan.',
-  'mapping.dialog.searchError': 'Carian gagal',
+  'mapping.dialog.submit': 'Petakan',
   'mapping.dialog.error': 'Pemetaan gagal',
   'mapping.dialog.done': '{name} dipetakan ke ID {employeeNo}. {note}',
 
@@ -1448,7 +1531,7 @@ export const LABELS = {
   'mapping.confirmed.backfilled':
     '{count} scan lampau telah dijana semula. Jalankan kira semula kehadiran untuk julat tarikh berkenaan.',
   'mapping.confirmed.nothingToBackfill': 'Tiada scan lampau untuk dijana semula.',
-  'mapping.unconfirmed.done': '{name}: {note}',
+  'mapping.unconfirmed.done': 'Pemetaan ID {employeeNo} kepada {name} disahkan. {note}',
 
   // -------------------------------------------------------------------------
   // Staf › Jabatan & Lokasi
@@ -1523,8 +1606,6 @@ export const LABELS = {
   'org.loc.detail.radius': 'Radius geofence',
   'org.loc.detail.devices': 'Terminal di sini',
   'org.loc.detail.id': 'ID lokasi',
-  'org.loc.detail.noCoords':
-    'Koordinat belum ditetapkan, jadi geofence tidak boleh dikuatkuasakan untuk tapak ini.',
 
   'org.loc.remove.title': 'Buang lokasi "{name}"?',
   'org.loc.remove.body': 'Tiada staf atau terminal terikat padanya, jadi ia selamat dibuang.',
@@ -1561,19 +1642,13 @@ export const LABELS = {
   'holidays.section.subtitle':
     'Cuti Sarawak berbeza dari negeri lain, dan tarikh cuti Islam boleh berubah dengan pengumuman lewat.',
   'holidays.add': 'Tambah Cuti',
-  'holidays.year.previous': 'Tahun sebelum',
-  'holidays.year.next': 'Tahun seterusnya',
   'holidays.error.load': 'Gagal memuatkan cuti',
   'holidays.empty': 'Belum ada cuti direkod untuk {year}.',
   'holidays.search': 'Cari nama cuti…',
 
   'holidays.chip.public': 'Cuti umum',
   'holidays.chip.company': 'Cuti syarikat',
-  'holidays.filter.allScopes': 'Semua liputan',
-  'holidays.scope.nationwide': 'Seluruh negara',
-
-  'holidays.recomputeNote':
-    'Selepas menambah atau membuang cuti, jalankan kira semula kehadiran untuk julat tarikh berkenaan di Konfigurasi Umum › Maintenance. Rekod yang sudah dikira tidak berubah dengan sendirinya.',
+  'holidays.filter.allScopes': 'Semua negeri',
 
   'holidays.column.date': 'Tarikh',
   'holidays.column.day': 'Hari',
@@ -1581,17 +1656,19 @@ export const LABELS = {
   'holidays.column.scope': 'Liputan',
   'holidays.column.kind': 'Jenis',
   'holidays.weekend': 'hujung minggu',
-  'holidays.kind.company': 'Syarikat',
-  'holidays.kind.public': 'Umum',
   'holidays.row.remove': 'Buang cuti',
 
   'holidays.remove.title': 'Buang "{name}"?',
   'holidays.remove.body': '{date} akan menjadi hari kerja biasa semula.',
-  'holidays.remove.warning':
-    'Rekod kehadiran yang sudah dikira untuk hari itu tidak berubah dengan sendirinya. Jalankan kira semula selepas ini, jika tidak sesiapa yang tidak hadir pada hari itu masih akan dilaporkan sebagai bercuti.',
-  'holidays.removed':
-    '"{name}" dibuang. Jalankan kira semula kehadiran untuk {date} — hari itu kini dikira sebagai hari kerja biasa.',
-  'holidays.error.remove': 'Gagal membuang',
+  'holidays.remove.gazetted':
+    'Hari ini datang dari warta, jadi sync seterusnya untuk tahun itu akan memasukkannya semula.',
+  'holidays.removed': '"{name}" dibuang.',
+  /**
+   * Appended as its own sentence only when the date has already been computed. The engine never
+   * computes a day that has not happened, so a future change needs nothing further.
+   */
+  'holidays.recompute':
+    'Kehadiran {date} sudah dikira — jalankan kira semula untuk tarikh itu supaya rekodnya mengikut perubahan ini.',
 
   'holidays.dialog.title': 'Tambah cuti',
   'holidays.dialog.description':
@@ -1599,36 +1676,39 @@ export const LABELS = {
   'holidays.dialog.name.placeholder': 'cth. Hari Gawai',
   'holidays.dialog.company': 'Cuti syarikat',
   'holidays.dialog.company.hint':
-    'Hari yang diisytiharkan sendiri, bukan cuti umum. Ditanda berasingan supaya ia boleh dibezakan daripada kalendar rasmi kemudian.',
+    'Hari yang diisytiharkan sendiri, bukan cuti umum. Sync warta tidak pernah menyentuhnya.',
+  'holidays.dialog.company.hint.off':
+    'Tanpa tanda ini hari ini dianggap warta, dan sync seterusnya untuk {year} akan menggantikannya.',
   'holidays.dialog.submit': 'Tambah',
   'holidays.error.add': 'Gagal menambah',
-  'holidays.added': '"{name}" ditambah pada {date}. Jalankan kira semula untuk tarikh itu.',
+  'holidays.added': '"{name}" ditambah pada {date}.',
 
   // -------------------------------------------------------------------------
   // Jadual › Kalendar Kerja
   // -------------------------------------------------------------------------
   'roster.title': 'Kalendar Kerja',
   'roster.subtitle':
-    'Pilih sel kemudian pilih shift. Klik nama untuk memilih seluruh bulan bagi seorang staf.',
+    'Pilih sel, kemudian pilih shift atau rehat. Klik nama untuk memilih seluruh bulan. Cuti datang dari Permohonan Cuti, bukan dari sini.',
   'roster.count': '{count} staf dalam paparan ini',
+  'roster.search': 'Cari nama atau No. Staf…',
+  'roster.month': 'Bulan',
   'roster.month.previous': 'Bulan sebelum',
   'roster.month.next': 'Bulan seterusnya',
-  'roster.recompute': 'Kira semula bulan ini',
   'roster.error.load': 'Gagal memuatkan jadual',
   'roster.error.save': 'Gagal menyimpan jadual',
   'roster.error.clear': 'Gagal mengosongkan',
-  'roster.error.recompute': 'Kira semula gagal',
   'roster.empty': 'Tiada staf untuk dipaparkan.',
 
   'roster.selected': '{count} hari dipilih',
+  'roster.apply.shift': 'Jadualkan {code} ({name})',
   'roster.apply.rest': 'Rehat',
-  'roster.apply.leave': 'Cuti',
   'roster.apply.clear': 'Kosongkan',
   'roster.selection.drop': 'Buang pilihan',
-  'roster.saved':
-    '{count} hari dikemas kini. Jalankan kira semula kehadiran untuk julat ini supaya rekod mencerminkan jadual baharu.',
-  'roster.cleared': '{count} hari dikosongkan.',
-  'roster.recomputed': '{count} rekod kehadiran dibina semula untuk bulan ini.',
+  'roster.saved': '{count} hari dikemas kini dan kehadirannya dikira semula.',
+  'roster.cleared': '{count} hari dikosongkan dan kehadirannya dikira semula.',
+  /** Appended as its own sentence when an approved leave request held some of the chosen days. */
+  'roster.kept':
+    '{count} hari cuti yang diluluskan tidak diubah — batalkan permohonan cuti untuk menukarnya.',
 
   'roster.caption': 'Kalendar kerja bulanan. Klik sel untuk memilih, kemudian pilih shift.',
   'roster.column.staff': 'Staf',
@@ -1643,9 +1723,19 @@ export const LABELS = {
   'roster.cell.aria': '{name}, {day} {month}, {state}',
   'roster.cell.unscheduled': 'belum dijadualkan',
   'roster.cell.work': 'kerja',
-
-  'roster.note':
-    'Hari kerja tanpa shift ditolak oleh pelayan — tiada apa yang boleh diukur kehadirannya terhadapnya. Menetapkan shift pada hari yang sama menulis ganti, bukan menambah baris kedua.',
+  'roster.cell.rest': 'rehat',
+  'roster.cell.leave': 'cuti',
+  'roster.cell.held':
+    'Cuti diluluskan, permohonan {ref}. Batalkan permohonan itu untuk menukar hari ini.',
+  /** One letter each, drawn in a 28px cell. Translated, because the letter is the first one of the word. */
+  'roster.cell.rest.short': 'R',
+  'roster.cell.leave.short': 'C',
+  'roster.cell.work.short': 'K',
+  /** An entry type named on its own: the calendar's key and the badge on a person's roster tab. */
+  'roster.entry.work': 'Kerja',
+  'roster.entry.rest': 'Rehat',
+  'roster.entry.leave': 'Cuti',
+  'roster.legend.unscheduled': 'Belum dijadualkan',
 
   // -------------------------------------------------------------------------
   // Jadual › Shift & Waktu Kerja
@@ -1674,8 +1764,6 @@ export const LABELS = {
   /** Returned as a key by `routes/schedule.ts` when a pattern's time blocks were rewritten. */
   'shifts.pattern.blocksChanged':
     'Blok masa diubah. Jalankan kira semula kehadiran untuk tarikh terjejas supaya rekod lama mencerminkan peraturan baharu.',
-  'shifts.pattern.graceNote':
-    'Tetingkap toleransi menentukan berapa awal atau lewat satu scan masih dikira untuk blok itu. Ia tidak boleh bertindih antara blok — kalau bertindih, satu scan boleh memenuhi dua blok dan pilihannya bergantung pada susunan pemprosesan, bukan pada apa-apa yang operator boleh fikirkan.',
 
   'shifts.pattern.column.name': 'Nama',
   'shifts.pattern.column.kind': 'Jenis',
@@ -1685,7 +1773,6 @@ export const LABELS = {
   'shifts.pattern.column.shifts': 'Shift',
 
   'shifts.pattern.overnight': 'tengah malam',
-  'shifts.pattern.inactive': 'tidak aktif',
   'shifts.pattern.row.edit': 'Kemas kini pola',
   'shifts.pattern.row.remove': 'Buang pola',
   'shifts.pattern.row.locked': '{staff} staf dan {shifts} shift masih merujuknya',
@@ -1699,9 +1786,6 @@ export const LABELS = {
   'shifts.block.column.graceAfter': 'Toleransi selepas',
   'shifts.block.nextDay': '+1 hari',
 
-  'shifts.pattern.detail.dailyHours': 'Jam sehari',
-  'shifts.pattern.detail.staffUsing': 'Staf menggunakannya',
-  'shifts.pattern.detail.shiftsUsing': 'Shift merujuknya',
   'shifts.pattern.detail.overnight':
     'Pola ini melintasi tengah malam. Shift 22:00–07:00 difailkan pada tarikh kerja ia dimulakan, bukan tarikh ia berakhir — kalau tidak, satu malam kerja akan berpecah antara dua hari dalam laporan.',
 
@@ -1714,11 +1798,19 @@ export const LABELS = {
   'shifts.pattern.dialog.blocks': 'Blok masa',
   'shifts.pattern.dialog.blockLabel': 'Blok {order}',
   'shifts.pattern.dialog.removeBlock': 'Buang blok {order}',
+  'shifts.pattern.field.description': 'Keterangan',
   'shifts.pattern.dialog.break': 'Rehat (min)',
   'shifts.pattern.dialog.endsNextDay': 'Tamat hari esok',
-  'shifts.pattern.dialog.graceBefore': 'Toleransi sebelum mula (min)',
-  'shifts.pattern.dialog.graceAfter': 'Toleransi selepas tamat (min)',
+  'shifts.pattern.dialog.endsNextDay.hint': 'Difailkan pada tarikh blok ini bermula.',
+  'shifts.pattern.dialog.graceBefore': 'Toleransi sebelum (min)',
+  'shifts.pattern.dialog.graceAfter': 'Toleransi selepas (min)',
   'shifts.pattern.dialog.addBlock': 'Tambah blok',
+  /** One title for the active box in both dialogs on this screen; the hints say what each means. */
+  'shifts.dialog.active': 'Aktif',
+  'shifts.pattern.dialog.active.hint':
+    'Pola tidak aktif tidak ditawarkan untuk shift baharu. Staf dan shift yang sudah merujuknya tidak berubah.',
+  'shifts.shift.dialog.active.hint':
+    'Shift tidak aktif tidak ditawarkan pada kalendar kerja. Hari yang sudah dijadualkan dengannya tidak berubah.',
   'shifts.pattern.dialog.overlapWarning':
     'Tetingkap toleransi tidak boleh bertindih antara blok. Jika bertindih, satu scan boleh memenuhi dua blok dan pilihan menjadi bergantung pada susunan pemprosesan. Pelayan akan menolaknya.',
 
@@ -1743,10 +1835,6 @@ export const LABELS = {
   'shifts.shift.row.edit': 'Kemas kini shift',
   'shifts.shift.row.remove': 'Buang shift',
   'shifts.shift.row.locked': '{count} hari kalendar masih menggunakannya',
-  'shifts.shift.row.expand': 'butiran shift',
-  'shifts.shift.detail.active': 'Aktif',
-  'shifts.shift.detail.active.yes': 'Ya',
-  'shifts.shift.detail.active.no': 'Tidak',
 
   'shifts.shift.remove.title': 'Buang shift "{code}"?',
   'shifts.shift.remove.body': 'Tiada hari kalendar menggunakannya, jadi ia selamat dibuang.',

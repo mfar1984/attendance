@@ -34,8 +34,11 @@ export interface ExceptionRow {
 }
 
 export interface ExceptionPage extends Paged<ExceptionRow> {
-  /** Open counts per kind, so filters reflect what is actually queued. */
-  openByKind: Record<string, number>;
+  /** Counts per kind with every filter applied except the kind one, for the chips. */
+  byKind: Record<string, number>;
+  /** Everything still open, whatever is filtered: the queue size the heading reports. */
+  openTotal: number;
+  generatedAt: string;
 }
 
 /**
@@ -64,6 +67,8 @@ export const exceptionsApi = {
     resolved?: boolean;
     /** Also already accepted by the route, and also never sent until now. */
     staffId?: number;
+    deviceId?: number;
+    search?: string;
     from?: string;
     to?: string;
   }) => api.get<ExceptionPage>(`/api/exceptions?${toParams(query)}`),
@@ -147,18 +152,27 @@ export const EVENT_KIND_LABELS: Record<string, LabelKey> = {
 
 
 
+/** The raw log's page, with the push and pull chips counted over the whole range. */
+export interface RawEventPage extends Paged<RawEventRow> {
+  byArrival: Partial<Record<'push' | 'pull', number>>;
+  generatedAt: string;
+}
+
 export const rawEventsApi = {
   list: (query: {
     page: number;
     pageSize: number;
     deviceId?: number;
+    /** Exact terminal ID. */
     employeeNo?: string;
+    /** Terminal ID prefix or the name on the unit, partially typed. */
+    search?: string;
     major?: number;
     from?: string;
     to?: string;
     arrivedVia?: 'push' | 'pull';
     identifiedOnly?: boolean;
-  }) => api.get<Paged<RawEventRow>>(`/api/raw-events?${toParams(query)}`),
+  }) => api.get<RawEventPage>(`/api/raw-events?${toParams(query)}`),
   pictureUrl: (id: string) => `/api/raw-events/${id}/picture`,
 };
 
@@ -278,6 +292,27 @@ export const STATUS_TONES: Record<string, 'success' | 'warning' | 'danger' | 'ne
   on_leave: 'neutral',
   rest_day: 'neutral',
   holiday: 'neutral',
+};
+
+/**
+ * Terminal reachability, for every screen that badges a terminal.
+ *
+ * Exported because the same four states are shown on the device list, the device editor, a staff
+ * member's terminal tab and the mapping screen. Each of those began with its own copy, and a copy
+ * is what gets translated while its twin still prints `degraded`.
+ */
+export const DEVICE_STATUS_LABELS: Record<string, LabelKey> = {
+  online: 'device.status.online',
+  degraded: 'device.status.degraded',
+  offline: 'device.status.offline',
+  unknown: 'device.status.unknown',
+};
+
+export const DEVICE_STATUS_TONES: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = {
+  online: 'success',
+  degraded: 'warning',
+  offline: 'danger',
+  unknown: 'neutral',
 };
 
 export const attendanceApi = {

@@ -89,6 +89,8 @@ export async function justificationRoutes(app: FastifyInstance): Promise<void> {
           hingga: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
           departmentId: z.coerce.number().int().positive().optional(),
           staffId: z.coerce.number().int().positive().optional(),
+          /** Name or staff number. The person filter, for when somebody asks about their own day. */
+          search: z.string().trim().max(128).optional(),
           status: z.enum(JUSTIFICATION_STATUSES).optional(),
           jenis: z.enum(JUSTIFIABLE_STATUSES).optional(),
           page: z.coerce.number().int().min(1).default(1),
@@ -110,12 +112,24 @@ export async function justificationRoutes(app: FastifyInstance): Promise<void> {
         ...(query.staffId === undefined ? {} : { staffId: query.staffId }),
         ...(query.status === undefined ? {} : { status: query.status }),
         ...(query.jenis === undefined ? {} : { statusKind: query.jenis }),
-        ...(query.departmentId === undefined
+        ...(query.departmentId === undefined && !query.search
           ? {}
-          : { staff: { departmentId: query.departmentId } }),
+          : {
+              staff: {
+                ...(query.departmentId === undefined ? {} : { departmentId: query.departmentId }),
+                ...(query.search
+                  ? {
+                      OR: [
+                        { fullName: { contains: query.search } },
+                        { employeeNo: { contains: query.search } },
+                      ],
+                    }
+                  : {}),
+              },
+            }),
       };
 
-      const [rows, total, grouped] = await Promise.all([
+      const [rows, total, grouped, departments] = await Promise.all([
         db().attendanceJustification.findMany({
           where,
           // Pending first, then oldest day: the queue reads as work to do, not as a log.
@@ -145,6 +159,14 @@ export async function justificationRoutes(app: FastifyInstance): Promise<void> {
           where: { ...where, status: undefined },
           _count: { _all: true },
         }),
+        /*
+         * The department facet's options, answered on this screen's own permission.
+         *
+         * The screen used to read `/api/departments`, which is gated on `staff.departments`. A
+         * supervisor who may decide justifications but not edit the org chart got a 403 there, the
+         * screen swallowed it, and the facet sat empty with nothing saying why.
+         */
+        db().department.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
       ]);
 
       /*
@@ -211,6 +233,7 @@ export async function justificationRoutes(app: FastifyInstance): Promise<void> {
         }),
         total,
         counts: Object.fromEntries(grouped.map((row) => [row.status, row._count._all])),
+        departments,
         generatedAt: new Date().toISOString(),
       });
     },
@@ -291,9 +314,11 @@ export async function justificationRoutes(app: FastifyInstance): Promise<void> {
         email: {
           module: 'justification',
           /*
-           * The decision maps straight onto an event name, and everted is its own template.
+           * The decision maps straight onto an event name, and 
+everted is its own template.
            *
-           * Reusing ejected for it would send somebody a message saying their reason was refused
+           * Reusing 
+ejected for it would send somebody a message saying their reason was refused
            * when what happened is that they were asked to rewrite it.
            */
           event: body.decision === 'approved' ? 'approved' : body.decision === 'rejected' ? 'rejected' : 'reverted',

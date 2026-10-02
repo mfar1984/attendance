@@ -137,8 +137,26 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.get('/api/staff', { preHandler: requirePermission('staff.directory', 'view') }, async (request) => {
-    const query = staffQuerySchema.parse(request.query);
+  /**
+   * The directory list, and the same list for the face enrolment screen.
+   *
+   * Two routes because the screens have two gates. Biometric enrolment is its own permission and
+   * its own sidebar entry, and it read this list through `/api/staff` — gated on the directory —
+   * so a clerk granted enrolment and not the directory opened the screen to "could not load".
+   * The enrolment copy leaves out the login account, which that screen never shows and that clerk
+   * has no business reading.
+   */
+  app.get('/api/staff', { preHandler: requirePermission('staff.directory', 'view') }, (request) =>
+    listStaff(request.query, true),
+  );
+  app.get(
+    '/api/staff/biometrics',
+    { preHandler: requirePermission('staff.biometrics', 'view') },
+    (request) => listStaff(request.query, false),
+  );
+
+  async function listStaff(rawQuery: unknown, withAccount: boolean) {
+    const query = staffQuerySchema.parse(rawQuery);
     const prisma = db();
 
     /**
@@ -236,13 +254,15 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
       total,
       page: query.page,
       pageSize: query.pageSize,
-      rows: rows.map(({ doorPinEncrypted, ...row }) => ({
+      rows: rows.map(({ doorPinEncrypted, account, ...row }) => ({
         ...row,
+        ...(withAccount ? { account } : {}),
         hasDoorPin: doorPinEncrypted !== null,
       })),
       counts: { missingBiometrics, withBiometrics, inactive },
+      generatedAt: new Date().toISOString(),
     });
-  });
+  }
 
   /**
    * Rebuilds attendance for a date range.

@@ -1,15 +1,9 @@
-﻿import {
-  CircleAlert,
-  CircleCheck,
-  Loader2,
-  ScanFace,
-  Trash2,
-  Upload,
-} from 'lucide-react';
+﻿import { CircleAlert, CircleCheck, Loader2, ScanFace, Trash2, TriangleAlert, Upload } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
 import {
+  BoolMark,
   ChipBar,
   Detail,
   DetailGrid,
@@ -25,8 +19,9 @@ import {
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
-import { Button } from '../components/ui';
-import { api, staffApi, type StaffPage, type StaffRow } from '../lib/api';
+import { Badge, Button } from '../components/ui';
+import { api, staffApi, type EnrolmentStaffPage, type EnrolmentStaffRow } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import {
   FACE_LIMITS,
@@ -38,6 +33,8 @@ import {
 } from '../lib/face-image';
 import { lookupsApi, type Lookups } from '../lib/operations-api';
 import { T, useLabels } from '../lib/translation';
+
+const SCREEN = 'staff.biometrics';
 
 interface FaceResult {
   deviceId: number;
@@ -54,9 +51,10 @@ interface FaceResult {
  * assigned to.
  */
 export function BiometricsPage(): ReactNode {
-  const [rows, setRows] = useState<StaffRow[]>([]);
+  const [rows, setRows] = useState<EnrolmentStaffRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [counts, setCounts] = useState<StaffPage['counts'] | null>(null);
+  const [counts, setCounts] = useState<EnrolmentStaffPage['counts'] | null>(null);
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [search, setSearch] = useState('');
@@ -69,8 +67,10 @@ export function BiometricsPage(): ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [open, setOpen] = useState<number | null>(null);
-  const [active, setActive] = useState<StaffRow | null>(null);
+  const [enrolling, setEnrolling] = useState<EnrolmentStaffRow | null>(null);
+  const [removing, setRemoving] = useState<EnrolmentStaffRow | null>(null);
   const { t } = useLabels();
+  const { can } = useAuth();
 
   useEffect(() => {
     void lookupsApi
@@ -82,7 +82,7 @@ export function BiometricsPage(): ReactNode {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await staffApi.list({
+      const result = await staffApi.listForEnrolment({
         page,
         pageSize,
         ...(search.trim() ? { search: search.trim() } : {}),
@@ -98,6 +98,7 @@ export function BiometricsPage(): ReactNode {
       setRows(result.rows);
       setCounts(result.counts);
       setTotal(result.total);
+      setGeneratedAt(result.generatedAt);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('biometrics.error.load'));
@@ -110,6 +111,13 @@ export function BiometricsPage(): ReactNode {
     const timer = setTimeout(() => void load(), 250);
     return () => clearTimeout(timer);
   }, [load]);
+
+  const done = async (message: string): Promise<void> => {
+    setEnrolling(null);
+    setRemoving(null);
+    setNotice(message);
+    await load();
+  };
 
   return (
     <PanelCard title={<T k="biometrics.title" />} subtitle={<T k="biometrics.subtitle" />}>
@@ -197,6 +205,7 @@ export function BiometricsPage(): ReactNode {
       )}
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={rows.length}
         empty={
@@ -206,18 +215,21 @@ export function BiometricsPage(): ReactNode {
           { header: <T k="staff.column.employeeNo" />, width: 'w-28' },
           { header: <T k="staff.column.name" /> },
           { header: <T k="staff.column.department" />, width: 'w-44' },
-          { header: <T k="biometrics.column.face" />, width: 'w-28' },
           { header: <T k="biometrics.column.canScan" />, width: 'w-28' },
-          { header: <T k="panel.column.actions" />, width: 'w-28', align: 'right' },
+          { header: <T k="biometrics.column.face" />, width: 'w-28' },
+          { header: <T k="panel.column.actions" />, width: 'w-32', align: 'right' },
         ]}
       >
         {rows.map((row) => (
           <BiometricRow
             key={row.id}
             row={row}
+            mayEnrol={can(SCREEN, 'create')}
+            mayRemove={can(SCREEN, 'delete')}
             expanded={open === row.id}
             onToggle={() => setOpen(open === row.id ? null : row.id)}
-            onEnrol={() => setActive(row)}
+            onEnrol={() => setEnrolling(row)}
+            onRemove={() => setRemoving(row)}
           />
         ))}
       </RecordTable>
@@ -227,6 +239,7 @@ export function BiometricsPage(): ReactNode {
         total={total}
         page={page}
         pageSize={pageSize}
+        generatedAt={generatedAt}
         loading={loading}
         onPage={setPage}
         onPageSize={(size) => {
@@ -236,16 +249,12 @@ export function BiometricsPage(): ReactNode {
         onRefresh={() => void load()}
       />
 
-      {active !== null && (
-        <FaceDialog
-          staff={active}
-          onClose={() => setActive(null)}
-          onDone={async (message) => {
-            setActive(null);
-            setNotice(message);
-            await load();
-          }}
-        />
+      {enrolling !== null && (
+        <FaceDialog staff={enrolling} onClose={() => setEnrolling(null)} onDone={done} />
+      )}
+
+      {removing !== null && (
+        <RemoveFaceDialog staff={removing} onClose={() => setRemoving(null)} onDone={done} />
       )}
     </PanelCard>
   );
@@ -253,14 +262,20 @@ export function BiometricsPage(): ReactNode {
 
 function BiometricRow({
   row,
+  mayEnrol,
+  mayRemove,
   expanded,
   onToggle,
   onEnrol,
+  onRemove,
 }: {
-  row: StaffRow;
+  row: EnrolmentStaffRow;
+  mayEnrol: boolean;
+  mayRemove: boolean;
   expanded: boolean;
   onToggle: () => void;
   onEnrol: () => void;
+  onRemove: () => void;
 }): ReactNode {
   const { t } = useLabels();
   const canScan = row.numOfFace > 0 || row.numOfFp > 0 || row.numOfCard > 0;
@@ -274,40 +289,41 @@ function BiometricRow({
           !canScan && !expanded && 'bg-rose-50/40',
         )}
       >
-        <td className="px-5 py-2 font-mono text-xs text-slate-600">{row.employeeNo}</td>
-        <td className="px-2 py-2 font-medium text-slate-800">{row.fullName}</td>
-        <td className="px-2 py-2 text-xs text-slate-600">{row.department?.name ?? '—'}</td>
-        <td className="px-2 py-2">
-          <span
-            className={cn(
-              'inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide',
-              row.numOfFace > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800',
-            )}
-          >
-            <span className="uppercase">
-              <T k={row.numOfFace > 0 ? 'biometrics.face.enrolled' : 'biometrics.face.none'} />
-            </span>
-          </span>
+        <td className="px-5 py-2.5 font-mono text-xs text-slate-600">{row.employeeNo}</td>
+        <td className="px-2 py-2.5 font-medium text-slate-800">{row.fullName}</td>
+        <td className="px-2 py-2.5 text-xs text-slate-600">{row.department?.name ?? '—'}</td>
+        <td className="px-2 py-2.5">
+          {/* A mark, named for the column it answers, rather than a "ya" in a column of them. */}
+          <BoolMark
+            value={canScan}
+            label={t(canScan ? 'biometrics.canScan.yes' : 'biometrics.canScan.no')}
+          />
         </td>
-        <td className="px-2 py-2 text-xs">
-          {canScan ? (
-            <span className="text-emerald-700">
-              <T k="biometrics.canScan.yes" />
-            </span>
-          ) : (
-            <span className="font-medium text-rose-700">
-              <T k="biometrics.canScan.no" />
-            </span>
-          )}
+        <td className="px-2 py-2.5">
+          {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
+          <Badge tone={row.numOfFace > 0 ? 'success' : 'warning'} className="uppercase">
+            <T k={row.numOfFace > 0 ? 'biometrics.face.enrolled' : 'biometrics.face.none'} />
+          </Badge>
         </td>
-        <td className="px-2 py-2 pr-4">
+        <td className="px-2 py-2.5 pr-4">
           <RowActions>
-            <RowAction
-              icon={<ScanFace className="size-4" aria-hidden />}
-              label={t(row.numOfFace > 0 ? 'biometrics.row.replace' : 'biometrics.row.enrol')}
-              tone={row.numOfFace > 0 ? 'edit' : 'success'}
-              onClick={onEnrol}
-            />
+            {mayEnrol && (
+              <RowAction
+                icon={<ScanFace className="size-4" aria-hidden />}
+                label={t(row.numOfFace > 0 ? 'biometrics.row.replace' : 'biometrics.row.enrol')}
+                tone={row.numOfFace > 0 ? 'edit' : 'success'}
+                onClick={onEnrol}
+              />
+            )}
+            {/* A row action with its own confirmation, not a button inside the enrol dialog. */}
+            {mayRemove && row.numOfFace > 0 && (
+              <RowAction
+                icon={<Trash2 className="size-4" aria-hidden />}
+                label={t('biometrics.row.remove')}
+                tone="danger"
+                onClick={onRemove}
+              />
+            )}
             <ExpandButton
               expanded={expanded}
               onClick={onToggle}
@@ -391,7 +407,7 @@ function FaceDialog({
   onClose,
   onDone,
 }: {
-  staff: StaffRow;
+  staff: EnrolmentStaffRow;
   onClose: () => void;
   onDone: (message: string) => Promise<void>;
 }): ReactNode {
@@ -471,9 +487,7 @@ function FaceDialog({
 
       const failed = rows.filter((row) => !row.ok);
       if (failed.length === 0) {
-        await onDone(
-          t('biometrics.done.enrolled', { name: staff.fullName, count: rows.length }),
-        );
+        await onDone(t('biometrics.done.enrolled', { name: staff.fullName, count: rows.length }));
       } else {
         // Kept open: the person can scan at some doors and not others, and closing would
         // hide which.
@@ -481,24 +495,6 @@ function FaceDialog({
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('biometrics.error.send'));
-      setBusy(false);
-    }
-  }
-
-  async function removeExisting(): Promise<void> {
-    setBusy(true);
-    try {
-      const payload = await api.delete<{ results: FaceResult[] }>(
-        `/api/staff/${String(staff.id)}/face`,
-      );
-      await onDone(
-        t('biometrics.done.removed', {
-          name: staff.fullName,
-          count: payload.results.filter((row) => row.ok).length,
-        }),
-      );
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('biometrics.error.remove'));
       setBusy(false);
     }
   }
@@ -531,10 +527,6 @@ function FaceDialog({
             <p className="min-w-0 flex-1 text-xs text-slate-600">
               <T k="biometrics.dialog.current" />
             </p>
-            <Button variant="ghost" onClick={() => void removeExisting()} disabled={busy}>
-              <Trash2 className="size-4" aria-hidden />
-              <T k="biometrics.dialog.remove" />
-            </Button>
           </div>
         )}
 
@@ -604,22 +596,36 @@ function FaceDialog({
           </div>
         )}
 
-        {results !== null && (
-          <ul className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
-            {results.map((row) => (
-              <li key={row.deviceId} className="flex items-start gap-2 text-xs">
-                {row.ok ? (
-                  <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-600" aria-hidden />
-                ) : (
-                  <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-rose-500" aria-hidden />
-                )}
-                <span className="min-w-0">
-                  <span className="font-medium text-slate-700">{row.deviceName}</span>
-                  {!row.ok && <span className="ml-1.5 text-rose-700">{row.error}</span>}
-                </span>
-              </li>
-            ))}
-          </ul>
+        {/*
+          The last block before the footer, so it carries the `pb-2`. The sending line sat below
+          the footer, which is sticky — it slid under the bar on any form tall enough to scroll.
+        */}
+        {(results !== null || busy) && (
+          <div className="space-y-3 pb-2">
+            {results !== null && (
+              <ul className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                {results.map((row) => (
+                  <li key={row.deviceId} className="flex items-start gap-2 text-xs">
+                    {row.ok ? (
+                      <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-600" aria-hidden />
+                    ) : (
+                      <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-rose-500" aria-hidden />
+                    )}
+                    <span className="min-w-0">
+                      <span className="font-medium text-slate-700">{row.deviceName}</span>
+                      {!row.ok && <span className="ml-1.5 text-rose-700">{row.error}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {busy && (
+              <p className="flex items-center gap-2 text-xs text-slate-500">
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                <T k="biometrics.dialog.sending" />
+              </p>
+            )}
+          </div>
         )}
 
         <DialogFooter
@@ -632,13 +638,84 @@ function FaceDialog({
             <T k={busy ? 'biometrics.dialog.submit.pending' : 'biometrics.dialog.submit'} />
           }
         />
+      </div>
+    </Dialog>
+  );
+}
 
-        {busy && (
-          <p className="flex items-center gap-2 text-xs text-slate-500">
-            <Loader2 className="size-3.5 animate-spin" aria-hidden />
-            <T k="biometrics.dialog.sending" />
-          </p>
-        )}
+/**
+ * Takes a face off every terminal, after saying what that leaves the person with.
+ *
+ * It used to be a button inside the enrol dialog that removed the face the moment it was pressed —
+ * one click, no confirmation, for the step that can leave somebody unable to scan at all.
+ */
+function RemoveFaceDialog({
+  staff,
+  onClose,
+  onDone,
+}: {
+  staff: EnrolmentStaffRow;
+  onClose: () => void;
+  onDone: (message: string) => Promise<void>;
+}): ReactNode {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { t } = useLabels();
+  // Face, fingerprint and card are what the terminal can match on; the PIN only opens a door.
+  const otherCredentials = staff.numOfFp > 0 || staff.numOfCard > 0;
+
+  async function submit(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      const payload = await api.delete<{ results: FaceResult[] }>(
+        `/api/staff/${String(staff.id)}/face`,
+      );
+      await onDone(
+        t('biometrics.done.removed', {
+          name: staff.fullName,
+          count: payload.results.filter((row) => row.ok).length,
+        }),
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('biometrics.error.remove'));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      title={<T k="biometrics.remove.title" vars={{ name: staff.fullName }} />}
+      titleText={t('biometrics.remove.title', { name: staff.fullName })}
+      description={<T k="biometrics.remove.description" />}
+      width="md"
+      onClose={onClose}
+    >
+      <div className="space-y-4">
+        <Feedback error={error} />
+
+        {/* The last block before the footer, so it carries the `pb-2`. */}
+        <div className="pb-2">
+          <PanelNote
+            tone={otherCredentials ? 'warn' : 'danger'}
+            icon={<TriangleAlert className="size-3.5" aria-hidden />}
+          >
+            <T
+              k={
+                otherCredentials
+                  ? 'biometrics.remove.otherCredentials'
+                  : 'biometrics.remove.lastCredential'
+              }
+            />
+          </PanelNote>
+        </div>
+
+        <DialogFooter
+          onClose={onClose}
+          onSubmit={() => void submit()}
+          busy={busy}
+          submitLabel={<T k="biometrics.dialog.remove" />}
+        />
       </div>
     </Dialog>
   );

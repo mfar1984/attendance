@@ -1,4 +1,4 @@
-﻿import {
+import {
   Eye,
   Fingerprint,
   IdCard,
@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
-import { Dialog, Feedback } from '../components/Dialog';
+import { Feedback } from '../components/Dialog';
 import {
   ChipBar,
   FacetSelect,
@@ -21,18 +21,22 @@ import {
   PanelBody,
   PanelCard,
   PanelFooter,
-  PanelNote,
   PanelSection,
   RecordTable,
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
+import { StaffDeactivateDialog } from '../components/StaffDeactivateDialog';
 import { StaffFormDialog } from '../components/StaffFormDialog';
-import { Button } from '../components/ui';
+import { Badge, Button } from '../components/ui';
 import { staffApi, type StaffPage, type StaffRow } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import { lookupsApi, type Lookups } from '../lib/operations-api';
-import { T, useLabels } from '../lib/translation';
+import { USER_STATUS_LABELS } from '../lib/settings-api';
+import { T, TEnum, useLabels } from '../lib/translation';
+
+const SCREEN = 'staff.directory';
 
 /**
  * Staff directory.
@@ -54,9 +58,13 @@ export function StaffDirectoryPage(): ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [counts, setCounts] = useState<StaffPage['counts'] | null>(null);
-  const [editing, setEditing] = useState<{ id: number | null } | null>(null);
-  const [confirming, setConfirming] = useState<StaffRow | null>(null);
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ id: number | null; reactivate?: boolean } | null>(
+    null,
+  );
+  const [deactivating, setDeactivating] = useState<StaffRow | null>(null);
   const { t } = useLabels();
+  const { can } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -81,6 +89,7 @@ export function StaffDirectoryPage(): ReactNode {
       setRows(result.rows);
       setTotal(result.total);
       setCounts(result.counts);
+      setGeneratedAt(new Date().toISOString());
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('staff.error.load'));
@@ -94,32 +103,6 @@ export function StaffDirectoryPage(): ReactNode {
     return () => clearTimeout(timer);
   }, [load]);
 
-  async function deactivate(staff: StaffRow): Promise<void> {
-    setConfirming(null);
-    setError(null);
-    try {
-      const result = await staffApi.deactivate(staff.id);
-      const failed = result.removal.filter((row) => !row.ok);
-      setNotice(
-        failed.length === 0
-          ? t('staff.deactivate.done', {
-              name: staff.fullName,
-              count: result.removal.length,
-            })
-          : t('staff.deactivate.partial', {
-              name: staff.fullName,
-              count: failed.length,
-              devices: failed.map((row) => row.deviceName).join(', '),
-            }),
-      );
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('staff.deactivate.error'));
-    }
-  }
-
-
-
   return (
     <PanelCard title={<T k="staff.title" />} subtitle={<T k="staff.subtitle" />}>
       <PanelSection
@@ -128,10 +111,12 @@ export function StaffDirectoryPage(): ReactNode {
         }
         subtitle={<T k="staff.section.subtitle" />}
         action={
-          <Button onClick={() => setEditing({ id: null })}>
-            <Plus className="size-4" aria-hidden />
-            <T k="staff.add" />
-          </Button>
+          can(SCREEN, 'create') ? (
+            <Button onClick={() => setEditing({ id: null })}>
+              <Plus className="size-4" aria-hidden />
+              <T k="staff.add" />
+            </Button>
+          ) : undefined
         }
       />
 
@@ -221,6 +206,7 @@ export function StaffDirectoryPage(): ReactNode {
       )}
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={rows.length}
         empty={<T k="staff.empty" />}
@@ -239,9 +225,12 @@ export function StaffDirectoryPage(): ReactNode {
           <StaffRowView
             key={row.id}
             row={row}
+            mayEdit={can(SCREEN, 'edit')}
+            mayDeactivate={can(SCREEN, 'delete')}
             onOpen={() => void navigate(`/staf/${String(row.id)}`)}
             onEdit={() => setEditing({ id: row.id })}
-            onDeactivate={() => setConfirming(row)}
+            onReactivate={() => setEditing({ id: row.id, reactivate: true })}
+            onDeactivate={() => setDeactivating(row)}
           />
         ))}
       </RecordTable>
@@ -251,6 +240,7 @@ export function StaffDirectoryPage(): ReactNode {
         total={total}
         page={page}
         pageSize={pageSize}
+        generatedAt={generatedAt}
         loading={loading}
         onPage={setPage}
         onPageSize={(size) => {
@@ -264,6 +254,7 @@ export function StaffDirectoryPage(): ReactNode {
         <StaffFormDialog
           staffId={editing.id}
           lookups={lookups}
+          reactivate={editing.reactivate === true}
           onClose={() => setEditing(null)}
           onSaved={async (message) => {
             setEditing(null);
@@ -273,41 +264,16 @@ export function StaffDirectoryPage(): ReactNode {
         />
       )}
 
-      {confirming !== null && (
-        <Dialog
-          title={<T k="staff.deactivate.title" vars={{ name: confirming.fullName }} />}
-          titleText={t('staff.deactivate.title', { name: confirming.fullName })}
-          onClose={() => setConfirming(null)}
-        >
-          <div className="space-y-3">
-            <p className="text-sm text-slate-700">
-              <T k="staff.deactivate.body" />
-            </p>
-            <PanelNote tone="success">
-              <T
-                k="staff.deactivate.note"
-                vars={{
-                  emphasis: (
-                    <strong>
-                      <T k="staff.deactivate.kept" />
-                    </strong>
-                  ),
-                }}
-              />
-            </PanelNote>
-            <div className="flex justify-end gap-2 border-t border-slate-200 pt-3">
-              <Button variant="ghost" onClick={() => setConfirming(null)}>
-                <T k="dialog.cancel" />
-              </Button>
-              <Button
-                onClick={() => void deactivate(confirming)}
-                className="bg-rose-600 hover:bg-rose-500"
-              >
-                <T k="staff.deactivate.submit" />
-              </Button>
-            </div>
-          </div>
-        </Dialog>
+      {deactivating !== null && (
+        <StaffDeactivateDialog
+          target={deactivating}
+          onClose={() => setDeactivating(null)}
+          onDone={async (message) => {
+            setDeactivating(null);
+            setNotice(message);
+            await load();
+          }}
+        />
       )}
     </PanelCard>
   );
@@ -315,13 +281,19 @@ export function StaffDirectoryPage(): ReactNode {
 
 function StaffRowView({
   row,
+  mayEdit,
+  mayDeactivate,
   onOpen,
   onEdit,
+  onReactivate,
   onDeactivate,
 }: {
   row: StaffRow;
+  mayEdit: boolean;
+  mayDeactivate: boolean;
   onOpen: () => void;
   onEdit: () => void;
+  onReactivate: () => void;
   onDeactivate: () => void;
 }): ReactNode {
   const { t } = useLabels();
@@ -336,83 +308,83 @@ function StaffRowView({
         !row.active && 'bg-slate-50/60',
       )}
     >
-        <td className="px-5 py-2 font-mono text-xs text-slate-600">{row.employeeNo}</td>
-        <td className="px-2 py-2">
-          <span className={cn('font-medium', row.active ? 'text-slate-800' : 'text-slate-400')}>
-            {row.fullName}
+      <td className="px-5 py-2.5 font-mono text-xs text-slate-600">{row.employeeNo}</td>
+      <td className="px-2 py-2.5">
+        <span className={cn('font-medium', row.active ? 'text-slate-800' : 'text-slate-400')}>
+          {row.fullName}
+        </span>
+      </td>
+      <td className="px-2 py-2.5 text-xs text-slate-600">{row.department?.name ?? '—'}</td>
+      <td className="px-2 py-2.5 text-xs text-slate-600">{row.location?.name ?? '—'}</td>
+      <td className="px-2 py-2.5">
+        <span className="inline-flex items-center gap-1.5">
+          <ScanFace
+            className={cn('size-3.5', row.numOfFace > 0 ? 'text-emerald-600' : 'text-slate-300')}
+            aria-label={t(
+              row.numOfFace > 0 ? 'staff.biometric.face.present' : 'staff.biometric.face.absent',
+            )}
+          />
+          <Fingerprint
+            className={cn('size-3.5', row.numOfFp > 0 ? 'text-emerald-600' : 'text-slate-300')}
+            aria-label={t(
+              row.numOfFp > 0
+                ? 'staff.biometric.fingerprint.present'
+                : 'staff.biometric.fingerprint.absent',
+            )}
+          />
+          <IdCard
+            className={cn('size-3.5', row.numOfCard > 0 ? 'text-emerald-600' : 'text-slate-300')}
+            aria-label={t(
+              row.numOfCard > 0 ? 'staff.biometric.card.present' : 'staff.biometric.card.absent',
+            )}
+          />
+          {/*
+            The fourth credential. It was the only one of the four with no indicator, so a
+            staff member with a PIN read as having nothing — which is what made the column
+            disagree with the terminal's own screen.
+          */}
+          <KeyRound
+            className={cn('size-3.5', row.hasDoorPin ? 'text-emerald-600' : 'text-slate-300')}
+            aria-label={t(
+              row.hasDoorPin ? 'staff.biometric.pin.present' : 'staff.biometric.pin.absent',
+            )}
+          />
+        </span>
+      </td>
+      <td className="px-2 py-2.5 text-xs">
+        {row.account === null ? (
+          <span className="text-slate-400">
+            <T k="staff.row.noAccount" />
           </span>
-        </td>
-        <td className="px-2 py-2 text-xs text-slate-600">{row.department?.name ?? '—'}</td>
-        <td className="px-2 py-2 text-xs text-slate-600">{row.location?.name ?? '—'}</td>
-        <td className="px-2 py-2">
-          <span className="inline-flex items-center gap-1.5">
-            <ScanFace
-              className={cn('size-3.5', row.numOfFace > 0 ? 'text-emerald-600' : 'text-slate-300')}
-              aria-label={t(
-                row.numOfFace > 0
-                  ? 'staff.biometric.face.present'
-                  : 'staff.biometric.face.absent',
-              )}
-            />
-            <Fingerprint
-              className={cn('size-3.5', row.numOfFp > 0 ? 'text-emerald-600' : 'text-slate-300')}
-              aria-label={t(
-                row.numOfFp > 0
-                  ? 'staff.biometric.fingerprint.present'
-                  : 'staff.biometric.fingerprint.absent',
-              )}
-            />
-            <IdCard
-              className={cn('size-3.5', row.numOfCard > 0 ? 'text-emerald-600' : 'text-slate-300')}
-              aria-label={t(
-                row.numOfCard > 0
-                  ? 'staff.biometric.card.present'
-                  : 'staff.biometric.card.absent',
-              )}
-            />
-            {/*
-              The fourth credential. It was the only one of the four with no indicator, so a
-              staff member with a PIN read as having nothing — which is what made the column
-              disagree with the terminal's own screen.
-            */}
-            <KeyRound
-              className={cn('size-3.5', row.hasDoorPin ? 'text-emerald-600' : 'text-slate-300')}
-              aria-label={t(
-                row.hasDoorPin ? 'staff.biometric.pin.present' : 'staff.biometric.pin.absent',
-              )}
-            />
+        ) : row.account.status === 'active' ? (
+          <span className="block truncate text-slate-600" title={row.account.email}>
+            {row.account.email}
           </span>
-        </td>
-        <td className="px-2 py-2 text-xs">
-          {row.account === null ? (
-            <span className="text-slate-400">
-              <T k="staff.row.noAccount" />
-            </span>
-          ) : (
-            <span className="block truncate text-slate-600" title={row.account.email}>
-              {row.account.status === 'active' ? row.account.email : row.account.status}
-            </span>
-          )}
-        </td>
-        <td className="px-2 py-2">
-          {/* Uppercased in CSS: a translated word cannot be upper-cased safely in every
-              language. */}
-          {!row.active ? (
-            <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-600 uppercase">
-              <T k="app.status.inactive" />
-            </span>
-          ) : blocked ? (
-            <span className="inline-flex items-center gap-1 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-rose-700 uppercase">
-              <TriangleAlert className="size-3" aria-hidden />
-              <T k="staff.status.cannotScan" />
-            </span>
-          ) : (
-            <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-700 uppercase">
-              <T k="app.status.active" />
-            </span>
-          )}
-        </td>
-      <td className="px-2 py-2 pr-4">
+        ) : (
+          // The account's state as words. The stored value (`suspended`) used to print here.
+          <span className="text-amber-700" title={row.account.email}>
+            <TEnum k={USER_STATUS_LABELS[row.account.status]} fallback={row.account.status} />
+          </span>
+        )}
+      </td>
+      <td className="px-2 py-2.5">
+        {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
+        {!row.active ? (
+          <Badge tone="neutral" className="uppercase">
+            <T k="app.status.inactive" />
+          </Badge>
+        ) : blocked ? (
+          <Badge tone="danger" className="uppercase">
+            <TriangleAlert className="size-3" aria-hidden />
+            <T k="staff.status.cannotScan" />
+          </Badge>
+        ) : (
+          <Badge tone="success" className="uppercase">
+            <T k="app.status.active" />
+          </Badge>
+        )}
+      </td>
+      <td className="px-2 py-2.5 pr-4">
         <RowActions>
           {/*
             Opens the detail page rather than expanding in place. The expanded row could only
@@ -427,29 +399,34 @@ function StaffRowView({
             tone="view"
             onClick={onOpen}
           />
-          <RowAction
-            icon={<Pencil className="size-4" aria-hidden />}
-            label={t('staff.row.edit')}
-            tone="edit"
-            onClick={onEdit}
-          />
-          {row.active ? (
+          {mayEdit && (
             <RowAction
-              icon={<UserX className="size-4" aria-hidden />}
-              label={t('staff.row.deactivate')}
-              tone="danger"
-              onClick={onDeactivate}
-            />
-          ) : (
-            <RowAction
-              icon={<UserCheck className="size-4" aria-hidden />}
-              label={t('staff.row.reactivate')}
-              tone="success"
+              icon={<Pencil className="size-4" aria-hidden />}
+              label={t('staff.row.edit')}
+              tone="edit"
               onClick={onEdit}
             />
           )}
+          {row.active
+            ? mayDeactivate && (
+                <RowAction
+                  icon={<UserX className="size-4" aria-hidden />}
+                  label={t('staff.row.deactivate')}
+                  tone="danger"
+                  onClick={onDeactivate}
+                />
+              )
+            : mayEdit && (
+                <RowAction
+                  icon={<UserCheck className="size-4" aria-hidden />}
+                  label={t('staff.row.reactivate')}
+                  tone="success"
+                  onClick={onReactivate}
+                />
+              )}
         </RowActions>
       </td>
     </tr>
   );
 }
+

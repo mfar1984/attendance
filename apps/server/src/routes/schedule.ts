@@ -3,13 +3,15 @@ import { normaliseStateCode, parseStateCodes } from '@attendance/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import { recomputeRange } from '../attendance/engine.js';
 import { requirePermission } from '../auth/plugin.js';
 import { db, jsonSafe } from '../db.js';
 import { conflict, forUpdate, notFound, parseBody } from '../http.js';
 import { loadEnv } from '../env.js';
 import { recordActivity } from '../logging/activity.js';
 import { gazettedHolidays } from '../schedule/gazette.js';
-import { asDateOnly } from '../time.js';
+import { asDateOnly, dateOnlyKey, zonedDateOnly } from '../time.js';
+import { LEAVE_NOTE_PREFIX } from './leave.js';
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -183,6 +185,30 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
     );
   });
 
+  /**
+   * The patterns a shift can point at, answered on the shifts screen's own grant.
+   *
+   * The shift form read `/api/work-patterns`, which is the pattern screen's list. Somebody allowed
+   * to maintain shifts but not patterns got a 403 on the whole tab, and with an empty list the
+   * screen told them to create a pattern first — something they had no way to do.
+   */
+  app.get(
+    '/api/shifts/work-patterns',
+    { preHandler: requirePermission('schedule.shifts', 'view') },
+    async () => {
+      const rows = await db().workPattern.findMany({
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          active: true,
+          timeBlocks: { orderBy: { blockOrder: 'asc' } },
+        },
+      });
+      return jsonSafe(rows);
+    },
+  );
+
   app.post('/api/shifts', { preHandler: requirePermission('schedule.shifts', 'create') }, async (request) => {
     const body = parseBody(shiftSchema, request.body);
 
@@ -326,6 +352,26 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
+   * The shifts the calendar paints and assigns, answered on the calendar's own grant.
+   *
+   * The calendar read `/api/shifts`, the shift screen's list. A clerk allowed to roster but not to
+   * maintain shifts got nothing back, so every worked day rendered as a bare letter and the
+   * selection bar offered no shift to assign. Inactive shifts are included because days already
+   * carry them; the screen offers only the active ones for new days.
+   */
+  app.get(
+    '/api/roster/shifts',
+    { preHandler: requirePermission('schedule.roster', 'view') },
+    async () => {
+      const rows = await db().shift.findMany({
+        orderBy: { code: 'asc' },
+        select: { id: true, code: true, name: true, colour: true, active: true },
+      });
+      return jsonSafe(rows);
+    },
+  );
+
+  /**
    * Assigns roster entries in bulk.
    *
    * Upserted per staff and date, because a roster is edited repeatedly as a month
@@ -345,14 +391,45 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
 
     // A working day without a shift has nothing to measure attendance against.
     if (body.entryType === 'work' && body.shiftId === null) {
-      throw conflict('Hari kerja memerlukan shift. Pilih shift atau tukar jenis ke rehat/cuti.');
+      throw conflict('Hari kerja memerlukan shift. Pilih shift atau tukar jenis ke rehat.');
     }
 
+    /*
+     * Leave is filed, not painted.
+     *
+     * A leave day written here debits no balance and passes no approval, yet the monthly report
+     * counts it as leave — so the leave the report shows and the leave the balances were charged
+     * for stop agreeing, and that is the figure payroll reads. An approved request writes these
+     * rows itself.
+     */
+    if (body.entryType === 'leave') {
+      throw conflict(
+        'Cuti tidak ditanda pada kalendar. Failkan melalui Permohonan Cuti supaya baki dicaj dan kelulusan direkodkan.',
+      );
+    }
+
+    if (body.shiftId !== null) {
+      const shift = await db().shift.findUnique({
+        where: { id: body.shiftId },
+        select: { active: true },
+      });
+      if (!shift) throw notFound('Shift tidak dijumpai');
+      // Kept on the days that already carry it; not handed out for new ones.
+      if (!shift.active) throw conflict('Shift ini tidak aktif dan tidak boleh dijadualkan.');
+    }
+
+    const workDates = body.dates.map(asDateOnly);
+    const held = await leaveHeldDays(body.staffIds, workDates);
+
     let written = 0;
+    let kept = 0;
 
     for (const staffId of body.staffIds) {
-      for (const date of body.dates) {
-        const workDate = asDateOnly(date);
+      for (const workDate of workDates) {
+        if (held.has(`${String(staffId)}:${dateOnlyKey(workDate)}`)) {
+          kept += 1;
+          continue;
+        }
         await db().rosterEntry.upsert({
           where: { staffId_workDate: { staffId, workDate } },
           create: {
@@ -372,7 +449,8 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    return jsonSafe({ written });
+    const recomputed = await recomputeRoster(body.staffIds, workDates, written);
+    return jsonSafe({ written, kept, recomputed });
   });
 
   app.delete(
@@ -387,14 +465,30 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
         request.body,
       );
 
-      const removed = await db().rosterEntry.deleteMany({
-        where: {
-          staffId: { in: body.staffIds },
-          workDate: { in: body.dates.map(asDateOnly) },
-        },
-      });
+      const workDates = body.dates.map(asDateOnly);
+      const held = await leaveHeldDays(body.staffIds, workDates);
 
-      return jsonSafe({ removed: removed.count });
+      /*
+       * The days an approved request wrote are left alone, as on assignment. Clearing one would
+       * leave the request approved and its balance charged with nothing on the calendar — the
+       * cancellation on the request is what takes them off.
+       */
+      const candidates = await db().rosterEntry.findMany({
+        where: { staffId: { in: body.staffIds }, workDate: { in: workDates } },
+        select: { id: true, staffId: true, workDate: true },
+      });
+      // By id rather than a negated filter: `NOT (… AND notes LIKE …)` is NULL for a row with no
+      // note, and SQL would quietly keep it.
+      const ids = candidates
+        .filter((row) => !held.has(`${String(row.staffId)}:${dateOnlyKey(row.workDate)}`))
+        .map((row) => row.id);
+      const removed =
+        ids.length === 0
+          ? { count: 0 }
+          : await db().rosterEntry.deleteMany({ where: { id: { in: ids } } });
+
+      const recomputed = await recomputeRoster(body.staffIds, workDates, removed.count);
+      return jsonSafe({ removed: removed.count, kept: held.size, recomputed });
     },
   );
 
@@ -462,7 +556,18 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
      */
     const byDate = new Map<
       string,
-      { id: number; name: string; date: Date; states: string[]; companyDeclared: boolean }
+      {
+        id: number;
+        /**
+         * Every row the line stands for. Removing the line removes all of them: deleting only `id`
+         * took one state's row away and left the day on the list, so "remove" appeared to do nothing.
+         */
+        ids: number[];
+        name: string;
+        date: Date;
+        states: string[];
+        companyDeclared: boolean;
+      }
     >();
 
     for (const row of visible) {
@@ -471,6 +576,7 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
       const code = row.stateCode === null ? null : normaliseStateCode(row.stateCode);
 
       if (found) {
+        found.ids.push(row.id);
         if (code !== null && !found.states.includes(code)) found.states.push(code);
         // A company-declared day anywhere on this date marks the whole line as the organisation's.
         if (row.companyDeclared) found.companyDeclared = true;
@@ -479,6 +585,7 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
 
       byDate.set(key, {
         id: row.id,
+        ids: [row.id],
         name: row.name,
         date: row.date,
         states: code === null ? [] : [code],
@@ -501,6 +608,7 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
       rows: grouped,
       /** Days held back entirely, counted after grouping so it matches what the screen shows. */
       hidden: new Set(rows.map((row) => row.date.toISOString().slice(0, 10))).size - grouped.length,
+      generatedAt: new Date().toISOString(),
     });
   });
 
@@ -613,7 +721,17 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
     );
 
     const date = asDateOnly(body.date);
-    const stateCode = body.stateCode && body.stateCode.length > 0 ? body.stateCode : null;
+
+    /*
+     * Stored as the canonical letter code. The holiday screen sent its own uppercase list (`SWK`),
+     * and an unrecognised code was stored as it came — a day for a state the office filter could
+     * never match, so it counted as a holiday for everyone while the list hid it.
+     */
+    let stateCode: string | null = null;
+    if (body.stateCode && body.stateCode.length > 0) {
+      stateCode = normaliseStateCode(body.stateCode);
+      if (stateCode === null) throw conflict(`Negeri "${body.stateCode}" tidak dikenali`);
+    }
 
     const clash = await db().holiday.findFirst({ where: { date, stateCode } });
     if (clash) throw conflict(`Cuti pada tarikh ini sudah ada: ${clash.name}`);
@@ -622,7 +740,7 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
       data: { name: body.name, date, stateCode, companyDeclared: body.companyDeclared },
     });
 
-    return jsonSafe({ id: row.id });
+    return jsonSafe({ id: row.id, recomputeNeeded: alreadyComputed(date) });
   });
 
   app.delete(
@@ -633,6 +751,49 @@ export async function scheduleRoutes(app: FastifyInstance): Promise<void> {
       return { ok: true };
     },
   );
+
+  /**
+   * Removes one line of the holiday list: every row it stands for.
+   *
+   * A day observed in four states is four rows shown as one line, and the line is what somebody
+   * removes. One statement, so the line is never left half-removed with fewer states on it.
+   */
+  app.delete(
+    '/api/holidays',
+    { preHandler: requirePermission('schedule.holidays', 'delete') },
+    async (request) => {
+      const body = parseBody(
+        z.object({ ids: z.array(z.number().int().positive()).min(1).max(64) }),
+        request.body,
+      );
+
+      const rows = await db().holiday.findMany({
+        where: { id: { in: body.ids } },
+        select: { id: true, date: true },
+      });
+      if (rows.length === 0) throw notFound('Cuti tidak dijumpai');
+
+      const removed = await db().holiday.deleteMany({
+        where: { id: { in: rows.map((row) => row.id) } },
+      });
+
+      return jsonSafe({
+        removed: removed.count,
+        recomputeNeeded: rows.some((row) => alreadyComputed(row.date)),
+      });
+    },
+  );
+
+  /**
+   * Whether attendance already exists for a calendar date, so a holiday change there needs a recompute.
+   *
+   * The engine never computes a day that has not happened, so a change to a future holiday is picked
+   * up on its own. Telling somebody to recompute after adding next year's holidays is an instruction
+   * that does nothing, and it teaches them to ignore the one that matters.
+   */
+  function alreadyComputed(date: Date): boolean {
+    return asDateOnly(date).getTime() <= zonedDateOnly(new Date(), env.ORG_TIMEZONE).getTime();
+  }
 }
 
 /** Scheduled length of a block, accounting for a midnight crossing. */
@@ -682,4 +843,43 @@ function idParam(params: unknown): number {
   const parsed = z.object({ id: z.coerce.number().int().positive() }).safeParse(params);
   if (!parsed.success) throw notFound('Rekod tidak dijumpai');
   return parsed.data.id;
+}
+
+/**
+ * The asked-for days that an approved leave request wrote, as `staffId:YYYY-MM-DD`.
+ *
+ * Read by both calendar writes so neither can overwrite or clear them. Matched on the note the
+ * request writes rather than on `entryType` alone: a leave day painted on the calendar before this
+ * guard existed has no request behind it, and stays editable so it can be corrected.
+ */
+async function leaveHeldDays(staffIds: number[], workDates: Date[]): Promise<Set<string>> {
+  const rows = await db().rosterEntry.findMany({
+    where: {
+      staffId: { in: staffIds },
+      workDate: { in: workDates },
+      entryType: 'leave',
+      notes: { startsWith: LEAVE_NOTE_PREFIX },
+    },
+    select: { staffId: true, workDate: true },
+  });
+  return new Set(rows.map((row) => `${String(row.staffId)}:${dateOnlyKey(row.workDate)}`));
+}
+
+/**
+ * Rebuilds attendance for the days a calendar write touched.
+ *
+ * The calendar used to save and then tell the operator to run a recompute — a button gated on the
+ * maintenance screen, which most people who edit a roster do not hold. Until somebody did, the
+ * records kept measuring against the old shifts. The engine clamps to today, so future days cost
+ * nothing.
+ */
+async function recomputeRoster(
+  staffIds: number[],
+  workDates: Date[],
+  changed: number,
+): Promise<number> {
+  if (changed === 0 || staffIds.length === 0 || workDates.length === 0) return 0;
+  const sorted = [...workDates].sort((left, right) => left.getTime() - right.getTime());
+  const summary = await recomputeRange(sorted[0]!, sorted[sorted.length - 1]!, staffIds);
+  return summary.recordsWritten;
 }

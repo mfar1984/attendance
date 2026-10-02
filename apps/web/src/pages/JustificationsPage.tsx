@@ -1,11 +1,14 @@
-import { CircleAlert, Eye, MessageSquareWarning, TriangleAlert } from 'lucide-react';
+import type { LabelKey } from '@attendance/shared';
+import { CircleCheck, CircleX, TriangleAlert, Undo2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
 import {
   ChipBar,
+  DateBox,
   Detail,
   DetailGrid,
+  ExpandButton,
   FacetSelect,
   FilterRow,
   PanelBody,
@@ -17,10 +20,10 @@ import {
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
-import { Button, Field } from '../components/ui';
+import { Badge, TextArea } from '../components/ui';
 import { useAuth } from '../lib/auth';
-import { formatDate, formatDateOnly } from '../lib/operations-api';
-import { api } from '../lib/api';
+import { cn } from '../lib/cn';
+import { formatDate, formatDateOnly, formatDateTime } from '../lib/operations-api';
 import {
   JUSTIFICATION_STATUS_LABELS,
   JUSTIFICATION_STATUS_ORDER,
@@ -39,6 +42,13 @@ import { T, useLabels } from '../lib/translation';
 
 const SCREEN = 'attendance.justifications';
 
+const STATUS_DOT: Record<JustificationStatus, string> = {
+  pending: 'bg-amber-500',
+  reverted: 'bg-sky-500',
+  approved: 'bg-emerald-500',
+  rejected: 'bg-rose-500',
+};
+
 /**
  * Deciding the explanations staff have filed for their own attendance.
  *
@@ -47,41 +57,45 @@ const SCREEN = 'attendance.justifications';
  * corrects data. This is the four states the engine resolved with confidence and that somebody wants
  * to account for; deciding one changes no attendance figure anywhere.
  *
- * One screen for both would ask the same person to decide "this terminal's clock drifted by eight
- * minutes" and "Siti was late because her child was ill" through the same form.
+ * Laid out as the leave queue is: pending by default, one row action per decision, the detail in the
+ * row's own expansion. It used to open every row in a dialog that held all three decisions at once,
+ * with a footer of its own that sat a step wider than the panel.
  */
 export function JustificationsPage(): ReactNode {
   const [data, setData] = useState<QueuePage | null>(null);
-  // Shaped locally: the departments endpoint returns more than a facet needs, and OrgPage holds
-  // the full type. A facet only ever reads an id and a name.
-  const [departments, setDepartments] = useState<Array<{ id: number; name: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const [search, setSearch] = useState('');
+  const [debounced, setDebounced] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  // The range the server chose on the first read, so Reset can return to it and `dirty` can tell.
+  const [defaultRange, setDefaultRange] = useState<{ from: string; to: string } | null>(null);
   const [departmentId, setDepartmentId] = useState('');
   const [kind, setKind] = useState('');
-  const [status, setStatus] = useState<string | undefined>(undefined);
+  const [status, setStatus] = useState<string | undefined>('pending');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(30);
+  const [open, setOpen] = useState<number | null>(null);
 
-  const [target, setTarget] = useState<QueueRow | null>(null);
+  const [deciding, setDeciding] = useState<{
+    row: QueueRow;
+    decision: JustificationDecision;
+  } | null>(null);
   const { t } = useLabels();
   const { can } = useAuth();
 
   const mayApprove = can(SCREEN, 'approve');
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setDepartments(await api.get<Array<{ id: number; name: string }>>('/api/departments'));
-      } catch {
-        // The department facet falls back to all departments, which is the default anyway.
-      }
-    })();
-  }, []);
+    const timer = setTimeout(() => {
+      setDebounced(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -90,6 +104,7 @@ export function JustificationsPage(): ReactNode {
         dari: from || undefined,
         hingga: to || undefined,
         departmentId: departmentId === '' ? undefined : Number(departmentId),
+        search: debounced === '' ? undefined : debounced,
         status: status as JustificationStatus | undefined,
         jenis: kind === '' ? undefined : (kind as (typeof KIND_ORDER)[number]),
         page,
@@ -99,10 +114,10 @@ export function JustificationsPage(): ReactNode {
       /*
        * The pickers are seeded from the range the server read, not from a default computed here.
        *
-       * Only on the first load, while they are still blank — after that they are what the operator
-       * chose, and overwriting them would fight the person typing. Doing it this way also removed a
-       * back-office screen's dependency on `/api/saya/tetapan`, which was the wrong way round.
+       * Only while they are blank — after that they are what the operator chose, and overwriting
+       * them would fight the person typing.
        */
+      setDefaultRange((current) => current ?? { from: result.from, to: result.to });
       setFrom((current) => (current === '' ? result.from : current));
       setTo((current) => (current === '' ? result.to : current));
       setError(null);
@@ -111,19 +126,18 @@ export function JustificationsPage(): ReactNode {
     } finally {
       setLoading(false);
     }
-  }, [from, to, departmentId, status, kind, page, pageSize, t]);
+  }, [from, to, departmentId, debounced, status, kind, page, pageSize, t]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const rows = data?.rows ?? [];
+  const pending = data?.counts.pending ?? 0;
 
   /*
-   * Chip counts come from the server's tally with the status filter removed.
-   *
-   * Choosing one chip must not zero the others: the remaining chips would read as "there are none of
-   * those" when what happened is that the list is filtered.
+   * Chip counts come from the server's tally with the status filter removed, so choosing one chip
+   * does not zero the others.
    */
   const chips = useMemo(
     () =>
@@ -131,35 +145,49 @@ export function JustificationsPage(): ReactNode {
         id: value,
         label: <T k={JUSTIFICATION_STATUS_LABELS[value]} />,
         count: data?.counts[value] ?? 0,
-        dot:
-          value === 'approved'
-            ? 'bg-emerald-500'
-            : value === 'rejected'
-              ? 'bg-rose-500'
-              : value === 'reverted'
-                ? 'bg-amber-500'
-                : 'bg-slate-400',
+        dot: STATUS_DOT[value],
       })),
     [data],
   );
 
-  const dirty = departmentId !== '' || kind !== '' || status !== undefined;
+  const dirty =
+    search.length > 0 ||
+    departmentId !== '' ||
+    kind !== '' ||
+    status !== 'pending' ||
+    (defaultRange !== null && (from !== defaultRange.from || to !== defaultRange.to));
 
   return (
     <PanelCard title={<T k="justify.title" />} subtitle={<T k="justify.subtitle" />}>
       <PanelSection
-        icon={<MessageSquareWarning className="size-4" aria-hidden />}
-        title={<T k="justify.title" />}
+        title={
+          pending === 0 ? <T k="hr.queue.none" /> : <T k="hr.queue.pending" vars={{ count: pending }} />
+        }
+        subtitle={<T k="justify.note.noChain" />}
       />
 
-      <ChipBar chips={chips} active={status} onChange={setStatus} />
+      <ChipBar
+        chips={chips}
+        active={status}
+        onChange={(id) => {
+          setStatus(id);
+          setPage(1);
+        }}
+      />
 
       <FilterRow
+        search={search}
+        onSearch={setSearch}
+        placeholder={t('justify.search')}
         dirty={dirty}
         onReset={() => {
+          setSearch('');
           setDepartmentId('');
           setKind('');
-          setStatus(undefined);
+          setStatus('pending');
+          // Blank, so the next read answers the server's own default range and re-seeds them.
+          setFrom('');
+          setTo('');
           setPage(1);
         }}
       >
@@ -170,7 +198,7 @@ export function JustificationsPage(): ReactNode {
             setDepartmentId(value);
             setPage(1);
           }}
-          options={departments.map((row) => ({ value: String(row.id), label: row.name }))}
+          options={(data?.departments ?? []).map((row) => ({ value: String(row.id), label: row.name }))}
         />
         <FacetSelect
           label={t('justify.filter.kind')}
@@ -181,49 +209,32 @@ export function JustificationsPage(): ReactNode {
           }}
           options={KIND_ORDER.map((value) => ({ value, label: t(KIND_LABELS[value]) }))}
         />
+        <DateBox
+          label={t('filter.from')}
+          value={from}
+          onChange={(value) => {
+            setFrom(value);
+            setPage(1);
+          }}
+        />
+        <DateBox
+          label={t('filter.to')}
+          value={to}
+          onChange={(value) => {
+            setTo(value);
+            setPage(1);
+          }}
+        />
       </FilterRow>
 
-      <PanelBody className="space-y-3 pb-0">
-        <Feedback error={error} notice={notice} />
-
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="w-40">
-            <Field
-              label={<T k="justify.filter.from" />}
-              type="date"
-              value={from}
-              onChange={(event) => {
-                setFrom(event.target.value);
-                setPage(1);
-              }}
-            />
-          </div>
-          <div className="w-40">
-            <Field
-              label={<T k="justify.filter.to" />}
-              type="date"
-              value={to}
-              onChange={(event) => {
-                setTo(event.target.value);
-                setPage(1);
-              }}
-            />
-          </div>
-        </div>
-
-        {/*
-          Stated on the screen rather than left implicit: somebody deciding here is not correcting
-          data, and somebody looking for the terminal faults is on the wrong screen.
-        */}
-        <PanelNote icon={<CircleAlert className="size-3.5" aria-hidden />}>
-          <T k="justify.note.notExceptions" />
-        </PanelNote>
-        <PanelNote>
-          <T k="justify.note.noChain" />
-        </PanelNote>
-      </PanelBody>
+      {(error !== null || notice !== null) && (
+        <PanelBody className="pb-0">
+          <Feedback error={error} notice={notice} />
+        </PanelBody>
+      )}
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={rows.length}
         empty={<T k="justify.empty" />}
@@ -231,93 +242,21 @@ export function JustificationsPage(): ReactNode {
           { header: <T k="justify.column.staff" /> },
           { header: <T k="justify.column.date" />, width: 'w-28' },
           { header: <T k="justify.column.kind" />, width: 'w-32' },
-          { header: <T k="justify.column.record" />, width: 'w-44' },
-          { header: <T k="justify.column.reason" /> },
-          { header: <T k="panel.column.status" />, width: 'w-32' },
-          { header: <T k="justify.column.decided" />, width: 'w-40' },
-          { header: <T k="panel.column.actions" />, width: 'w-20', align: 'right' },
+          { header: <T k="justify.column.record" />, width: 'w-40' },
+          { header: <T k="justify.column.reason" />, width: 'w-72' },
+          { header: <T k="panel.column.status" />, width: 'w-36' },
+          { header: <T k="panel.column.actions" />, width: 'w-36', align: 'right' },
         ]}
       >
         {rows.map((row) => (
-          <tr
+          <QueueRowView
             key={row.id}
-            className={
-              row.status === 'pending'
-                ? 'border-b border-slate-100 bg-amber-50/40'
-                : 'border-b border-slate-100'
-            }
-          >
-            <td className="px-5 py-2">
-              <span className="block text-xs text-slate-800">{row.staffName}</span>
-              <span className="block font-mono text-[11px] text-slate-400">{row.employeeNo}</span>
-              {row.departmentName !== null && (
-                <span className="block text-[11px] text-slate-400">{row.departmentName}</span>
-              )}
-            </td>
-            <td className="px-2 py-2 text-xs whitespace-nowrap tabular-nums text-slate-700">
-              {formatDateOnly(row.workDate)}
-            </td>
-            <td className="px-2 py-2 text-xs text-slate-600">
-              <T k={KIND_LABELS[row.statusKind]} />
-            </td>
-            <td className="px-2 py-2 text-xs tabular-nums text-slate-600">
-              {row.record === null ? (
-                /*
-                 * The day has been recomputed into a different shape since. The row still stands as
-                 * a record of what was asked and answered, and the gap is shown rather than hidden.
-                 */
-                <span className="text-[11px] text-amber-700">
-                  <T k="justify.decision.recordMissing" />
-                </span>
-              ) : (
-                <>
-                  <span className="block">
-                    {`${clockTime(row.record.checkInAt)} – ${clockTime(row.record.checkOutAt)}`}
-                  </span>
-                  {row.record.lateMinutes > 0 && (
-                    <span className="block text-[11px] text-amber-700">
-                      <T k="justify.record.late" vars={{ minutes: row.record.lateMinutes }} />
-                    </span>
-                  )}
-                  {row.record.earlyLeaveMinutes > 0 && (
-                    <span className="block text-[11px] text-amber-700">
-                      <T k="justify.record.early" vars={{ minutes: row.record.earlyLeaveMinutes }} />
-                    </span>
-                  )}
-                </>
-              )}
-            </td>
-            <td className="px-2 py-2 text-xs text-slate-700">
-              <p className="line-clamp-2">{row.reason}</p>
-              {row.decisionNote !== null && (
-                <p className="mt-0.5 text-[11px] text-slate-500">{row.decisionNote}</p>
-              )}
-            </td>
-            <td className="px-2 py-2">
-              <span
-                className={`inline-flex rounded px-1.5 py-0.5 text-[11px] font-medium uppercase ${JUSTIFICATION_TONES[row.status]}`}
-              >
-                <T k={JUSTIFICATION_STATUS_LABELS[row.status]} />
-              </span>
-            </td>
-            <td className="px-2 py-2 text-xs whitespace-nowrap text-slate-500">
-              {/*
-                Blank for a reverted row, on purpose: it has no decidedAt because it is not a
-                decision — it is the row going back to the employee, and stamping it as decided would
-                make an open item look closed in every list that sorts on this column.
-              */}
-              {row.decidedAt === null ? '—' : formatDate(row.decidedAt)}
-            </td>
-            <td className="px-2 py-2 pr-4">
-              <RowActions>
-                <RowAction
-                  icon={<Eye className="size-4" aria-hidden />}
-                  label={t('justify.action.view')}
-                  onClick={() => setTarget(row)}
-                />
-              </RowActions>
-            </td>
-          </tr>
+            row={row}
+            mayApprove={mayApprove}
+            expanded={open === row.id}
+            onToggle={() => setOpen(open === row.id ? null : row.id)}
+            onDecide={(decision) => setDeciding({ row, decision })}
+          />
         ))}
       </RecordTable>
 
@@ -329,17 +268,20 @@ export function JustificationsPage(): ReactNode {
         generatedAt={data?.generatedAt}
         loading={loading}
         onPage={setPage}
-        onPageSize={setPageSize}
-        onRefresh={load}
+        onPageSize={(size) => {
+          setPageSize(size);
+          setPage(1);
+        }}
+        onRefresh={() => void load()}
       />
 
-      {target !== null && (
+      {deciding !== null && (
         <DecisionDialog
-          target={target}
-          mayApprove={mayApprove}
-          onClose={() => setTarget(null)}
+          target={deciding.row}
+          decision={deciding.decision}
+          onClose={() => setDeciding(null)}
           onDone={async (message) => {
-            setTarget(null);
+            setDeciding(null);
             setNotice(message);
             await load();
           }}
@@ -349,22 +291,235 @@ export function JustificationsPage(): ReactNode {
   );
 }
 
+/** Pending and sent-back days are still open; approved and rejected ones were signed. */
+function isOpen(status: JustificationStatus): boolean {
+  return status === 'pending' || status === 'reverted';
+}
+
+function QueueRowView({
+  row,
+  mayApprove,
+  expanded,
+  onToggle,
+  onDecide,
+}: {
+  row: QueueRow;
+  mayApprove: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onDecide: (decision: JustificationDecision) => void;
+}): ReactNode {
+  const { t } = useLabels();
+  const open = isOpen(row.status);
+
+  return (
+    <>
+      <tr
+        className={cn(
+          'border-b border-slate-100',
+          expanded ? 'bg-slate-50' : 'hover:bg-slate-50/70',
+          row.status === 'pending' && !expanded && 'bg-amber-50/40',
+        )}
+      >
+        <td className="px-5 py-2.5">
+          <span className="block font-medium text-slate-800">{row.staffName}</span>
+          <span className="block font-mono text-[11px] text-slate-400">
+            {row.employeeNo}
+            {row.departmentName !== null && ` · ${row.departmentName}`}
+          </span>
+        </td>
+        <td className="px-2 py-2.5 text-xs whitespace-nowrap tabular-nums text-slate-700">
+          {formatDateOnly(row.workDate)}
+        </td>
+        <td className="px-2 py-2.5 text-xs text-slate-600">
+          <T k={KIND_LABELS[row.statusKind]} />
+        </td>
+        <td className="px-2 py-2.5 text-xs tabular-nums text-slate-600">
+          <RecordSummary row={row} />
+        </td>
+        <td className="px-2 py-2.5 text-xs text-slate-700">
+          <p className="line-clamp-2">{row.reason}</p>
+        </td>
+        <td className="px-2 py-2.5">
+          {/* Uppercased by the badge's class: a translated word cannot be upper-cased safely. */}
+          <Badge tone={JUSTIFICATION_TONES[row.status]} className="uppercase">
+            <T k={JUSTIFICATION_STATUS_LABELS[row.status]} />
+          </Badge>
+        </td>
+        <td className="px-2 py-2.5 pr-4">
+          <RowActions>
+            {mayApprove && open && (
+              <>
+                <RowAction
+                  icon={<CircleCheck className="size-4" aria-hidden />}
+                  label={t('justify.action.approve')}
+                  tone="success"
+                  onClick={() => onDecide('approved')}
+                />
+                <RowAction
+                  icon={<CircleX className="size-4" aria-hidden />}
+                  label={t('justify.action.reject')}
+                  tone="danger"
+                  onClick={() => onDecide('rejected')}
+                />
+                {/*
+                  Disabled on a day already sent back, with the reason as the label: it is waiting on
+                  the employee, and sending it again would only send them a second identical message.
+                */}
+                <RowAction
+                  icon={<Undo2 className="size-4" aria-hidden />}
+                  label={
+                    row.status === 'reverted'
+                      ? t('justify.action.revert.already')
+                      : t('justify.action.revert')
+                  }
+                  tone="warn"
+                  disabled={row.status === 'reverted'}
+                  onClick={() => onDecide('reverted')}
+                />
+              </>
+            )}
+            <ExpandButton expanded={expanded} onClick={onToggle} label={t('justify.row.expand')} />
+          </RowActions>
+        </td>
+      </tr>
+
+      {expanded && (
+        <tr className="border-b border-slate-200 bg-slate-50">
+          <td colSpan={7} className="px-5 py-3">
+            <DetailGrid>
+              <Detail label={<T k="justify.column.submitted" />} value={formatDateTime(row.submittedAt)} />
+              <Detail
+                label={<T k="justify.column.decided" />}
+                value={
+                  /*
+                    A dash for a sent-back row, on purpose: it has no decidedAt because it is not a
+                    decision — it is the row going back to the employee.
+                  */
+                  row.decidedAt === null ? '—' : formatDateTime(row.decidedAt)
+                }
+              />
+              {row.record !== null && (
+                <>
+                  <Detail label={<T k="justify.record.shift" />} value={row.record.shiftName ?? '—'} />
+                  <Detail
+                    label={<T k="justify.record.scheduled" />}
+                    value={`${clockTime(row.record.scheduledStart)} – ${clockTime(row.record.scheduledEnd)}`}
+                  />
+                  <Detail
+                    label={<T k="justify.record.actual" />}
+                    value={`${clockTime(row.record.checkInAt)} – ${clockTime(row.record.checkOutAt)}`}
+                  />
+                  <Detail
+                    label={<T k="justify.record.hours" />}
+                    value={formatMinutes(row.record.workedMinutes)}
+                  />
+                </>
+              )}
+            </DetailGrid>
+
+            <div className="mt-3 border-t border-slate-200 pt-2">
+              <p className="text-[11px] font-medium tracking-wide text-slate-500 uppercase">
+                <T k="justify.form.reason" />
+              </p>
+              {/* The employee's words, read-only. A supervisor decides an explanation, not rewrites it. */}
+              <p className="mt-1 text-sm break-words whitespace-pre-wrap text-slate-700">{row.reason}</p>
+            </div>
+
+            {row.decisionNote !== null && (
+              <PanelNote tone={row.status === 'approved' ? 'success' : 'warn'} className="mt-3">
+                <T k="justify.detail.decisionNote" vars={{ note: row.decisionNote }} />
+              </PanelNote>
+            )}
+
+            {row.record === null && (
+              <PanelNote
+                tone="warn"
+                className="mt-3"
+                icon={<TriangleAlert className="size-3.5" aria-hidden />}
+              >
+                <T k="justify.decision.recordMissing" />
+              </PanelNote>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+/** The day being explained, as times. Without them a reason for a late day means nothing. */
+function RecordSummary({ row }: { row: QueueRow }): ReactNode {
+  if (row.record === null) {
+    /*
+     * The day has been recomputed into a different shape since. The row still stands as a record of
+     * what was asked and answered, and the gap is shown rather than hidden.
+     */
+    return (
+      <span className="text-[11px] text-amber-700">
+        <T k="justify.record.missing" />
+      </span>
+    );
+  }
+  return (
+    <>
+      <span className="block">
+        {`${clockTime(row.record.checkInAt)} – ${clockTime(row.record.checkOutAt)}`}
+      </span>
+      {row.record.lateMinutes > 0 && (
+        <span className="block text-[11px] text-amber-700">
+          <T k="justify.record.late" vars={{ minutes: row.record.lateMinutes }} />
+        </span>
+      )}
+      {row.record.earlyLeaveMinutes > 0 && (
+        <span className="block text-[11px] text-amber-700">
+          <T k="justify.record.early" vars={{ minutes: row.record.earlyLeaveMinutes }} />
+        </span>
+      )}
+    </>
+  );
+}
+
+const DECISION_TITLES: Record<JustificationDecision, LabelKey> = {
+  approved: 'justify.decision.approve.title',
+  rejected: 'justify.decision.reject.title',
+  reverted: 'justify.decision.revert.title',
+};
+
+const DECISION_SUBMITS: Record<JustificationDecision, LabelKey> = {
+  approved: 'justify.action.approve',
+  rejected: 'justify.action.reject',
+  reverted: 'justify.action.revert',
+};
+
+/** What each decision does, said at the moment of making it. One note, not three. */
+const DECISION_NOTES: Record<JustificationDecision, LabelKey> = {
+  approved: 'justify.decision.approveNote',
+  rejected: 'justify.decision.rejectNote',
+  reverted: 'justify.decision.revertNote',
+};
+
+const DECISION_NOTICES: Record<JustificationDecision, LabelKey> = {
+  approved: 'justify.notice.approved',
+  rejected: 'justify.notice.rejected',
+  reverted: 'justify.notice.reverted',
+};
+
 /**
- * The decision, with the day it is about laid out beside the reason.
+ * One decision, with the day it is about and the reason laid out above it.
  *
- * Three buttons, following the reference system: approve, reject, and send back. Send back is the one
- * that keeps a thin submission from becoming a permanent rejection — "your reason was not accepted"
- * and "I cannot act on what you wrote" are different messages, and only one of them means the person
- * should try again.
+ * Rejecting and sending back need a note; approving does not. Approval is agreement with what the
+ * person already wrote. The other two ask somebody to accept an outcome or to try again, and an
+ * outcome with no words attached is one they cannot act on or appeal. Enforced on the server too.
  */
 function DecisionDialog({
   target,
-  mayApprove,
+  decision,
   onClose,
   onDone,
 }: {
   target: QueueRow;
-  mayApprove: boolean;
+  decision: JustificationDecision;
   onClose: () => void;
   onDone: (message: string) => Promise<void>;
 }): ReactNode {
@@ -373,32 +528,32 @@ function DecisionDialog({
   const [error, setError] = useState<string | null>(null);
   const { t } = useLabels();
 
-  const settled = target.status === 'approved' || target.status === 'rejected';
+  const needsNote = decision !== 'approved';
+  const noteMissing = needsNote && note.trim().length < 3;
+  const date = formatDateOnly(target.workDate);
 
-  const decide = async (decision: JustificationDecision): Promise<void> => {
+  const submit = async (): Promise<void> => {
     setBusy(true);
+    setError(null);
     try {
-      await justificationApi.decide(target.id, decision, note);
-      await onDone(t('justify.decided'));
+      await justificationApi.decide(target.id, decision, note.trim());
+      await onDone(t(DECISION_NOTICES[decision], { name: target.staffName, date }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : null);
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
       setBusy(false);
     }
   };
 
-  /*
-   * Rejecting and reverting need a note; approving does not.
-   *
-   * Approval is agreement with what the person already wrote, so there is nothing to add. The other
-   * two ask somebody to accept an outcome or to try again, and an outcome with no words attached is
-   * one they cannot act on or appeal. Enforced on the server too.
-   */
-  const noteMissing = note.trim().length < 3;
-
   return (
     <Dialog
-      title={<T k="justify.form.title" vars={{ date: formatDateOnly(target.workDate) }} />}
-      titleText={t('justify.form.title', { date: formatDateOnly(target.workDate) })}
+      title={<T k={DECISION_TITLES[decision]} />}
+      titleText={t(DECISION_TITLES[decision])}
+      description={
+        <T
+          k="justify.decision.description"
+          vars={{ name: target.staffName, date, kind: t(KIND_LABELS[target.statusKind]) }}
+        />
+      }
       width="lg"
       onClose={onClose}
     >
@@ -406,110 +561,53 @@ function DecisionDialog({
         <Feedback error={error} />
 
         <DetailGrid>
-          <Detail label={<T k="justify.column.staff" />} value={target.staffName} />
-          <Detail label={<T k="justify.column.kind" />} value={<T k={KIND_LABELS[target.statusKind]} />} />
+          <Detail label={<T k="justify.column.record" />} value={<RecordSummary row={target} />} />
+          <Detail label={<T k="justify.column.submitted" />} value={formatDate(target.submittedAt)} />
           <Detail
             label={<T k="panel.column.status" />}
             value={<T k={JUSTIFICATION_STATUS_LABELS[target.status]} />}
           />
-          <Detail label={<T k="justify.column.submitted" />} value={formatDate(target.submittedAt)} />
         </DetailGrid>
 
-        {target.record === null ? (
-          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-            <T k="justify.decision.recordMissing" />
-          </PanelNote>
-        ) : (
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <p className="mb-2 text-xs font-medium text-slate-600">
-              <T k="justify.form.record" />
-            </p>
-            <DetailGrid>
-              <Detail
-                label={<T k="justify.record.shift" />}
-                value={target.record.shiftName ?? '—'}
-              />
-              <Detail
-                label={<T k="justify.record.scheduled" />}
-                value={`${clockTime(target.record.scheduledStart)} – ${clockTime(target.record.scheduledEnd)}`}
-              />
-              <Detail
-                label={<T k="justify.record.actual" />}
-                value={`${clockTime(target.record.checkInAt)} – ${clockTime(target.record.checkOutAt)}`}
-              />
-              <Detail
-                label={<T k="justify.record.hours" />}
-                value={formatMinutes(target.record.workedMinutes)}
-              />
-            </DetailGrid>
-          </div>
-        )}
-
         <div>
-          <p className="mb-1 text-xs font-medium text-slate-600">
+          <p className="text-[11px] font-medium tracking-wide text-slate-500 uppercase">
             <T k="justify.form.reason" />
           </p>
-          {/* The employee's words, read-only. A supervisor decides an explanation, not rewrites it. */}
-          <p className="rounded-lg border border-slate-200 px-3 py-2 text-sm whitespace-pre-wrap text-slate-800">
+          <p className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm break-words whitespace-pre-wrap text-slate-800">
             {target.reason}
           </p>
         </div>
 
-        {settled ? (
-          <PanelNote>
-            <T k="justify.refuse.alreadyPending" />
+        <TextArea
+          label={<T k="justify.decision.note" />}
+          hint={
+            <T k={needsNote ? 'justify.decision.note.hint' : 'justify.decision.note.optional'} />
+          }
+          rows={3}
+          maxLength={500}
+          autoFocus
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+        />
+
+        {/* The last block before the footer, so it carries the `pb-2`. */}
+        <div className="pb-2">
+          <PanelNote
+            tone={decision === 'rejected' ? 'danger' : decision === 'reverted' ? 'warn' : 'info'}
+            icon={<TriangleAlert className="size-3.5" aria-hidden />}
+          >
+            <T k={DECISION_NOTES[decision]} />
           </PanelNote>
-        ) : (
-          mayApprove && (
-            <>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600" htmlFor="decision-note">
-                  <T k="justify.decision.note" />
-                </label>
-                <textarea
-                  id="decision-note"
-                  rows={3}
-                  value={note}
-                  maxLength={500}
-                  onChange={(event) => setNote(event.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  <T k="justify.decision.note.hint" />
-                </p>
-                <p className="text-xs text-slate-500">
-                  <T k="justify.decision.note.optional" />
-                </p>
-              </div>
+        </div>
 
-              <div className="sticky bottom-0 -mx-5 -mb-5 flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-white px-5 py-3">
-                <Button
-                  variant="ghost"
-                  disabled={busy || noteMissing}
-                  title={noteMissing ? t('justify.decision.note.hint') : undefined}
-                  onClick={() => void decide('reverted')}
-                >
-                  <T k="justify.action.revert" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  disabled={busy || noteMissing}
-                  title={noteMissing ? t('justify.decision.note.hint') : undefined}
-                  onClick={() => void decide('rejected')}
-                >
-                  <T k="justify.action.reject" />
-                </Button>
-                <Button disabled={busy} onClick={() => void decide('approved')}>
-                  <T k="justify.action.approve" />
-                </Button>
-              </div>
-            </>
-          )
-        )}
-
-        {!mayApprove && (
-          <DialogFooter onClose={onClose} closeLabel={<T k="dialog.close" />} />
-        )}
+        <DialogFooter
+          onClose={onClose}
+          onSubmit={() => void submit()}
+          busy={busy}
+          disabled={noteMissing}
+          {...(noteMissing ? { submitTitle: t('justify.decision.note.hint') } : {})}
+          submitLabel={<T k={DECISION_SUBMITS[decision]} />}
+        />
       </div>
     </Dialog>
   );
