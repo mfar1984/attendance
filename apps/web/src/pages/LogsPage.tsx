@@ -1,13 +1,9 @@
-import {
-  ArrowRight,
-  FileClock,
-  Lock,
-  ShieldCheck,
-} from 'lucide-react';
+import { ArrowRight, FileClock, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import type { LabelKey } from '@attendance/shared';
 
+import { Feedback } from '../components/Dialog';
 import {
   ChipBar,
   DateBox,
@@ -16,11 +12,16 @@ import {
   ExpandButton,
   FacetSelect,
   FilterRow,
+  PanelBody,
   PanelCard,
   PanelFooter,
+  PanelSection,
   PanelTabs,
   RecordTable,
+  RowActions,
 } from '../components/RecordPanel';
+import { Badge } from '../components/ui';
+import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import { formatDateTime } from '../lib/operations-api';
 import {
@@ -41,6 +42,12 @@ import {
 } from '../lib/settings-api';
 import { T, TEnum, useLabels } from '../lib/translation';
 
+const ACTIVITY_SCREEN = 'settings.logs.activity';
+const AUDIT_SCREEN = 'settings.logs.audit';
+
+/** Counts read as numbers, not digit strings: "12,480 entri" rather than "12480 entri". */
+const COUNT = new Intl.NumberFormat('ms-MY');
+
 /**
  * Activity and audit logs.
  *
@@ -49,35 +56,43 @@ import { T, TEnum, useLabels } from '../lib/translation';
  * handful of entries that actually settle a payroll dispute sit buried under
  * thousands of logins.
  *
- * The layout is the one every log-style screen in this application should follow:
- * a single card holding title, tabs, severity counters, filter row, full-bleed
- * table, and a footer that states what is shown out of what.
+ * Each is its own permission, so each tab is offered only to somebody who can open it — a tab
+ * that answers 403 teaches people the log is broken rather than that it is not theirs to read.
  */
 export function LogsPage(): ReactNode {
-  const [tab, setTab] = useState('activity');
   const { t } = useLabels();
+  const { can } = useAuth();
 
-  return (
-    <PanelCard title={<T k="logs.title" />} subtitle={<T k="logs.subtitle" />}>
-      <PanelTabs
-        label={t('logs.tabs.aria')}
-        active={tab}
-        onChange={setTab}
-        tabs={[
+  const tabs = [
+    ...(can(ACTIVITY_SCREEN, 'view')
+      ? [
           {
             id: 'activity',
             label: <T k="logs.tab.activity" />,
             labelText: t('logs.tab.activity'),
             icon: <FileClock className="size-4" aria-hidden />,
           },
+        ]
+      : []),
+    ...(can(AUDIT_SCREEN, 'view')
+      ? [
           {
             id: 'audit',
             label: <T k="logs.tab.audit" />,
             labelText: t('logs.tab.audit'),
             icon: <ShieldCheck className="size-4" aria-hidden />,
           },
-        ]}
-      />
+        ]
+      : []),
+  ];
+
+  const [chosen, setChosen] = useState<string | null>(null);
+  // The first tab this account can open, until one is chosen.
+  const tab = chosen ?? tabs[0]?.id ?? 'activity';
+
+  return (
+    <PanelCard title={<T k="logs.title" />} subtitle={<T k="logs.subtitle" />}>
+      <PanelTabs label={t('logs.tabs.aria')} active={tab} onChange={setChosen} tabs={tabs} />
 
       {tab === 'activity' ? <ActivityPanel /> : <AuditPanel />}
     </PanelCard>
@@ -95,11 +110,12 @@ const LEVEL_DOT: Record<LogLevel, string> = {
   debug: 'bg-slate-400',
 };
 
-const LEVEL_BADGE: Record<LogLevel, string> = {
-  info: 'bg-sky-50 text-sky-700',
-  warn: 'bg-amber-50 text-amber-800',
-  error: 'bg-rose-50 text-rose-700',
-  debug: 'bg-slate-100 text-slate-600',
+/** Severity, so `danger` and `warning` mean what they mean everywhere else. */
+const LEVEL_TONES: Record<LogLevel, 'info' | 'warning' | 'danger' | 'neutral'> = {
+  info: 'info',
+  warn: 'warning',
+  error: 'danger',
+  debug: 'neutral',
 };
 
 /**
@@ -131,6 +147,7 @@ function ActivityPanel(): ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const { t, tEnum } = useLabels();
+  const { can } = useAuth();
 
   // Debounced so typing in the search box does not fire a query per keystroke.
   useEffect(() => {
@@ -172,6 +189,13 @@ function ActivityPanel(): ReactNode {
 
   return (
     <>
+      <PanelSection
+        title={
+          <T k="logs.activity.count" vars={{ count: COUNT.format(data?.total ?? 0) }} />
+        }
+        subtitle={<T k="logs.activity.subtitle" />}
+      />
+
       <ChipBar
         active={filters.level}
         onChange={(id) => set({ level: id as LogLevel | undefined })}
@@ -192,7 +216,10 @@ function ActivityPanel(): ReactNode {
           setSearch('');
           setFilters({ page: 1, pageSize: filters.pageSize });
         }}
-        exportUrl={logsApi.activityExportUrl(filters)}
+        // Hidden without the grant: an export that answers 403 reads as a broken report.
+        {...(can(ACTIVITY_SCREEN, 'export')
+          ? { exportUrl: logsApi.activityExportUrl(filters) }
+          : {})}
       >
         {/* `<option>` cannot hold a node, so every facet label resolves to plain text. */}
         <FacetSelect
@@ -234,20 +261,22 @@ function ActivityPanel(): ReactNode {
       </FilterRow>
 
       {error !== null && (
-        <p role="alert" className="border-b border-rose-200 bg-rose-50 px-5 py-2.5 text-sm text-rose-800">
-          {error}
-        </p>
+        <PanelBody className="pb-0">
+          <Feedback error={error} />
+        </PanelBody>
       )}
 
       <RecordTable
+        framed
         columns={[
           { header: <T k="logs.activity.column.time" />, width: 'w-40' },
-          { header: <T k="logs.activity.column.level" />, width: 'w-20' },
+          { header: <T k="logs.activity.column.level" />, width: 'w-24' },
           { header: <T k="logs.activity.column.category" />, width: 'w-36' },
           { header: <T k="logs.activity.column.message" /> },
           { header: <T k="logs.activity.column.actor" />, width: 'w-48' },
           { header: <T k="logs.activity.column.ip" />, width: 'w-32' },
-          { header: '', width: 'w-10' },
+          // The expander column has no heading: the control names itself.
+          { header: '', width: 'w-12' },
         ]}
         loading={loading}
         empty={<T k="logs.activity.empty" />}
@@ -291,19 +320,22 @@ function ActivityRow({
 
   return (
     <>
-      <tr className={cn('border-b border-slate-100', expanded ? 'bg-slate-50' : 'hover:bg-slate-50/70')}>
+      <tr
+        className={cn(
+          'border-b border-slate-100',
+          expanded ? 'bg-slate-50' : 'hover:bg-slate-50/70',
+          // Tinted by severity, so a failure in a page of logins is found before it is read.
+          !expanded && row.level === 'error' && 'bg-rose-50/40',
+          !expanded && row.level === 'warn' && 'bg-amber-50/40',
+        )}
+      >
         <td className="px-5 py-2 text-xs whitespace-nowrap tabular-nums text-slate-600">
           {formatDateTime(row.createdAt)}
         </td>
         <td className="px-2 py-2">
-          <span
-            className={cn(
-              'inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide',
-              LEVEL_BADGE[row.level],
-            )}
-          >
+          <Badge tone={LEVEL_TONES[row.level] ?? 'neutral'} className="uppercase">
             <T k={LEVEL_LABELS[row.level]} />
-          </span>
+          </Badge>
         </td>
         <td className="px-2 py-2">
           <span className={cn('text-xs font-medium', CATEGORY_TEXT[row.category] ?? 'text-slate-500')}>
@@ -319,12 +351,14 @@ function ActivityRow({
           <span className="block max-w-44 truncate">{row.actorLabel}</span>
         </td>
         <td className="px-2 py-2 font-mono text-xs text-slate-500">{row.ipAddress ?? '—'}</td>
-        <td className="w-10 pr-4">
-          <ExpandButton
-            expanded={expanded}
-            onClick={onToggle}
-            label={t('logs.activity.row.expand')}
-          />
+        <td className="px-2 py-2 pr-4">
+          <RowActions>
+            <ExpandButton
+              expanded={expanded}
+              onClick={onToggle}
+              label={t('logs.activity.row.expand')}
+            />
+          </RowActions>
         </td>
       </tr>
 
@@ -351,13 +385,12 @@ function ActivityRow({
               />
               <Detail label={<T k="logs.activity.detail.fullTime" />} value={row.createdAt} mono />
             </DetailGrid>
+            {/* The whole message, which the row clamps to one line. Inside a `dl`, as a `dt`
+                and `dd` have to be. */}
             {row.detail !== null && (
-              <div className="mt-3 border-t border-slate-200 pt-2">
-                <dt className="text-[11px] font-medium tracking-wide text-slate-500 uppercase">
-                  <T k="logs.activity.detail.message" />
-                </dt>
-                <dd className="mt-1 text-sm break-words text-slate-700">{row.detail}</dd>
-              </div>
+              <dl className="mt-3 border-t border-slate-200 pt-2 text-sm">
+                <Detail label={<T k="logs.activity.detail.message" />} value={row.detail} />
+              </dl>
             )}
           </td>
         </tr>
@@ -370,7 +403,17 @@ function ActivityRow({
 // Audit
 // ---------------------------------------------------------------------------
 
+const ACTION_DOT: Record<string, string> = {
+  create: 'bg-emerald-500',
+  update: 'bg-amber-500',
+  delete: 'bg-rose-500',
+};
 
+const ACTION_TONES: Record<string, 'success' | 'warning' | 'danger'> = {
+  create: 'success',
+  update: 'warning',
+  delete: 'danger',
+};
 
 function AuditPanel(): ReactNode {
   const [filters, setFilters] = useState<AuditFilters>({ page: 1, pageSize: 30 });
@@ -380,6 +423,7 @@ function AuditPanel(): ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const { t, tEnum } = useLabels();
+  const { can } = useAuth();
 
   useEffect(() => {
     const timer = setTimeout(
@@ -417,14 +461,28 @@ function AuditPanel(): ReactNode {
     filters.to !== undefined ||
     search.length > 0;
 
-  const actionTone: Record<string, string> = {
-    create: 'bg-emerald-500',
-    update: 'bg-amber-500',
-    delete: 'bg-rose-500',
-  };
-
   return (
     <>
+      {/*
+        The append-only fact is the tab's description rather than a strip under the filters. It is
+        what this log is, and it explains the `[redacted]` values somebody meets in the expansion.
+      */}
+      <PanelSection
+        title={<T k="logs.audit.count" vars={{ count: COUNT.format(data?.total ?? 0) }} />}
+        subtitle={
+          <T
+            k="logs.audit.appendOnly"
+            vars={{
+              redacted: (
+                <code className="font-mono">
+                  <T k="logs.audit.redacted" />
+                </code>
+              ),
+            }}
+          />
+        }
+      />
+
       <ChipBar
         active={filters.action}
         onChange={(id) => set({ action: id })}
@@ -432,7 +490,7 @@ function AuditPanel(): ReactNode {
           id: action,
           label: <TEnum k={AUDIT_ACTION_LABELS[action]} fallback={action} />,
           count: data?.actions[action] ?? 0,
-          dot: actionTone[action] ?? 'bg-slate-400',
+          dot: ACTION_DOT[action] ?? 'bg-slate-400',
         }))}
       />
 
@@ -445,7 +503,7 @@ function AuditPanel(): ReactNode {
           setSearch('');
           setFilters({ page: 1, pageSize: filters.pageSize });
         }}
-        exportUrl={logsApi.auditExportUrl(filters)}
+        {...(can(AUDIT_SCREEN, 'export') ? { exportUrl: logsApi.auditExportUrl(filters) } : {})}
       >
         <FacetSelect
           label={t('logs.filter.allEntities')}
@@ -476,37 +534,23 @@ function AuditPanel(): ReactNode {
         />
       </FilterRow>
 
-      <p className="flex items-start gap-2 border-b border-slate-200 bg-slate-50/60 px-5 py-2 text-xs text-slate-600">
-        <Lock className="mt-0.5 size-3.5 shrink-0 text-slate-400" aria-hidden />
-        <span>
-          <T
-            k="logs.audit.appendOnly"
-            vars={{
-              redacted: (
-                <code className="font-mono">
-                  <T k="logs.audit.redacted" />
-                </code>
-              ),
-            }}
-          />
-        </span>
-      </p>
-
       {error !== null && (
-        <p role="alert" className="border-b border-rose-200 bg-rose-50 px-5 py-2.5 text-sm text-rose-800">
-          {error}
-        </p>
+        <PanelBody className="pb-0">
+          <Feedback error={error} />
+        </PanelBody>
       )}
 
       <RecordTable
+        framed
         columns={[
           { header: <T k="logs.activity.column.time" />, width: 'w-40' },
-          { header: <T k="logs.audit.column.action" />, width: 'w-24' },
+          { header: <T k="logs.audit.column.action" />, width: 'w-28' },
           { header: <T k="logs.audit.column.record" />, width: 'w-44' },
           { header: <T k="logs.audit.column.changes" /> },
           { header: <T k="logs.audit.column.actor" />, width: 'w-48' },
           { header: <T k="logs.activity.column.ip" />, width: 'w-32' },
-          { header: '', width: 'w-10' },
+          // The expander column has no heading: the control names itself.
+          { header: '', width: 'w-12' },
         ]}
         loading={loading}
         empty={<T k="logs.audit.empty" />}
@@ -556,20 +600,10 @@ function AuditRow({
           {formatDateTime(row.createdAt)}
         </td>
         <td className="px-2 py-2">
-          <span
-            className={cn(
-              'inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide',
-              row.action === 'create' && 'bg-emerald-50 text-emerald-700',
-              row.action === 'update' && 'bg-amber-50 text-amber-800',
-              row.action === 'delete' && 'bg-rose-50 text-rose-700',
-            )}
-          >
-            {/* Uppercased in CSS: a translated word cannot be upper-cased safely in every
-                language. */}
-            <span className="uppercase">
-              <TEnum k={AUDIT_ACTION_LABELS[row.action]} fallback={row.action} />
-            </span>
-          </span>
+          {/* Upper case comes from the class: `.toUpperCase()` on a translated word is not safe. */}
+          <Badge tone={ACTION_TONES[row.action] ?? 'neutral'} className="uppercase">
+            <TEnum k={AUDIT_ACTION_LABELS[row.action]} fallback={row.action} />
+          </Badge>
         </td>
         <td className="px-2 py-2">
           <span className="block text-xs font-medium text-slate-700">
@@ -596,8 +630,10 @@ function AuditRow({
           <span className="block max-w-44 truncate">{row.actorLabel}</span>
         </td>
         <td className="px-2 py-2 font-mono text-xs text-slate-500">{row.ipAddress ?? '—'}</td>
-        <td className="w-10 pr-4">
-          <ExpandButton expanded={expanded} onClick={onToggle} label={t('logs.audit.row.expand')} />
+        <td className="px-2 py-2 pr-4">
+          <RowActions>
+            <ExpandButton expanded={expanded} onClick={onToggle} label={t('logs.audit.row.expand')} />
+          </RowActions>
         </td>
       </tr>
 
@@ -656,27 +692,28 @@ function AuditRow({
               </div>
             )}
 
-            <dl className="mt-3 grid gap-x-8 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
-              <Detail label={<T k="logs.audit.detail.reason" />} value={row.reason ?? '—'} />
-              <Detail label={<T k="logs.activity.detail.entryId" />} value={row.id} mono />
-              <Detail
-                label={<T k="logs.activity.detail.accountId" />}
-                value={
-                  row.accountId === null ? (
-                    <T k="logs.activity.detail.system" />
-                  ) : (
-                    String(row.accountId)
-                  )
-                }
-              />
-            </dl>
+            <div className="mt-3">
+              <DetailGrid>
+                <Detail label={<T k="logs.audit.detail.reason" />} value={row.reason ?? '—'} />
+                <Detail label={<T k="logs.activity.detail.entryId" />} value={row.id} mono />
+                <Detail
+                  label={<T k="logs.activity.detail.accountId" />}
+                  value={
+                    row.accountId === null ? (
+                      <T k="logs.activity.detail.system" />
+                    ) : (
+                      String(row.accountId)
+                    )
+                  }
+                />
+              </DetailGrid>
+            </div>
           </td>
         </tr>
       )}
     </>
   );
 }
-
 
 /** Users who actually appear in the log, ordered by how often. */
 function ActorSelect({

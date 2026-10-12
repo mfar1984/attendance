@@ -2,7 +2,7 @@ import { Loader2, UserRound } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { T, useLabels } from '../lib/translation';
-import { Button, Field } from './ui';
+import { Badge, Button, Field } from './ui';
 
 /** One member of staff as the per-module search endpoints return them. */
 export interface PickedStaff {
@@ -25,16 +25,17 @@ export interface PickedStaff {
  * so the copies cannot drift. `search` is the module's own endpoint, one per module, because the
  * gate differs: whoever files overtime is not necessarily whoever files leave.
  */
-export function StaffPicker({
+export function StaffPicker<S extends PickedStaff = PickedStaff>({
   value,
   onChange,
   search,
   hint,
   initialQuery = '',
+  unavailable,
 }: {
-  value: PickedStaff | null;
-  onChange: (staff: PickedStaff | null) => void;
-  search: (query: string) => Promise<PickedStaff[]>;
+  value: S | null;
+  onChange: (staff: S | null) => void;
+  search: (query: string) => Promise<S[]>;
   /** What choosing somebody loads, or how the list is filtered. Module-specific. */
   hint: ReactNode;
   /**
@@ -44,9 +45,17 @@ export function StaffPicker({
    * is never used to match, but it is the best first guess at who to search for.
    */
   initialQuery?: string;
+  /**
+   * Why a candidate cannot be chosen, or `undefined` when they can.
+   *
+   * For the account form, where somebody who already has a login is listed — so the operator
+   * learns that from the list rather than from a refusal after filling in the whole form — but
+   * cannot be picked. The reason sits on the row as a badge.
+   */
+  unavailable?: (candidate: S) => ReactNode | undefined;
 }): ReactNode {
   const [query, setQuery] = useState(initialQuery);
-  const [candidates, setCandidates] = useState<PickedStaff[]>([]);
+  const [candidates, setCandidates] = useState<S[]>([]);
   const [searching, setSearching] = useState(false);
   const { t } = useLabels();
 
@@ -125,26 +134,31 @@ export function StaffPicker({
           </p>
         ) : (
           <ul className="divide-y divide-slate-100">
-            {candidates.map((candidate) => (
-              <li key={candidate.id}>
-                <button
-                  type="button"
-                  onClick={() => onChange(candidate)}
-                  className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-slate-50"
-                >
-                  <UserRound className="size-4 shrink-0 text-slate-400" aria-hidden />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-slate-800">
-                      {candidate.fullName}
+            {candidates.map((candidate) => {
+              const reason = unavailable?.(candidate);
+              return (
+                <li key={candidate.id}>
+                  <button
+                    type="button"
+                    disabled={reason !== undefined}
+                    onClick={() => onChange(candidate)}
+                    className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50/60"
+                  >
+                    <UserRound className="size-4 shrink-0 text-slate-400" aria-hidden />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-slate-800">
+                        {candidate.fullName}
+                      </span>
+                      <span className="block truncate font-mono text-xs text-slate-500">
+                        {candidate.employeeNo}
+                        {candidate.department !== null && ` · ${candidate.department.name}`}
+                      </span>
                     </span>
-                    <span className="block truncate font-mono text-xs text-slate-500">
-                      {candidate.employeeNo}
-                      {candidate.department !== null && ` · ${candidate.department.name}`}
-                    </span>
-                  </span>
-                </button>
-              </li>
-            ))}
+                    {reason !== undefined && <Badge tone="neutral">{reason}</Badge>}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

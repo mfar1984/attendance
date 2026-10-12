@@ -496,6 +496,13 @@ function ConnectionTab({
    */
   const [username, setUsername] = useState(device.username ?? '');
   const [password, setPassword] = useState('');
+  /**
+   * The unit's serial, and on a callback protocol its only identity.
+   *
+   * Editable here rather than discovered, because on that protocol nothing discovers it — the
+   * ingest path matches an incoming scan against this column and writes nothing back.
+   */
+  const [serialNumber, setSerialNumber] = useState(device.serialNumber ?? '');
   const [doorNo, setDoorNo] = useState(String(device.doorNo));
   /** Whether this protocol authenticates with a stored username and password. */
   const needsCredentials = usesStoredCredentials(device.protocol);
@@ -575,7 +582,9 @@ function ConnectionTab({
                 // returned, so blank cannot mean "clear it".
                 ...(password === '' ? {} : { password }),
               }
-            : {}),
+            : // The serial is the identity on a callback protocol, so it is sent there and only
+              // there. On ISAPI the probe owns the field and an edit must not fight it.
+              { serialNumber: serialNumber.trim() }),
           doorNo: Number(doorNo),
           active,
           locationId: locationId === '' ? null : Number(locationId),
@@ -824,14 +833,32 @@ function ConnectionTab({
               </span>
             }
           >
+            {/*
+              Editable, which it was not.
+
+              It was a `StaticControl` with a note saying the value would arrive on its own — so a
+              terminal registered without a serial reported "scans refused" on a screen that
+              offered no way to enter one. Nothing fills this in: the ingest path looks the
+              terminal up by serial and writes nothing back.
+            */}
             <SettingRow
               label={<T k="device.editor.field.serialIdentity" />}
               hint={<T k="device.editor.field.serialIdentity.hint" />}
+              required
             >
-              <StaticControl mono value={device.serialNumber ?? '—'} />
+              <TextControl
+                label={t('device.editor.field.serialIdentity')}
+                // An identifier with no spaces, and it gets read back character by character
+                // against a label on the unit.
+                className="font-mono"
+                value={serialNumber}
+                disabled={!editable}
+                onChange={(event) => setSerialNumber(event.target.value)}
+                placeholder={t('device.editor.field.serialIdentity.placeholder')}
+              />
             </SettingRow>
 
-            {device.serialNumber === null && (
+            {serialNumber.trim() === '' && (
               <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
                 <T k="device.editor.field.serialIdentity.missing" />
               </PanelNote>
@@ -900,7 +927,14 @@ function ConnectionTab({
       <PanelActions hint={<T k="device.editor.connection.hint" />}>
         <Button
           onClick={() => void submit()}
-          disabled={busy || !editable || name.trim() === '' || host.trim() === ''}
+          disabled={
+            busy ||
+            !editable ||
+            name.trim() === '' ||
+            host.trim() === '' ||
+            // The server refuses a callback terminal with no serial, so the button says so first.
+            (!needsCredentials && serialNumber.trim() === '')
+          }
         >
           <Save className="size-4" aria-hidden />
           <T k="device.editor.save" />

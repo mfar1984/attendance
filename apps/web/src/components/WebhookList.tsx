@@ -9,7 +9,7 @@ import {
   Trash2,
   TriangleAlert,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
@@ -36,8 +36,9 @@ import {
   RowAction,
   RowActions,
 } from './RecordPanel';
+import { RemoveDialog } from './RemoveDialog';
 import { RevealSecret } from './RevealSecret';
-import { Button } from './ui';
+import { Badge, Button } from './ui';
 
 /**
  * Outbound webhook subscriptions.
@@ -61,8 +62,10 @@ export function WebhookList(): ReactNode {
   const [notice, setNotice] = useState<string | null>(null);
   const [open, setOpen] = useState<number | null>(null);
   const [editing, setEditing] = useState<WebhookRow | 'new' | null>(null);
-  const [confirming, setConfirming] = useState<WebhookRow | null>(null);
+  const [removing, setRemoving] = useState<WebhookRow | null>(null);
+  const [regenerating, setRegenerating] = useState<WebhookRow | null>(null);
   const [revealed, setRevealed] = useState<{ secret: string; regenerated: boolean } | null>(null);
+  const [loadedAt, setLoadedAt] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,6 +74,7 @@ export function WebhookList(): ReactNode {
       setRows(payload.webhooks);
       setTriggers(payload.triggers);
       setSignature(payload.signature);
+      setLoadedAt(new Date().toISOString());
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('webhook.error.load'));
@@ -133,49 +137,30 @@ export function WebhookList(): ReactNode {
     }
   }
 
-  async function regenerate(row: WebhookRow): Promise<void> {
-    setError(null);
-    setNotice(null);
-    try {
-      const outcome = await apiAdminApi.regenerateWebhookSecret(row.id);
-      setRevealed({ secret: outcome.secret, regenerated: true });
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('webhook.error.regenerate'));
-    }
-  }
-
-  async function remove(row: WebhookRow): Promise<void> {
-    setConfirming(null);
-    setError(null);
-    try {
-      await apiAdminApi.deleteWebhook(row.id);
-      setNotice(t('webhook.removed', { name: row.name }));
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('webhook.error.remove'));
-    }
-  }
-
   const all = rows ?? [];
   const needle = search.trim().toLowerCase();
-  const filtered = all.filter((row) => {
-    const state = row.active ? 'active' : row.disabledReason === null ? 'off' : 'broken';
-    if (statusFilter !== undefined && state !== statusFilter) return false;
-    if (needle.length === 0) return true;
-    return row.name.toLowerCase().includes(needle) || row.url.toLowerCase().includes(needle);
-  });
+  const stateOf = (row: WebhookRow): string =>
+    row.active ? 'active' : row.disabledReason === null ? 'off' : 'broken';
+  const searched = all.filter(
+    (row) =>
+      needle.length === 0 ||
+      row.name.toLowerCase().includes(needle) ||
+      row.url.toLowerCase().includes(needle),
+  );
+  const filtered =
+    statusFilter === undefined ? searched : searched.filter((row) => stateOf(row) === statusFilter);
 
+  // Counted over the search but not over the chip, so selecting one does not zero the others.
   const counts = {
-    active: all.filter((row) => row.active).length,
-    off: all.filter((row) => !row.active && row.disabledReason === null).length,
-    broken: all.filter((row) => !row.active && row.disabledReason !== null).length,
+    active: searched.filter((row) => stateOf(row) === 'active').length,
+    off: searched.filter((row) => stateOf(row) === 'off').length,
+    broken: searched.filter((row) => stateOf(row) === 'broken').length,
   };
 
   return (
     <>
       <PanelSection
-        title={<T k="webhook.title" />}
+        title={<T k="webhook.count" vars={{ count: all.length }} />}
         subtitle={<T k="webhook.subtitle" />}
         action={
           can('settings.integration.api', 'create') ? (
@@ -223,20 +208,17 @@ export function WebhookList(): ReactNode {
         }}
       />
 
-      <div className="px-5 pt-3">
-        <Feedback error={error} notice={notice} />
-      </div>
-
-      {signature !== null && (
-        <div className="mx-5 mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-          <p className="flex items-start gap-2 text-xs text-slate-600">
-            <KeyRound className="mt-0.5 size-3.5 shrink-0 text-slate-400" aria-hidden />
-            {/*
-              One sentence with the three signed parts as nodes. Splitting it into five labels
-              would assume the same word order in every language, and the <code> runs are
-              exactly what must not move relative to the prose around them.
-            */}
-            <span>
+      {/* The one note: how a receiver proves a request is ours, which is what it is built against. */}
+      {(error !== null || notice !== null || signature !== null) && (
+        <PanelBody className="space-y-2 pb-0">
+          <Feedback error={error} notice={notice} />
+          {signature !== null && (
+            <PanelNote icon={<KeyRound className="size-3.5" aria-hidden />}>
+              {/*
+                One sentence with the three signed parts as nodes. Splitting it into five labels
+                would assume the same word order in every language, and the <code> runs are exactly
+                what must not move relative to the prose around them.
+              */}
               <T
                 k="webhook.signature"
                 vars={{
@@ -244,27 +226,25 @@ export function WebhookList(): ReactNode {
                     <code className="font-mono text-[11px] text-slate-800">{signature.header}</code>
                   ),
                   format: <code className="font-mono text-[11px]">{signature.format}</code>,
-                  payload: (
-                    <code className="font-mono text-[11px]">{signature.signedPayload}</code>
-                  ),
+                  payload: <code className="font-mono text-[11px]">{signature.signedPayload}</code>,
                   seconds: signature.toleranceSeconds,
                 }}
               />
-            </span>
-          </p>
-        </div>
+            </PanelNote>
+          )}
+        </PanelBody>
       )}
 
-      <div className="mt-3">
-        <RecordTable
+      <RecordTable
+          framed
           loading={loading}
           rowCount={filtered.length}
           empty={<T k="webhook.empty" />}
           columns={[
             { header: <T k="webhook.column.name" /> },
-            { header: <T k="webhook.column.events" />, width: 'w-24' },
+            { header: <T k="webhook.column.events" />, width: 'w-24', align: 'right' },
+            { header: <T k="webhook.column.lastSent" />, width: 'w-44' },
             { header: <T k="panel.column.status" />, width: 'w-36' },
-            { header: <T k="webhook.column.lastSent" />, width: 'w-40' },
             { header: <T k="panel.column.actions" />, width: 'w-44', align: 'right' },
           ]}
         >
@@ -274,9 +254,8 @@ export function WebhookList(): ReactNode {
             const failing = row.active && row.failureCount > 0;
 
             return (
-              <>
+              <Fragment key={row.id}>
                 <tr
-                  key={row.id}
                   className={cn(
                     'border-b border-slate-100',
                     expanded ? 'bg-slate-50' : 'hover:bg-slate-50/70',
@@ -290,35 +269,8 @@ export function WebhookList(): ReactNode {
                       {row.url}
                     </span>
                   </td>
-                  <td className="px-2 py-2.5 text-xs tabular-nums text-slate-600">
+                  <td className="px-2 py-2.5 text-right text-xs text-slate-600 tabular-nums">
                     {row.events.length}
-                  </td>
-                  <td className="px-2 py-2.5">
-                    <span
-                      className={cn(
-                        'inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide',
-                        autoOff
-                          ? 'bg-rose-50 text-rose-700'
-                          : row.active
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : 'bg-slate-100 text-slate-600',
-                      )}
-                    >
-                      <T
-                        k={
-                          autoOff
-                            ? 'webhook.status.autoOff'
-                            : row.active
-                              ? 'webhook.status.active'
-                              : 'webhook.status.off'
-                        }
-                      />
-                    </span>
-                    {failing && (
-                      <span className="mt-0.5 block text-[11px] text-amber-700">
-                        <T k="webhook.failures" vars={{ count: row.failureCount }} />
-                      </span>
-                    )}
                   </td>
                   <td className="px-2 py-2.5 text-xs whitespace-nowrap text-slate-500">
                     {row.lastDeliveryAt === null ? (
@@ -341,6 +293,27 @@ export function WebhookList(): ReactNode {
                           </span>
                         )}
                       </>
+                    )}
+                  </td>
+                  <td className="px-2 py-2.5">
+                    <Badge
+                      tone={autoOff ? 'danger' : row.active ? 'success' : 'neutral'}
+                      className="uppercase"
+                    >
+                      <T
+                        k={
+                          autoOff
+                            ? 'webhook.status.autoOff'
+                            : row.active
+                              ? 'webhook.status.active'
+                              : 'webhook.status.off'
+                        }
+                      />
+                    </Badge>
+                    {failing && (
+                      <span className="mt-0.5 block text-[11px] text-amber-700">
+                        <T k="webhook.failures" vars={{ count: row.failureCount }} />
+                      </span>
                     )}
                   </td>
                   <td className="px-2 py-2.5 pr-4">
@@ -373,7 +346,7 @@ export function WebhookList(): ReactNode {
                           icon={<KeyRound className="size-4" aria-hidden />}
                           label={t('webhook.action.regenerate')}
                           tone="warn"
-                          onClick={() => void regenerate(row)}
+                          onClick={() => setRegenerating(row)}
                         />
                       )}
                       {can('settings.integration.api', 'edit') && (
@@ -399,7 +372,7 @@ export function WebhookList(): ReactNode {
                           icon={<Trash2 className="size-4" aria-hidden />}
                           label={t('webhook.action.remove')}
                           tone="danger"
-                          onClick={() => setConfirming(row)}
+                          onClick={() => setRemoving(row)}
                         />
                       )}
                       <ExpandButton
@@ -412,20 +385,16 @@ export function WebhookList(): ReactNode {
                 </tr>
 
                 {expanded && (
-                  <tr
-                    key={`${String(row.id)}-detail`}
-                    className="border-b border-slate-200 bg-slate-50"
-                  >
+                  <tr className="border-b border-slate-200 bg-slate-50">
                     <td colSpan={5} className="px-5 py-3">
                       <WebhookDetail row={row} triggers={triggers} />
                     </td>
                   </tr>
                 )}
-              </>
+              </Fragment>
             );
           })}
-        </RecordTable>
-      </div>
+      </RecordTable>
 
       <PanelFooter
         shown={filtered.length}
@@ -433,31 +402,12 @@ export function WebhookList(): ReactNode {
         page={1}
         pageSize={Math.max(1, all.length)}
         pageSizes={[Math.max(1, all.length)]}
+        generatedAt={loadedAt}
         loading={loading}
         onPage={() => undefined}
         onPageSize={() => undefined}
         onRefresh={() => void load()}
       />
-
-      <PanelBody className="pt-0">
-        <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-          <T
-            k="webhook.retry.note"
-            vars={{
-              noRetry: (
-                <strong className="font-medium">
-                  <T k="webhook.retry.note.noRetry" />
-                </strong>
-              ),
-              retried: (
-                <strong className="font-medium">
-                  <T k="webhook.retry.note.retried" />
-                </strong>
-              ),
-            }}
-          />
-        </PanelNote>
-      </PanelBody>
 
       {editing !== null && (
         <WebhookDialog
@@ -491,29 +441,43 @@ export function WebhookList(): ReactNode {
         />
       )}
 
-      {confirming !== null && (
-        <Dialog
-          title={<T k="webhook.remove.title" vars={{ name: confirming.name }} />}
-          titleText={t('webhook.remove.title', { name: confirming.name })}
-          onClose={() => setConfirming(null)}
-        >
-          <div className="space-y-3">
-            <p className="text-sm text-slate-700">
-              <T k="webhook.remove.body" />
-            </p>
-            <div className="flex justify-end gap-2 border-t border-slate-200 pt-3">
-              <Button variant="ghost" onClick={() => setConfirming(null)}>
-                <T k="dialog.cancel" />
-              </Button>
-              <Button
-                onClick={() => void remove(confirming)}
-                className="bg-rose-600 hover:bg-rose-500"
-              >
-                <T k="app.remove" />
-              </Button>
-            </div>
-          </div>
-        </Dialog>
+      {/*
+        A new key used to be issued on the click. The receiver keeps verifying against the old one,
+        so every delivery from that moment fails its signature check until somebody updates it —
+        said before it happens, not discovered in the delivery log.
+      */}
+      {regenerating !== null && (
+        <RemoveDialog
+          title={<T k="webhook.regenerate.title" vars={{ name: regenerating.name }} />}
+          titleText={t('webhook.regenerate.title', { name: regenerating.name })}
+          description={<T k="webhook.regenerate.body" />}
+          submitLabel={<T k="webhook.regenerate.submit" />}
+          onConfirm={async () => {
+            const outcome = await apiAdminApi.regenerateWebhookSecret(regenerating.id);
+            setRegenerating(null);
+            setError(null);
+            setNotice(null);
+            setRevealed({ secret: outcome.secret, regenerated: true });
+            await load();
+          }}
+          onClose={() => setRegenerating(null)}
+        />
+      )}
+
+      {removing !== null && (
+        <RemoveDialog
+          title={<T k="webhook.remove.title" vars={{ name: removing.name }} />}
+          titleText={t('webhook.remove.title', { name: removing.name })}
+          description={<T k="webhook.remove.body" />}
+          onConfirm={async () => {
+            await apiAdminApi.deleteWebhook(removing.id);
+            setRemoving(null);
+            setError(null);
+            setNotice(t('webhook.removed', { name: removing.name }));
+            await load();
+          }}
+          onClose={() => setRemoving(null)}
+        />
       )}
     </>
   );
@@ -588,6 +552,25 @@ function WebhookDetail({
       <div>
         <p className="text-[11px] font-medium tracking-wide text-slate-500 uppercase">
           <T k="webhook.detail.recent" />
+        </p>
+        {/* The retry rule, beside the attempts it explains: why one failure shows one attempt and
+            another shows three. */}
+        <p className="mt-0.5 text-[11px] text-slate-500">
+          <T
+            k="webhook.retry.note"
+            vars={{
+              noRetry: (
+                <strong className="font-medium">
+                  <T k="webhook.retry.note.noRetry" />
+                </strong>
+              ),
+              retried: (
+                <strong className="font-medium">
+                  <T k="webhook.retry.note.retried" />
+                </strong>
+              ),
+            }}
+          />
         </p>
 
         {error !== null && <p className="mt-1 text-xs text-rose-700">{error}</p>}

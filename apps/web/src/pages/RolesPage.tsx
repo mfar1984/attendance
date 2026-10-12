@@ -1,9 +1,9 @@
-﻿import { Eye, Lock, Pencil, Plus, Trash2, Users } from 'lucide-react';
+﻿import { Eye, Pencil, Plus, Trash2, Users } from 'lucide-react';
 import { groupByDomain, type LabelKey } from '@attendance/shared';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
-import { Dialog, Feedback } from '../components/Dialog';
+import { Feedback } from '../components/Dialog';
 import {
   ChipBar,
   Detail,
@@ -13,13 +13,14 @@ import {
   PanelBody,
   PanelCard,
   PanelFooter,
-  PanelNote,
   PanelSection,
   RecordTable,
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
+import { RemoveDialog } from '../components/RemoveDialog';
 import { Badge, Button } from '../components/ui';
+import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import { formatDate, formatDateTime } from '../lib/operations-api';
 import {
@@ -31,25 +32,29 @@ import {
 } from '../lib/settings-api';
 import { T, useLabels } from '../lib/translation';
 
+const SCREEN = 'settings.roles';
+
 /**
  * Roles list.
  *
- * The matrix lives on its own page rather than in a dialog. Thirty-five screens with
- * up to nine actions each makes a grid that needs the width of the viewport, and the
- * section a row belongs to has to stay visible while its checkbox is being ticked.
+ * The matrix lives on its own page rather than in a dialog. Thirty-five screens with up to nine
+ * actions each makes a grid that needs the width of the viewport, and the section a row belongs to
+ * has to stay visible while its checkbox is being ticked.
  */
 export function RolesPage(): ReactNode {
   const navigate = useNavigate();
   const { t } = useLabels();
+  const { can } = useAuth();
   const [rows, setRows] = useState<RoleRow[] | null>(null);
   const [matrix, setMatrix] = useState<PermissionMatrix | null>(null);
+  const [loadedAt, setLoadedAt] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [open, setOpen] = useState<number | null>(null);
-  const [confirming, setConfirming] = useState<RoleRow | null>(null);
+  const [removing, setRemoving] = useState<RoleRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,6 +62,7 @@ export function RolesPage(): ReactNode {
       const [list, definition] = await Promise.all([rolesApi.list(), rolesApi.matrix()]);
       setRows(list);
       setMatrix(definition);
+      setLoadedAt(new Date().toISOString());
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('roles.error.load'));
@@ -69,47 +75,36 @@ export function RolesPage(): ReactNode {
     void load();
   }, [load]);
 
-  const filtered = useMemo(() => {
-    if (!rows) return [];
+  const searched = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return rows.filter((row) => {
-      if (status !== undefined && row.status !== status) return false;
-      if (needle.length === 0) return true;
-      return (
+    return (rows ?? []).filter(
+      (row) =>
+        needle.length === 0 ||
         row.name.toLowerCase().includes(needle) ||
-        (row.description ?? '').toLowerCase().includes(needle)
-      );
-    });
-  }, [rows, search, status]);
+        (row.description ?? '').toLowerCase().includes(needle),
+    );
+  }, [rows, search]);
+  const filtered =
+    status === undefined ? searched : searched.filter((row) => row.status === status);
 
+  // Counted over the search but not over the chip, so choosing one does not zero the other.
   const counts = {
-    active: (rows ?? []).filter((row) => row.status === 'active').length,
-    inactive: (rows ?? []).filter((row) => row.status === 'inactive').length,
+    active: searched.filter((row) => row.status === 'active').length,
+    inactive: searched.filter((row) => row.status === 'inactive').length,
   };
-
-  async function remove(role: RoleRow): Promise<void> {
-    setConfirming(null);
-    setError(null);
-    setNotice(null);
-    try {
-      await rolesApi.remove(role.id);
-      setNotice(t('roles.notice.removed', { name: role.name }));
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('roles.error.remove'));
-    }
-  }
 
   return (
     <PanelCard title={<T k="roles.title" />} subtitle={<T k="roles.subtitle" />}>
       <PanelSection
-        title={<T k="roles.section.title" />}
+        title={<T k="roles.count" vars={{ count: rows?.length ?? 0 }} />}
         subtitle={<T k="roles.section.subtitle" />}
         action={
-          <Button onClick={() => void navigate('/tetapan/peranan/baharu')}>
-            <Plus className="size-4" aria-hidden />
-            <T k="roles.action.new" />
-          </Button>
+          can(SCREEN, 'create') ? (
+            <Button onClick={() => void navigate('/tetapan/peranan/baharu')}>
+              <Plus className="size-4" aria-hidden />
+              <T k="roles.action.new" />
+            </Button>
+          ) : undefined
         }
       />
 
@@ -127,7 +122,7 @@ export function RolesPage(): ReactNode {
             id: 'inactive',
             label: <T k="app.status.inactive" />,
             count: counts.inactive,
-            dot: 'bg-rose-500',
+            dot: 'bg-slate-400',
           },
         ]}
       />
@@ -143,57 +138,42 @@ export function RolesPage(): ReactNode {
         }}
       />
 
-      <PanelBody className="space-y-3 pb-0">
-        <Feedback error={error} notice={notice} />
+      {(error !== null || notice !== null) && (
+        <PanelBody className="pb-0">
+          <Feedback error={error} notice={notice} />
+        </PanelBody>
+      )}
 
-        {/*
-          The immutability of the device log is stated on the screen, not just enforced
-          in the request handler. An administrator who cannot find the permission will
-          otherwise assume it is a bug and go looking for a way round it.
-        */}
-        <PanelNote icon={<Lock className="size-3.5" aria-hidden />}>
-          <T
-            k="roles.note.immutable"
-            vars={{
-              emphasis: (
-                <strong className="font-medium text-slate-700">
-                  <T k="roles.note.immutable.emphasis" />
-                </strong>
-              ),
-            }}
+      <RecordTable
+        framed
+        loading={loading}
+        rowCount={filtered.length}
+        empty={<T k="roles.empty" />}
+        columns={[
+          { header: <T k="roles.column.name" />, width: 'w-56' },
+          { header: <T k="roles.column.description" /> },
+          { header: <T k="roles.column.accounts" />, width: 'w-24', align: 'right' },
+          { header: <T k="roles.column.permissions" />, width: 'w-36' },
+          { header: <T k="panel.column.created" />, width: 'w-28' },
+          { header: <T k="panel.column.status" />, width: 'w-28' },
+          { header: <T k="panel.column.actions" />, width: 'w-36', align: 'right' },
+        ]}
+      >
+        {filtered.map((role) => (
+          <RoleRowView
+            key={role.id}
+            role={role}
+            matrix={matrix}
+            mayEdit={can(SCREEN, 'edit')}
+            mayRemove={can(SCREEN, 'delete')}
+            expanded={open === role.id}
+            onToggle={() => setOpen(open === role.id ? null : role.id)}
+            onView={() => void navigate(`/tetapan/peranan/${String(role.id)}?baca=1`)}
+            onEdit={() => void navigate(`/tetapan/peranan/${String(role.id)}`)}
+            onDelete={() => setRemoving(role)}
           />
-        </PanelNote>
-      </PanelBody>
-
-      <div className="mt-3">
-        <RecordTable
-          loading={loading}
-          rowCount={filtered.length}
-          empty={<T k="roles.empty" />}
-          columns={[
-            { header: <T k="roles.column.name" />, width: 'w-56' },
-            { header: <T k="roles.column.description" /> },
-            { header: <T k="roles.column.accounts" />, width: 'w-24' },
-            { header: <T k="roles.column.permissions" />, width: 'w-36' },
-            { header: <T k="panel.column.status" />, width: 'w-28' },
-            { header: <T k="panel.column.created" />, width: 'w-28' },
-            { header: <T k="panel.column.actions" />, width: 'w-36', align: 'right' },
-          ]}
-        >
-          {filtered.map((role) => (
-            <RoleRowView
-              key={role.id}
-              role={role}
-              matrix={matrix}
-              expanded={open === role.id}
-              onToggle={() => setOpen(open === role.id ? null : role.id)}
-              onView={() => void navigate(`/tetapan/peranan/${String(role.id)}?baca=1`)}
-              onEdit={() => void navigate(`/tetapan/peranan/${String(role.id)}`)}
-              onDelete={() => setConfirming(role)}
-            />
-          ))}
-        </RecordTable>
-      </div>
+        ))}
+      </RecordTable>
 
       <PanelFooter
         shown={filtered.length}
@@ -201,39 +181,27 @@ export function RolesPage(): ReactNode {
         page={1}
         pageSize={Math.max(1, rows?.length ?? 1)}
         pageSizes={[Math.max(1, rows?.length ?? 1)]}
+        generatedAt={loadedAt}
         loading={loading}
         onPage={() => undefined}
         onPageSize={() => undefined}
         onRefresh={() => void load()}
       />
 
-      {confirming !== null && (
-        <Dialog
-          title={<T k="roles.remove.title" vars={{ name: confirming.name }} />}
-          titleText={t('roles.remove.title', { name: confirming.name })}
-          onClose={() => setConfirming(null)}
-        >
-          <div className="space-y-3">
-            <p className="text-sm text-slate-700">
-              {confirming.accountCount > 0 ? (
-                <T k="roles.remove.blocked" vars={{ count: confirming.accountCount }} />
-              ) : (
-                <T k="roles.remove.safe" />
-              )}
-            </p>
-            <div className="flex justify-end gap-2 border-t border-slate-200 pt-3">
-              <Button variant="ghost" onClick={() => setConfirming(null)}>
-                <T k="dialog.cancel" />
-              </Button>
-              <Button
-                onClick={() => void remove(confirming)}
-                className="bg-rose-600 hover:bg-rose-500"
-              >
-                <T k="app.remove" />
-              </Button>
-            </div>
-          </div>
-        </Dialog>
+      {removing !== null && (
+        <RemoveDialog
+          title={<T k="roles.remove.title" vars={{ name: removing.name }} />}
+          titleText={t('roles.remove.title', { name: removing.name })}
+          description={<T k="roles.remove.safe" />}
+          onConfirm={async () => {
+            await rolesApi.remove(removing.id);
+            setRemoving(null);
+            setError(null);
+            setNotice(t('roles.notice.removed', { name: removing.name }));
+            await load();
+          }}
+          onClose={() => setRemoving(null)}
+        />
       )}
     </PanelCard>
   );
@@ -242,6 +210,8 @@ export function RolesPage(): ReactNode {
 function RoleRowView({
   role,
   matrix,
+  mayEdit,
+  mayRemove,
   expanded,
   onToggle,
   onView,
@@ -250,6 +220,8 @@ function RoleRowView({
 }: {
   role: RoleRow;
   matrix: PermissionMatrix | null;
+  mayEdit: boolean;
+  mayRemove: boolean;
   expanded: boolean;
   onToggle: () => void;
   onView: () => void;
@@ -262,8 +234,8 @@ function RoleRowView({
   /**
    * Coverage chips clustered by domain, in the same order the rail and the matrix use.
    *
-   * Dashboard maps to no domain and keeps its place first, unlabelled — it summarises every
-   * domain rather than sitting in one.
+   * Dashboard maps to no domain and keeps its place first, unlabelled — it summarises every domain
+   * rather than sitting in one.
    */
   const coverageClusters = useMemo(() => {
     if (matrix === null) return [];
@@ -271,9 +243,7 @@ function RoleRowView({
     const { ungrouped, domains } = groupByDomain(matrix.sections, (section) => section.labelKey);
 
     return [
-      ...(ungrouped.length > 0
-        ? [{ key: 'ungrouped', labelKey: undefined, sections: ungrouped }]
-        : []),
+      ...(ungrouped.length > 0 ? [{ key: 'ungrouped', labelKey: undefined, sections: ungrouped }] : []),
       ...domains.map((domain) => ({
         key: domain.key as string,
         labelKey: domain.labelKey as LabelKey | undefined,
@@ -288,20 +258,20 @@ function RoleRowView({
         className={cn(
           'border-b border-slate-100',
           expanded ? 'bg-slate-50' : 'hover:bg-slate-50/70',
-          inactive && !expanded && 'bg-rose-50/40',
+          inactive && !expanded && 'bg-amber-50/40',
         )}
       >
         <td className="px-5 py-2.5">
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
-              onClick={onEdit}
+              onClick={mayEdit ? onEdit : onView}
               className="hover:text-brand-600 font-medium text-slate-800 hover:underline"
             >
               {role.name}
             </button>
             {role.systemRole && (
-              <Badge tone="neutral">
+              <Badge tone="info" className="uppercase">
                 <T k="roles.badge.system" />
               </Badge>
             )}
@@ -312,7 +282,7 @@ function RoleRowView({
           {role.description ?? <span className="text-slate-400">—</span>}
         </td>
 
-        <td className="px-2 py-2.5">
+        <td className="px-2 py-2.5 text-right">
           <span className="inline-flex items-center gap-1.5 text-slate-700">
             <Users className="size-3.5 text-slate-400" aria-hidden />
             <span className="tabular-nums">{role.accountCount}</span>
@@ -323,23 +293,15 @@ function RoleRowView({
           <PermissionCoverage granted={role.permissionCount} total={role.permissionTotal} />
         </td>
 
-        <td className="px-2 py-2.5">
-          {/*
-            Upper case comes from the class, not from the string. `.toUpperCase()` on a
-            translated word is not safe in every language, and the badge is presentation.
-          */}
-          <span
-            className={cn(
-              'inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase',
-              inactive ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700',
-            )}
-          >
-            <T k={inactive ? 'app.status.inactive' : 'app.status.active'} />
-          </span>
-        </td>
-
         <td className="px-2 py-2.5 text-xs whitespace-nowrap text-slate-500">
           {formatDate(role.createdAt)}
+        </td>
+
+        <td className="px-2 py-2.5">
+          {/* Upper case comes from the class: `.toUpperCase()` on a translated word is not safe. */}
+          <Badge tone={inactive ? 'neutral' : 'success'} className="uppercase">
+            <T k={inactive ? 'app.status.inactive' : 'app.status.active'} />
+          </Badge>
         </td>
 
         <td className="px-2 py-2.5 pr-4">
@@ -350,17 +312,19 @@ function RoleRowView({
               tone="view"
               onClick={onView}
             />
-            <RowAction
-              icon={<Pencil className="size-4" aria-hidden />}
-              label={t('roles.row.edit')}
-              tone="edit"
-              onClick={onEdit}
-            />
+            {mayEdit && (
+              <RowAction
+                icon={<Pencil className="size-4" aria-hidden />}
+                label={t('roles.row.edit')}
+                tone="edit"
+                onClick={onEdit}
+              />
+            )}
             {/*
-              Absent rather than disabled for system roles: the seed and operator habit
-              both refer to them by name, so there is no state in which this should act.
+              Absent rather than disabled for system roles: the seed and operator habit both refer
+              to them by name, so there is no state in which this should act.
             */}
-            {!role.systemRole && (
+            {mayRemove && !role.systemRole && (
               <RowAction
                 icon={<Trash2 className="size-4" aria-hidden />}
                 label={
@@ -385,15 +349,10 @@ function RoleRowView({
               <Detail
                 label={<T k="roles.detail.systemRole" />}
                 value={
-                  role.systemRole
-                    ? t('roles.detail.systemRole.yes')
-                    : t('roles.detail.systemRole.no')
+                  role.systemRole ? t('roles.detail.systemRole.yes') : t('roles.detail.systemRole.no')
                 }
               />
-              <Detail
-                label={<T k="roles.detail.accounts" />}
-                value={String(role.accountCount)}
-              />
+              <Detail label={<T k="roles.detail.accounts" />} value={String(role.accountCount)} />
               <Detail
                 label={<T k="roles.detail.permissions" />}
                 value={t('roles.detail.permissions.value', {
@@ -402,17 +361,13 @@ function RoleRowView({
                 })}
               />
               <Detail label={<T k="panel.column.created" />} value={formatDateTime(role.createdAt)} />
-              <Detail
-                label={<T k="roles.detail.updated" />}
-                value={formatDateTime(role.updatedAt)}
-              />
+              <Detail label={<T k="roles.detail.updated" />} value={formatDateTime(role.updatedAt)} />
               <Detail label={<T k="roles.detail.id" />} value={String(role.id)} mono />
             </DetailGrid>
 
             {/*
-              Coverage per section rather than a list of every grant. Thirty-five rows of
-              detail belongs on the editor page; what is useful here is which areas the
-              role reaches at all.
+              Coverage per section rather than a list of every grant. Thirty-five rows of detail
+              belongs on the editor page; what is useful here is which areas the role reaches at all.
             */}
             {matrix !== null && (
               <div className="mt-3 border-t border-slate-200 pt-3">
@@ -420,11 +375,9 @@ function RoleRowView({
                   <T k="roles.detail.coverage" />
                 </p>
                 {/*
-                  Clustered by domain, from the same shared mapping the rail and the matrix use.
-
-                  Ten chips in one wrap could be read in any order, so the clusters do real work
-                  here beyond matching the other screens: "covers all of Operasi, none of Sumber
-                  Manusia" is the shape of a role, and a flat row of chips does not show it.
+                  Clustered by domain, from the same shared mapping the rail and the matrix use. "Covers
+                  all of Operasi, none of Sumber Manusia" is the shape of a role, and a flat row of
+                  chips does not show it.
                 */}
                 {coverageClusters.map((cluster) => (
                   <div key={cluster.key} className="mb-2 flex flex-wrap items-baseline gap-2">
@@ -470,13 +423,7 @@ function RoleRowView({
 }
 
 /** Screens the role can open but not change, which is the common source of confusion. */
-function ReadOnlyScreens({
-  matrix,
-  role,
-}: {
-  matrix: PermissionMatrix;
-  role: RoleRow;
-}): ReactNode {
+function ReadOnlyScreens({ matrix, role }: { matrix: PermissionMatrix; role: RoleRow }): ReactNode {
   const { t } = useLabels();
   const viewOnly = matrix.sections
     .flatMap((section) => section.screens)
@@ -506,8 +453,8 @@ function ReadOnlyScreens({
 /**
  * Granted against available, with a bar.
  *
- * The ratio matters more than the number: "63 / 123" tells you at a glance whether a
- * role is narrow or nearly unrestricted, which a bare count does not.
+ * The ratio matters more than the number: "63 / 123" tells you at a glance whether a role is narrow
+ * or nearly unrestricted, which a bare count does not.
  */
 function PermissionCoverage({ granted, total }: { granted: number; total: number }): ReactNode {
   const { t } = useLabels();
@@ -515,7 +462,7 @@ function PermissionCoverage({ granted, total }: { granted: number; total: number
 
   return (
     <div className="min-w-28">
-      <p className="text-xs tabular-nums text-slate-700">
+      <p className="text-xs text-slate-700 tabular-nums">
         {granted} <span className="text-slate-400">/ {total}</span>
       </p>
       <div
@@ -537,5 +484,3 @@ function PermissionCoverage({ granted, total }: { granted: number; total: number
     </div>
   );
 }
-
-

@@ -16,7 +16,7 @@ import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import { apiAdminApi, type ApiConfig, type SecurityConfig } from '../lib/settings-api';
 import { T, useLabels } from '../lib/translation';
-import { ApiTokenList, TokenPolicyNote } from './ApiTokenList';
+import { ApiTokenList } from './ApiTokenList';
 import { CONTROL, ChannelHint, ChannelSwitch, SettingRow, Switch } from './ChannelForm';
 import { Feedback } from './Dialog';
 import {
@@ -437,13 +437,9 @@ export function ApiWebhookTab(): ReactNode {
       )}
 
       {/* Tokens and webhooks own their own loading and feedback: they talk to their own
-          endpoints rather than to the configuration above. Both stay full-bleed, because
-          they are tables and their cells carry the padding. */}
-      <ApiTokenList />
-
-      <PanelBody className="pt-0">
-        <TokenPolicyNote graceHours={security?.policy.rotationGraceHours ?? 24} />
-      </PanelBody>
+          endpoints rather than to the configuration above. The grace window is read here because
+          the rotate dialog states it at the moment somebody decides to rotate. */}
+      <ApiTokenList graceHours={security?.policy.rotationGraceHours ?? 24} />
 
       <WebhookList />
     </>

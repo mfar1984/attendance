@@ -514,6 +514,17 @@ export const LABELS = {
   'dialog.cancel': 'Batal',
   'dialog.save': 'Simpan',
 
+  /**
+   * The credential dialog every issued secret is shown in once.
+   *
+   * `recorded` is not "Tutup": closing that dialog is an acknowledgement that the value has been
+   * kept, and it is the only chance to keep it. These were literals in the component.
+   */
+  'dialog.copy': 'Salin',
+  'dialog.copyBoth': 'Salin kedua-duanya',
+  'dialog.copied': 'Disalin',
+  'dialog.recorded': 'Saya sudah rekod',
+
   // -------------------------------------------------------------------------
   // Perbendaharaan kata domain
   //
@@ -2427,6 +2438,12 @@ export const LABELS = {
   'logs.tab.activity': 'Log Aktiviti',
   'logs.tab.audit': 'Log Audit',
 
+  /** Each tab's heading is its count; the subtitle says which of the two logs this is. */
+  'logs.activity.count': '{count} entri aktiviti',
+  'logs.activity.subtitle':
+    'Apa yang dilakukan dalam sistem, termasuk log masuk dan bacaan. Apa yang berubah pada rekod ada dalam Log Audit.',
+  'logs.audit.count': '{count} entri audit',
+
   'logs.activity.error.load': 'Gagal memuatkan log aktiviti',
   'logs.activity.search': 'Cari mesej, pengguna, IP, laluan…',
   'logs.activity.empty': 'Tiada aktiviti sepadan dengan penapis ini.',
@@ -3737,27 +3754,15 @@ export const LABELS = {
   // -------------------------------------------------------------------------
   'roles.title': 'Pengurusan Peranan',
   'roles.subtitle': 'Urus peranan pengguna dan kebenaran aksesnya.',
-  'roles.section.title': 'Peranan',
+  'roles.count': '{count} peranan',
   'roles.section.subtitle':
     'Setiap akaun memegang satu peranan. Peranan itulah yang menentukan apa boleh dilihat dan apa boleh diubah.',
   'roles.action.new': 'Peranan Baharu',
 
-  /** Shown as a chip and as a row badge; one label because it is the same state. */
-
   'roles.search': 'Cari nama atau keterangan peranan…',
   'roles.empty': 'Tiada peranan sepadan dengan penapis ini.',
   'roles.error.load': 'Gagal memuatkan peranan',
-  'roles.error.remove': 'Gagal membuang peranan',
   'roles.notice.removed': 'Peranan "{name}" dibuang.',
-
-  /**
-   * The lead clause is bold, so it arrives as a var holding a node rather than as a
-   * separate label. Split in two, a translator cannot move the emphasis to whichever
-   * clause carries the weight in their language.
-   */
-  'roles.note.immutable':
-    '{emphasis} Tiada peranan — termasuk Super Admin — boleh diberi kebenaran mengubahnya. Ia adalah bukti apabila rekod kehadiran dipertikaikan, jadi keupayaan itu tidak wujud dalam sistem.',
-  'roles.note.immutable.emphasis': 'Log Scan Mentah dan Log Audit hanya boleh dibaca.',
 
   'roles.column.name': 'Nama peranan',
   'roles.column.description': 'Keterangan',
@@ -3784,8 +3789,6 @@ export const LABELS = {
   'roles.viewOnly.heading': 'Boleh lihat tetapi tidak boleh ubah ({count})',
 
   'roles.remove.title': 'Buang peranan "{name}"?',
-  'roles.remove.blocked':
-    '{count} akaun masih menggunakan peranan ini. Permintaan akan ditolak — tukar akaun tersebut ke peranan lain dahulu.',
   'roles.remove.safe': 'Tiada akaun menggunakan peranan ini, jadi ia selamat dibuang.',
 
   // -------------------------------------------------------------------------
@@ -3943,7 +3946,6 @@ export const LABELS = {
   'backup.error.load': 'Gagal membaca senarai backup',
   'backup.error.savePolicy': 'Gagal menyimpan jadual',
   'backup.error.run': 'Backup gagal',
-  'backup.error.remove': 'Gagal membuang fail',
   'backup.notice.removed': '{name} dibuang.',
 
   /**
@@ -3985,6 +3987,10 @@ export const LABELS = {
   'backup.keep.unit': 'fail',
   'backup.keep.minimum': 'Minimum 2',
   'backup.policy.save': 'Simpan jadual',
+  'backup.policy.saved': 'Jadual backup disimpan.',
+  'backup.policy.hint':
+    'Menyimpan jadual sahaja. Had simpanan yang lebih rendah membuang fail lama pada larian seterusnya, bukan sekarang.',
+  'backup.run.unavailable': 'mysqldump tidak dijumpai pada pelayan ini',
 
   'backup.destination.group': 'Destinasi Simpanan',
   'backup.destination.summary': 'cakera setempat',
@@ -3997,7 +4003,7 @@ export const LABELS = {
     'Dump disimpan pada {sameDisk} dengan pangkalan data. Tolakan automatik ke FTP, SFTP atau storan awan belum dibina: fail ini mengandungi setiap rekod kehadiran dan setiap hash kata laluan, jadi menghantarnya ke host luar tanpa pengawasan memerlukan kredensial host itu disimpan di sini dan menambah satu lagi cara kerja pukul 2 pagi boleh gagal. Sampai itu dibina dengan betul, muat turun fail ke luar mesin ini secara berkala.',
   'backup.destination.warning.sameDisk': 'cakera yang sama',
 
-  'backup.files.title': 'Fail Backup',
+  'backup.files.count': '{count} fail backup',
   'backup.files.subtitle':
     'Terbaharu di atas. Muat turun ke luar mesin ini — backup pada cakera yang gagal tidak menolong.',
   'backup.files.empty': 'Belum ada fail backup.',
@@ -4013,8 +4019,6 @@ export const LABELS = {
   'backup.restore.warning':
     'Restore menulis ganti data semasa. Hentikan pelayan dahulu, jika tidak scan yang masuk semasa restore akan hilang tanpa jejak.',
   'backup.restore.lead': 'Jalankan arahan ini pada pelayan selepas menghentikan aplikasi:',
-  'backup.restore.note':
-    'Butang restore dalam skrin web ialah satu klik yang menulis ganti setiap rekod kehadiran, dicapai oleh sesiapa yang sampai ke skrin ini. Mencetak arahannya mengekalkan keputusan itu pada orang yang menjalankannya.',
 
   'backup.remove.title': 'Buang fail backup?',
   'backup.remove.body':
@@ -4245,7 +4249,6 @@ export const LABELS = {
   'translation.error.load': 'Gagal memuatkan senarai bahasa',
   'translation.error.status': 'Gagal menukar status',
   'translation.error.default': 'Gagal menukar bahasa lalai',
-  'translation.error.remove': 'Gagal membuang bahasa',
 
   'translation.notice.enabled': '{name} dihidupkan.',
   'translation.notice.disabled': '{name} dimatikan. Antara muka kembali ke bahasa sumber.',
@@ -4256,8 +4259,13 @@ export const LABELS = {
   'translation.notice.removed': '{name} dibuang.',
   'translation.notice.removed.withTranslations': '{name} dibuang bersama {count} terjemahan.',
 
-  'translation.numbers.show': 'Tunjuk Label',
-  'translation.numbers.hide': 'Sembunyi Label',
+  'translation.count': '{count} bahasa',
+  'translation.numbers.group': 'Diagnostik',
+  'translation.numbers.label': 'Tunjuk nombor label',
+  'translation.numbers.hint':
+    'Mencap nombor pada setiap label di seluruh antara muka, supaya satu label boleh dicari tanpa memburu skrin. Mati sendiri apabila tab pelayar ditutup.',
+  'translation.numbers.state.on': 'Dipaparkan',
+  'translation.numbers.state.off': 'Disembunyikan',
   'translation.numbers.legend':
     'Nombor label sedang dipaparkan di seluruh antara muka. Yang {source} ambar bermakna masih perkataan sumber, yang {translated} hijau bermakna sudah diterjemah, dan {unregistered} bermakna label itu belum didaftarkan. Mod ini mati sendiri apabila tab pelayar ditutup.',
 
@@ -4288,9 +4296,6 @@ export const LABELS = {
     'Bahasa sumber tidak boleh dibuang — label ditulis dalam bahasa ini',
   'translation.row.remove': 'Buang {name}',
 
-  'translation.note.addedInactive':
-    'Bahasa baharu ditambah dalam keadaan {inactive}. Bahasa yang separuh diterjemah lalu dihidupkan akan memaparkan skrin yang separuh satu bahasa dan separuh yang lain, yang terbaca sebagai skrin rosak dan bukan sebagai terjemahan yang belum siap.',
-  'translation.note.addedInactive.inactive': 'tidak aktif',
   'translation.note.fallback':
     'Terjemahan yang kosong bermakna label itu jatuh kembali ke bahasa sumber. Tiada label yang akan kosong pada skrin kerana belum diterjemah.',
 
@@ -4328,12 +4333,9 @@ export const LABELS = {
     'Bahasa sumber. Perkataannya datang dari kod aplikasi dan tidak disunting di sini.',
   'translation.editor.progress': '{done} / {total}',
   'translation.editor.back': 'Senarai bahasa',
-  'translation.editor.sourceWarning':
-    'Ini bahasa sumber. Perkataannya ditulis dalam kod aplikasi, jadi ia tidak boleh disunting di sini — satu salinan tersimpan akan menjadi tempat kedua perkataan itu ditetapkan, dan salinan itu akan menang atas setiap pembetulan yang dibuat kemudian dalam kod.',
   'translation.editor.group': 'Label',
   'translation.editor.group.subtitle':
     'Nombor di sebelah setiap label ialah ID-nya, dan ia tidak berubah.',
-  'translation.editor.labelCount': '{count} label',
   'translation.editor.hint':
     'Biarkan kosong untuk menggunakan perkataan Bahasa Melayu. Label yang belum diterjemah tidak akan kosong pada skrin.',
   'translation.editor.dirty': 'Ada perubahan belum disimpan.',
@@ -4401,6 +4403,24 @@ export const LABELS = {
   'device.column.serial': 'Serial',
   'device.column.seen': 'Dilihat',
 
+  /**
+   * Who reaches this terminal, when it is not this server.
+   *
+   * On the row because a terminal behind a connector that has never enrolled reports exactly like
+   * a broken unit — offline, nothing arriving — and its own status cannot say so: reconcile stops
+   * touching the row the moment it is assigned.
+   */
+  'device.row.viaAgent': 'melalui {agent}',
+
+  /**
+   * On the row, because it is the whole reason such a terminal records nothing.
+   *
+   * The driver already reports it as a warning, but a warning count in the health tab is not where
+   * somebody looks when asking why one terminal is quiet. Shown where the address would be, since
+   * on this protocol the serial is the address.
+   */
+  'device.row.noSerial': 'Tiada nombor siri — scan ditolak',
+
   'device.row.unknownModel': 'model tidak diketahui',
   'device.row.neverSeen': 'belum pernah',
   'device.row.edit': 'Ubah tetapan terminal',
@@ -4435,6 +4455,15 @@ export const LABELS = {
   'device.dialog.name': 'Nama',
   'device.dialog.name.placeholder': 'cth. Pintu Utama',
   'device.dialog.host': 'IP / hostname',
+  /**
+   * The same column, worded for a protocol the server never dials.
+   *
+   * Calling it "IP / hostname" beside a port and an HTTPS toggle implied the server would connect
+   * to it. On a callback protocol it is a note for whoever has to find the unit later.
+   */
+  'device.dialog.host.lastKnown': 'Alamat terakhir diketahui',
+  'device.dialog.host.lastKnown.hint':
+    'Pelayan tidak pernah menghubungi terminal ini — terminal yang menghubungi pelayan. Alamat ini disimpan untuk diagnosis sahaja.',
   'device.dialog.port': 'Port',
   'device.dialog.vendor': 'Jenama',
   'device.dialog.protocol': 'Protokol',
@@ -4449,6 +4478,19 @@ export const LABELS = {
     'Pelayan menghubungi terminal ini. Untuk tapak jauh, pelayan mesti dapat mencapai alamatnya — biasanya melalui VPN tapak-ke-tapak.',
   'device.dialog.reach.outbound':
     'Terminal ini menghubungi pelayan, bukan sebaliknya. Tiada capaian masuk diperlukan, jadi tapak jauh tidak perlukan VPN — cuma sambungan keluar ke pelayan ini.',
+
+  /**
+   * The serial number, and on a callback protocol the terminal's only identity.
+   *
+   * Two hints because the field means different things per protocol: on ISAPI the probe reads it
+   * from the unit, so typing it is optional; on TA Push nothing can be read and a row without one
+   * rejects every scan its own terminal sends.
+   */
+  'device.dialog.serial': 'Nombor siri',
+  'device.dialog.serial.hint.required':
+    'Terminal ini mengenali dirinya kepada pelayan melalui nombor sirinya sahaja. Ambil dari label pada unit atau dari menunya sendiri — tanpa ia, setiap scan ditolak sebagai datang dari terminal tidak berdaftar.',
+  'device.dialog.serial.hint.optional':
+    'Pilihan. Pemeriksaan selepas simpan membacanya dari terminal dan mengisinya sendiri.',
 
   'device.dialog.https': 'Guna HTTPS',
   'device.dialog.username': 'Pengguna',
@@ -4480,8 +4522,31 @@ export const LABELS = {
   'device.connection.agent': 'Agent',
   'device.connection.agent.body':
     'Pelayan di cloud. Connector on-site dail keluar ke pelayan, jadi tiada port masuk perlu dibuka pada rangkaian hospital.',
-  'device.connection.active': 'aktif',
+
   'device.connection.fixed': 'Mod ditetapkan melalui {env} dan tidak boleh ditukar dari skrin ini.',
+
+  /**
+   * The second ingest path, for terminals that dial out.
+   *
+   * Separate from the Digest path above because the two fail differently: that one authenticates
+   * and resolves a unit by MAC or address, this one authenticates with nothing and resolves by
+   * serial number alone. Shown only once a terminal is registered on it.
+   */
+  'device.ingest.callback.title': 'Endpoint terminal dail-keluar',
+  'device.ingest.callback.subtitle':
+    'Terminal ZKTeco menghubungi pelayan dan mengenali dirinya dengan nombor siri. Tudingkan terminal ke alamat di bawah.',
+  'device.ingest.callback.records': 'Rekod diterima',
+  'device.ingest.callback.handshakes': 'Handshake',
+  'device.ingest.callback.commands': 'Arahan dihantar',
+  'device.ingest.callback.duplicates': 'Pendua ditolak',
+  'device.ingest.callback.outOfRange': 'Luar julat tarikh',
+  'device.ingest.callback.unregistered': 'Siri tidak dikenali',
+  /** This protocol has none, and saying so is better than an empty field. */
+  'device.ingest.callback.auth.none': 'Tiada — dikenali melalui nombor siri',
+  'device.ingest.callback.unregistered.note':
+    '{count} permintaan sampai dengan nombor siri yang tiada pada mana-mana terminal berdaftar, jadi ia ditolak. Terminal itu berfungsi dan menghubungi pelayan — rekod di sini yang tidak mempunyai nombor sirinya. Salin siri dari menu terminal dan masukkan dalam editor peranti.',
+  'device.ingest.callback.missingSerial':
+    'Tiada nombor siri pada: {names}. Terminal ini tidak boleh dipadankan dengan scan yang dihantarnya sendiri sampai nombor siri dimasukkan.',
 
   'device.ingest.title': 'Endpoint ingest',
   'device.ingest.subtitle': 'Tempat terminal menghantar event, dan sejauh mana ia berjaya.',
@@ -4506,17 +4571,21 @@ export const LABELS = {
   'device.push.error': 'Gagal mengkonfigurasi push',
   'device.push.done':
     '{name} kini menghantar ke {target}. Tunggu ~30 detik untuk heartbeat pertama, kemudian muat semula tab ini.',
-  'device.push.note':
-    'Push mempercepatkan kemasukan tetapi bukan sumber kebenaran: firmware tidak menyimpan baris gilir dan tidak mencuba semula, jadi tarikan berkala tetap berjalan sebagai jaring keselamatan.',
 
   'device.health.title': 'Kesihatan terminal',
   'device.health.subtitle':
     'Jam terminal adalah satu-satunya kerosakan yang merosakkan setiap rekod tanpa menghasilkan ralat.',
   'device.health.recheck': 'Periksa semula',
   'device.health.error.load': 'Gagal memeriksa terminal',
-  'device.health.silentNote':
-    'Terminal terus berfungsi, scan terus masuk, dan cap masa cuma salah. Tiada apa dalam antara muka Hikvision melaporkannya.{drifting}',
-  'device.health.silentNote.drifting': ' {count} terminal tersasar melebihi 30 detik sekarang.',
+  /**
+   * Shown only when something is drifting, so it always names an action.
+   *
+   * Why the clock matters at all is `device.health.subtitle`; this used to repeat it in a strip
+   * below, with the count appended as a conditional clause — the same sentence twice, and the
+   * half worth reading only sometimes present.
+   */
+  'device.health.drifting':
+    '{count} terminal tersasar melebihi 30 detik. Terminal terus berfungsi dan scan terus masuk — cuma cap masanya salah, dan tiada apa pada terminal melaporkannya.',
   'device.health.ntp': 'Sumber NTP',
   'device.health.ntp.hint':
     'Gateway LAN lebih tahan daripada NTP awam — jam kekal tersinkron walaupun internet terputus.',
@@ -4622,10 +4691,20 @@ export const LABELS = {
    */
   'device.editor.group.identification': 'Pengenalan',
   'device.editor.field.serialIdentity': 'Nombor siri',
+  /** A mask, not words: the format differs per unit and this is a shape rather than a value. */
+  'device.editor.field.serialIdentity.placeholder': 'cth. BRM9201860523',
   'device.editor.field.serialIdentity.hint':
     'Protokol ini tidak menggunakan nama pengguna atau kata laluan. Terminal mengenalkan dirinya dengan nombor siri pada setiap permintaan, jadi nombor inilah satu-satunya yang memadankan scan yang masuk kepada rekod ini.',
+  /**
+   * Corrected, and the correction matters.
+   *
+   * This used to say the serial is filled in when the terminal first contacts the server. It is
+   * not: the ingest path looks a terminal **up** by serial and writes nothing, so a request
+   * carrying an unregistered serial is refused and counted. An operator reading the old sentence
+   * would wait for something that never happens.
+   */
   'device.editor.field.serialIdentity.missing':
-    'Nombor siri belum diketahui. Ia diisi apabila terminal menghubungi pelayan untuk kali pertama — sebelum itu, scan daripadanya tidak dapat dipadankan kepada rekod ini dan akan ditolak.',
+    'Tiada nombor siri, jadi setiap scan yang dihantar terminal ini ditolak sebagai datang dari terminal tidak berdaftar. Ia tidak akan terisi sendiri — ambil nombor siri dari menu terminal atau label pada unit, dan masukkannya di sini.',
 
   'device.editor.group.placement': 'Penempatan',
 
@@ -5104,7 +5183,6 @@ export const LABELS = {
   'agent.error.load': 'Gagal memuatkan connector',
   'agent.error.create': 'Gagal mencipta connector',
   'agent.error.reissue': 'Gagal menjana token pendaftaran',
-  'agent.error.revoke': 'Gagal menarik kredensial',
 
   /**
    * Stated on the screen, not only in a steering document.
@@ -5194,13 +5272,13 @@ export const LABELS = {
   'agent.reissue.note':
     'Connector yang sedang berjalan di tapak itu terus melaporkan kehadiran sampai pemasangan baharu mendaftar. Tiada apa dibatalkan sekarang.',
 
-  'agent.revoke.title': 'Tarik kredensial connector?',
+  'agent.revoke.title': 'Tarik kredensial "{name}"?',
   'agent.revoke.description':
     'Connector itu berhenti dapat menghantar kehadiran serta-merta. Pelayan ini tidak akan menghubungi terminal di tapak itu sendiri, jadi tapak itu berhenti merekod sampai connector dipasang semula.',
   'agent.revoke.submit': 'Ya, tarik kredensial',
   'agent.revoked': 'Kredensial "{name}" ditarik.',
 
-  'agent.delete.title': 'Buang connector?',
+  'agent.delete.title': 'Buang connector "{name}"?',
   /**
    * States what is lost, and it is little — which is the useful thing to say.
    *
@@ -5212,7 +5290,6 @@ export const LABELS = {
     'Baris ini tidak memegang sejarah — connector ialah pengangkut, dan tiada kehadiran merujuk kepadanya. Yang hilang ialah namanya dan bila ia terakhir dilihat. Untuk memasang tapak itu semula, cipta connector baharu.',
   'agent.delete.submit': 'Ya, buang',
   'agent.deleted': 'Connector "{name}" dibuang.',
-  'agent.error.delete': 'Gagal membuang connector',
 
   // -------------------------------------------------------------------------
   // Butiran connector, dan kemas kini sendiri
@@ -5300,7 +5377,16 @@ export const LABELS = {
   // -------------------------------------------------------------------------
   // Tetapan › Integrasi › Token API
   // -------------------------------------------------------------------------
-  'token.title': 'Token API',
+  'token.count': '{count} token API',
+  'token.rotate.title': 'Putar token "{name}"?',
+  'token.rotate.body':
+    'Token baharu dikeluarkan dengan skop yang sama dan dipaparkan sekali sahaja. {prefix} terus berfungsi selama {hours} jam lagi, kemudian ditolak.',
+  'token.rotate.submit': 'Putar token',
+  'token.revoke.title': 'Batalkan token "{name}"?',
+  'token.revoke.body':
+    'Setiap integrasi yang memegang {prefix} ditolak pada permintaan seterusnya. Pembatalan tidak boleh diundur — keluarkan token baharu jika integrasi itu masih diperlukan.',
+  'token.revoke.submit': 'Batalkan token',
+  'token.create.days': 'Sah selama (hari)',
   'token.subtitle':
     'Satu token untuk satu integrasi. Nilainya dipaparkan sekali sahaja semasa dikeluarkan.',
   'token.action.new': 'Token Baharu',
@@ -5308,9 +5394,6 @@ export const LABELS = {
   'token.empty': 'Tiada token. Keluarkan satu bila ada integrasi yang perlu membaca data ini.',
 
   'token.error.load': 'Gagal memuatkan token',
-  'token.error.revoke': 'Gagal membatalkan token',
-  'token.error.rotate': 'Gagal memutar token',
-  'token.error.remove': 'Gagal membuang token',
   'token.error.create': 'Gagal mencipta token',
   'token.notice.revoked': '{prefix} dibatalkan. Permintaan seterusnya dengan token itu ditolak.',
   'token.notice.removed': '{prefix} dibuang.',
@@ -5370,12 +5453,8 @@ export const LABELS = {
   'token.create.name.hint':
     'Untuk siapa token ini. Nama yang jelas adalah satu-satunya cara mengetahui apa yang rosak bila anda membatalkannya.',
   'token.create.name.placeholder': 'cth. Portal HR — bacaan kehadiran',
-  'token.create.name.aria': 'Nama token',
-  'token.create.validity': 'Tempoh sah',
   'token.create.validity.hint':
     'Token tanpa luput kekal sah sampai ia dibatalkan secara manual, termasuk selepas orang yang mengeluarkannya bertukar tugas.',
-  'token.create.days.aria': 'Bilangan hari',
-  'token.create.days.unit': 'hari',
   'token.create.neverExpires': 'Tanpa tarikh luput',
   'token.create.scopes.chosen': '{count} dipilih',
   'token.create.scopes.note':
@@ -5383,9 +5462,6 @@ export const LABELS = {
   /** The scope catalogue arrives as a screen key plus a bare action; the dash is here. */
   'token.scope.label': '{screen} — {action}',
 
-  'token.policy.note':
-    'Putaran {notAutomatic}. Memutar kredensial statik pada pemasa akan memutuskan setiap integrasi yang memegangnya, secara senyap, pada waktu pemasa itu berbunyi. Sebaliknya: tekan putar, token baharu dikeluarkan, dan yang lama kekal sah selama {hours} jam supaya deployment boleh mengambil nilai baharu mengikut jadualnya sendiri. Tempoh itu ditetapkan dalam tab Keselamatan.',
-  'token.policy.note.notAutomatic': 'tidak automatik',
 
   // -------------------------------------------------------------------------
   // Tetapan › Integrasi
@@ -6680,15 +6756,17 @@ export const LABELS = {
   // -------------------------------------------------------------------------
   // Integrasi › Webhook
   // -------------------------------------------------------------------------
-  'webhook.title': 'Webhook',
+  'webhook.count': '{count} webhook',
+  'webhook.regenerate.title': 'Jana kunci baharu untuk "{name}"?',
+  'webhook.regenerate.body':
+    'Kunci lama berhenti sah serta-merta. Penerima menolak setiap penghantaran sehingga ia dikemas kini dengan kunci baharu, yang dipaparkan sekali sahaja.',
+  'webhook.regenerate.submit': 'Jana kunci baharu',
   'webhook.subtitle':
     'Peristiwa ditolak keluar ke URL anda, ditandatangan supaya penerima boleh membuktikan ia datang dari sini.',
   'webhook.action.add': 'Webhook Baharu',
   'webhook.error.load': 'Gagal memuatkan webhook',
   'webhook.error.test': 'Gagal menjalankan ujian',
   'webhook.error.status': 'Gagal menukar status',
-  'webhook.error.regenerate': 'Gagal menjana kunci baharu',
-  'webhook.error.remove': 'Gagal membuang webhook',
   'webhook.error.save': 'Gagal menyimpan webhook',
   'webhook.error.deliveries': 'Gagal memuatkan log',
 
@@ -6929,31 +7007,21 @@ export const LABELS = {
 
   'users.error.load': 'Gagal memuatkan akaun',
   'users.error.status': 'Gagal menukar status',
-  'users.error.remove': 'Gagal membuang akaun',
   'users.error.create': 'Gagal mencipta akaun',
   'users.error.update': 'Gagal mengemas kini akaun',
   'users.error.password': 'Gagal menetapkan kata laluan',
 
-  'users.section.admin': 'Akaun Administrator',
+  /** The tab's heading is its count, as on every list: what the filters leave, not the tab name again. */
+  'users.count.admin': '{count} akaun administrator',
   'users.section.admin.subtitle':
     'Log masuk panel admin. Apa yang setiap satu boleh buat datang dari peranan yang diberikan.',
-  'users.section.staff': 'Akaun Staf',
+  'users.count.staff': '{count} akaun staf',
   'users.section.staff.subtitle':
     'Log masuk layan-diri untuk staf. Data peribadi diuruskan di bawah Direktori Staf.',
   'users.action.newAdmin': 'Administrator Baharu',
   'users.action.newStaff': 'Akaun Staf Baharu',
   'users.search': 'Cari emel, nama staf atau no. staf…',
   'users.filter.roles': 'Semua peranan',
-
-  /**
-   * Why an app account starts pending and cannot check in.
-   *
-   * A token proves possession of a token, not physical presence. Stated on the screen because
-   * enabling it is a decision somebody makes about what counts as attendance.
-   */
-  'users.staff.note':
-    'Akaun staf dicipta dalam keadaan {pending} dan hanya boleh digunakan selepas orang itu menuntutnya dari telefon. Check-in melalui app dimatikan secara lalai: ia hanya membuktikan pemilikan token, bukan kehadiran fizikal.',
-  'users.staff.note.pending': 'Menunggu',
 
   'users.empty.admin': 'Tiada akaun administrator sepadan dengan penapis ini.',
   'users.empty.staff':
@@ -6970,11 +7038,11 @@ export const LABELS = {
   'users.twoFactor.on': 'Aktif',
   'users.twoFactor.off': 'Belum disiapkan',
   'users.noDepartment': 'Tiada jabatan',
-  'users.staffInactive': ' · staf tidak aktif',
+  /** A badge beside the name now, not a clause appended to the department line. */
+  'users.staffInactive': 'Staf tidak aktif',
   'users.device.unclaimed': 'Belum dituntut',
   'users.never': 'Belum pernah',
 
-  'users.action.view': 'Lihat butiran',
   'users.action.edit': 'Ubah peranan dan status',
   'users.action.reset': 'Set semula kata laluan',
   'users.action.reactivate': 'Aktifkan semula akaun',
@@ -6987,11 +7055,27 @@ export const LABELS = {
   'users.reactivated': '{email} diaktifkan semula.',
   'users.removed': 'Akaun {email} dibuang.',
 
+  /**
+   * Suspending confirms; reactivating does not.
+   *
+   * It used to fire from the row icon. Suspending ends the person's sessions on the spot — a
+   * mis-click beside the reset icon logged somebody out mid-shift — while giving access back is
+   * harmless to do by accident and is undone the same way.
+   */
+  'users.suspend.title': 'Gantung akaun {email}?',
+  'users.suspend.body':
+    'Sesi yang sedang berjalan ditamatkan serta-merta, dan akaun ini tidak boleh log masuk sehingga diaktifkan semula. Rekod dan jejak auditnya kekal.',
+  /** The confirm button of both suspend dialogs, account and app client. */
+  'users.suspend.submit': 'Gantung',
+
   'users.detail.staffName': 'Nama staf',
   'users.detail.employeeNo': 'No. staf',
   'users.detail.department': 'Jabatan',
   'users.detail.role': 'Peranan',
   'users.detail.accountType': 'Jenis akaun',
+  /** The value, which printed the stored `admin` / `staff` before. */
+  'users.detail.accountType.admin': 'Administrator',
+  'users.detail.accountType.staff': 'Staf',
   'users.detail.created': 'Dicipta',
   'users.detail.appCheckIn': 'Check-in app',
   'users.detail.appCheckIn.allowed': 'Dibenarkan',
@@ -7007,26 +7091,22 @@ export const LABELS = {
     'Rekod staf ini sudah tidak aktif tetapi akaunnya masih boleh log masuk. Gantung akaun ini juga.',
 
   'users.remove.title': 'Buang akaun {email}?',
-  /** Two steps on purpose: suspend, then delete. Neither is reversible on its own. */
+  /**
+   * Two steps on purpose: suspend, then delete. The bin is greyed until the first step is done, so
+   * this only ever opens for an account that is already suspended.
+   */
   'users.remove.suspended':
     'Akaun ini sudah digantung, jadi ia selamat dibuang. Jejak audit kekal — nama pelaku disimpan sebagai teks pada setiap entri lampau.',
-  'users.remove.active':
-    'Akaun ini masih aktif. Permintaan akan ditolak: gantung ia dahulu supaya pembuangan menjadi dua langkah yang disengajakan.',
 
   // ── Klien App ──
-  'users.apps.title': 'Klien App',
+  'users.apps.count': '{count} klien app',
   'users.apps.subtitle':
     'Satu binaan aplikasi, bukan seorang pengguna. Tokennya bertindak atas nama satu staf dan terhad pada rekod orang itu.',
   'users.apps.action.add': 'Klien App Baharu',
   'users.apps.error.load': 'Gagal memuatkan klien app',
-  'users.apps.error.rotate': 'Gagal memutar secret',
-  'users.apps.error.remove': 'Gagal membuang klien',
   'users.apps.error.create': 'Gagal mencipta klien',
+  'users.apps.error.update': 'Gagal mengemas kini klien',
   'users.apps.search': 'Cari nama atau client ID…',
-  'users.apps.chip.active': 'AKTIF',
-  'users.apps.chip.suspended': 'DIGANTUNG',
-  'users.apps.status.active': 'AKTIF',
-  'users.apps.status.suspended': 'DIGANTUNG',
   /** Hashed like a password, so a leak is answered by rotation rather than by reinstalling. */
   'users.apps.note':
     'Secret dipaparkan sekali sahaja semasa dicipta — ia disimpan sebagai hash, sama seperti kata laluan. Jika ia terbocor, gantung klien atau putar secretnya; jangan tunggu setiap telefon dipasang semula.',
@@ -7035,6 +7115,14 @@ export const LABELS = {
   'users.apps.column.platform': 'Platform',
   'users.apps.column.minVersion': 'Versi minimum',
   'users.apps.noLimit': 'Tiada had',
+  /**
+   * Raising the minimum is the soft way to force an update, and it is only useful after the client
+   * exists — which is when there was no control for it. The server accepted the change; the screen
+   * offered it only in the create form.
+   */
+  'users.apps.action.edit': 'Ubah versi minimum',
+  'users.apps.edit.title': 'Versi minimum: {name}',
+  'users.apps.updated': '{name} dikemas kini.',
   'users.apps.action.rotate': 'Putar secret',
   'users.apps.action.reactivate': 'Aktifkan semula klien',
   'users.apps.action.suspend': 'Gantung klien',
@@ -7043,7 +7131,19 @@ export const LABELS = {
   'users.apps.suspended': '{name} digantung. Token yang sudah dikeluarkan tidak lagi diterima.',
   'users.apps.reactivated': '{name} diaktifkan semula.',
   'users.apps.removed': '{name} dibuang.',
-  'users.apps.rotated': 'Secret lama sudah tidak sah.',
+
+  /**
+   * Both used to fire from the row icon. Suspending stops every phone on the build at once, and
+   * rotating invalidates the secret every installed copy holds — there is no grace period, unlike
+   * an API token, because the secret is baked into a build rather than held by one integration.
+   */
+  'users.apps.suspend.title': 'Gantung klien "{name}"?',
+  'users.apps.suspend.body':
+    'Token yang sudah dikeluarkan kepada app ini tidak lagi diterima, jadi setiap telefon yang menggunakannya berhenti serta-merta sehingga klien ini diaktifkan semula.',
+  'users.apps.rotate.title': 'Putar secret "{name}"?',
+  'users.apps.rotate.body':
+    'Secret baharu dipaparkan sekali sahaja. Secret lama tidak sah sebaik ini disahkan, jadi binaan yang masih memegangnya perlu dikemas kini dengan yang baharu.',
+  'users.apps.rotate.submit': 'Putar secret',
   'users.apps.detail.clientId': 'Client ID',
   'users.apps.detail.updated': 'Dikemas kini',
   'users.apps.detail.secret': 'Secret',
@@ -7056,17 +7156,22 @@ export const LABELS = {
   'users.create.admin': 'Administrator baharu',
   'users.create.staff': 'Akaun staf baharu',
   'users.create.description': 'Pilih staf dahulu. Satu orang hanya boleh ada satu akaun.',
-  'users.create.searchStaff': 'Cari staf',
-  'users.create.searchStaff.placeholder': 'Nama, no. staf atau emel',
-  'users.create.searching': 'Mencari',
-  'users.create.noMatch': 'Tiada staf sepadan.',
+  /**
+   * The staff form's own description, carrying the fact the tab used to state in a strip above the
+   * table: where it is read is the moment somebody decides to create one.
+   */
+  'users.create.description.staff':
+    'Pilih staf dahulu. Satu orang hanya boleh ada satu akaun, dan akaun staf bermula dalam keadaan Menunggu sehingga orang itu menuntutnya dari telefon.',
+  /** The shared picker's hint. Its label and placeholder are the picker's own. */
+  'users.create.searchStaff.hint':
+    'Staf aktif sahaja. Yang sudah ada akaun ditanda dan tidak boleh dipilih.',
   'users.create.taken': 'Sudah ada akaun: {email}',
-  'users.create.change': 'Tukar',
   'users.create.email': 'Emel log masuk',
   'users.create.role': 'Peranan',
   'users.create.role.option': '{name} ({granted}/{total})',
   'users.create.password': 'Kata laluan awal',
-  'users.create.password.hint': 'Minimum 12 aksara.',
+  /** `{count}` is the security policy's minimum, read from the server rather than written here. */
+  'users.create.password.hint': 'Minimum {count} aksara.',
   'users.create.password.short': '{count} aksara lagi diperlukan',
   'users.create.allowAppCheckIn': 'Benarkan check-in melalui app',
   'users.create.allowAppCheckIn.hint':
@@ -7091,7 +7196,7 @@ export const LABELS = {
   'users.reset.description': '{email} · {name}',
   'users.reset.password': 'Kata laluan baharu',
   'users.reset.password.hint':
-    'Minimum 12 aksara. Sampaikan melalui saluran yang berbeza daripada emel akaun ini.',
+    'Minimum {count} aksara. Sampaikan melalui saluran yang berbeza daripada emel akaun ini.',
   'users.reset.warning':
     'Semua sesi akaun ini akan ditamatkan dan kuncinya dibuka. Nilai kata laluan tidak pernah direkodkan dalam log audit — hanya hakikat bahawa ia ditukar.',
   'users.reset.submit': 'Set semula',
@@ -7107,13 +7212,10 @@ export const LABELS = {
     'Binaan lebih lama daripada ini ditolak. Cara paling ringan memaksa kemas kini bila peraturan check-in berubah.',
   'users.apps.create.submit': 'Cipta',
 
+  /** Shown in the shared credential dialog; its copy and close buttons are `dialog.*`. */
   'users.apps.secret.title': 'Secret klien app',
   'users.apps.secret.clientId': 'Client ID',
   'users.apps.secret.secret': 'Client secret',
-  'users.apps.secret.copy': 'Salin kedua-duanya',
-  'users.apps.secret.copied': 'Disalin',
-  /** The close button is an acknowledgement, not a dismissal: this is the only viewing. */
-  'users.apps.secret.close': 'Saya sudah rekod',
 } as const;
 
 export type LabelKey = keyof typeof LABELS;

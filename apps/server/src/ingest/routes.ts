@@ -17,6 +17,7 @@ import {
 } from '@attendance/terminal-drivers';
 import { loadEnv } from '../env.js';
 import { logger } from '../logger.js';
+import { ICLOCK_PATH, iclockStats } from './iclock.js';
 import { storeEvents } from './store.js';
 
 export const INGEST_PATH = '/hik/events';
@@ -224,12 +225,34 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
       prisma.rawEvent.count({ where: { arrivedVia: 'pull' } }),
     ]);
 
+    /**
+     * Both ingest paths, because a site can run both and they fail differently.
+     *
+     * The ISAPI path authenticates with Digest and resolves a unit by MAC or address; the TA Push
+     * path authenticates with nothing and resolves by serial number alone. Reporting only the
+     * first meant a ZKTeco terminal calling in with a serial nobody had registered incremented a
+     * counter no screen could read — the one number that says "a terminal is reaching us and we
+     * do not know which one".
+     */
+    const callback = iclockStats();
+
     return {
       ...stats,
       pushedEvents,
       pulledEvents,
       ingestPath: INGEST_PATH,
       authMethod: 'MD5digest',
+      callback: {
+        path: `${ICLOCK_PATH}/cdata`,
+        handshakes: callback.handshakes,
+        records: callback.records,
+        duplicates: callback.duplicates,
+        unregistered: callback.unregistered,
+        outOfRange: callback.outOfRange,
+        undecodable: callback.undecodable,
+        commandsSent: callback.commandsSent,
+        lastContactAt: callback.lastContactAt,
+      },
     };
   });
 }

@@ -5,6 +5,7 @@ import {
   Eye,
   HeartPulse,
   KeyRound,
+  Lock,
   Pencil,
   Plus,
   RefreshCw,
@@ -15,7 +16,7 @@ import {
   Trash2,
   TriangleAlert,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
@@ -38,8 +39,10 @@ import {
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
+import { RemoveDialog } from '../components/RemoveDialog';
 import { RevealSecret } from '../components/RevealSecret';
-import { Badge, Button, Field, StatTile } from '../components/ui';
+import { Badge, Button, CheckCard, Field, SelectField, StatTile } from '../components/ui';
+import { useAuth } from '../lib/auth';
 import {
   AGENT_BUILD_LABELS,
   AGENT_CREDENTIAL_PATH,
@@ -69,6 +72,20 @@ import {
   type LabelKey,
 } from '@attendance/shared';
 
+/** What `/api/ingest/stats` reports for the callback path. See `iclockStats()` on the server. */
+interface CallbackIngest {
+  path: string;
+  handshakes: number;
+  records: number;
+  duplicates: number;
+  /** Requests whose serial matched no registered terminal. The one number this tab exists for. */
+  unregistered: number;
+  outOfRange: number;
+  undecodable: number;
+  commandsSent: number;
+  lastContactAt: string | null;
+}
+
 interface DeviceRow {
   id: number;
   name: string;
@@ -90,6 +107,12 @@ interface DeviceRow {
   doorNo: number;
   locationId: number | null;
   model: string | null;
+  /**
+   * The unit's own serial, and on a callback protocol its only identity.
+   *
+   * Null is a working record on ISAPI — the probe fills it in — and a terminal that records
+   * nothing on TA Push, because incoming scans are matched against this and nothing else.
+   */
   serialNumber: string | null;
   firmware: string | null;
   macAddress: string | null;
@@ -101,6 +124,15 @@ interface DeviceRow {
   lastError: string | null;
   enrolled: number;
   location: { id: number; name: string } | null;
+  /** Null when this server reaches the terminal itself. */
+  agentId: number | null;
+  /**
+   * The connector's own state, sent beside every terminal it serves.
+   *
+   * A terminal behind a connector that never enrolled is not a broken terminal, and its own
+   * `status` cannot say so: reconcile stops touching the row once it is assigned.
+   */
+  agent: { id: number; name: string; status: string } | null;
   syncState: {
     lastSerialNo: string;
     lastSyncAt: string | null;
@@ -147,6 +179,8 @@ interface IngestStats {
   pulledEvents: number;
   ingestPath: string;
   authMethod: string;
+  /** The second ingest path, for terminals that dial out. */
+  callback: CallbackIngest;
 }
 
 /**
@@ -163,11 +197,11 @@ const STATUS_LABELS: Record<string, LabelKey> = {
   unknown: 'device.status.unknown',
 };
 
-const STATUS_BADGE: Record<string, string> = {
-  online: 'bg-emerald-50 text-emerald-700',
-  degraded: 'bg-amber-50 text-amber-800',
-  offline: 'bg-rose-50 text-rose-700',
-  unknown: 'bg-slate-100 text-slate-600',
+const STATUS_TONES: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = {
+  online: 'success',
+  degraded: 'warning',
+  offline: 'danger',
+  unknown: 'neutral',
 };
 
 const STATUS_DOT: Record<string, string> = {
@@ -245,8 +279,10 @@ export function DevicesPage(): ReactNode {
 
 function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
   const { t } = useLabels();
+  const { can } = useAuth();
   const navigate = useNavigate();
   const [rows, setRows] = useState<DeviceRow[]>([]);
+  const [loadedAt, setLoadedAt] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
@@ -256,10 +292,16 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
   const [open, setOpen] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
 
+  // Each row action is its own grant on the server, so each is offered only where it would pass.
+  const maySync = can('settings.devices', 'sync');
+  // Reading a terminal's users feeds the ID mapping screen, and that screen owns the grant.
+  const mayImport = can('staff.mapping', 'import');
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       setRows(await api.get<DeviceRow[]>('/api/devices'));
+      setLoadedAt(new Date().toISOString());
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('device.error.load'));
@@ -324,19 +366,20 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
   }
 
   const needle = search.trim().toLowerCase();
-  const filtered = rows.filter((row) => {
-    if (statusFilter !== undefined && row.status !== statusFilter) return false;
-    return (
+  const searched = rows.filter(
+    (row) =>
       needle.length === 0 ||
       row.name.toLowerCase().includes(needle) ||
-      row.host.toLowerCase().includes(needle)
-    );
-  });
+      row.host.toLowerCase().includes(needle),
+  );
+  const filtered =
+    statusFilter === undefined ? searched : searched.filter((row) => row.status === statusFilter);
 
+  // Counted over the search but not over the chip, so choosing one does not zero the others.
   const counts = Object.fromEntries(
     ['online', 'degraded', 'offline', 'unknown'].map((status) => [
       status,
-      rows.filter((row) => row.status === status).length,
+      searched.filter((row) => row.status === status).length,
     ]),
   );
 
@@ -346,10 +389,12 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
         title={<T k="device.list.count" vars={{ count: rows.length }} />}
         subtitle={<T k="device.list.subtitle" />}
         action={
-          <Button onClick={() => setAdding(true)}>
-            <Plus className="size-4" aria-hidden />
-            <T k="device.list.add" />
-          </Button>
+          can('settings.devices', 'create') ? (
+            <Button onClick={() => setAdding(true)}>
+              <Plus className="size-4" aria-hidden />
+              <T k="device.list.add" />
+            </Button>
+          ) : undefined
         }
       />
 
@@ -382,34 +427,35 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
       )}
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={filtered.length}
         empty={<T k="device.list.empty" />}
         columns={[
           { header: <T k="device.column.name" /> },
           { header: <T k="device.column.address" />, width: 'w-52' },
-          { header: <T k="panel.column.status" />, width: 'w-32' },
-          { header: <T k="device.column.clock" />, width: 'w-24' },
-          { header: <T k="device.column.enrolled" />, width: 'w-28' },
+          { header: <T k="device.column.clock" />, width: 'w-20', align: 'right' },
+          { header: <T k="device.column.enrolled" />, width: 'w-24', align: 'right' },
           { header: <T k="device.column.serial" />, width: 'w-28' },
-          { header: <T k="device.column.seen" />, width: 'w-44' },
-          { header: <T k="panel.column.actions" />, width: 'w-28', align: 'right' },
+          { header: <T k="device.column.seen" />, width: 'w-40' },
+          { header: <T k="panel.column.status" />, width: 'w-32' },
+          { header: <T k="panel.column.actions" />, width: 'w-32', align: 'right' },
         ]}
       >
         {filtered.map((row) => {
           const expanded = open === row.id;
           const drift = row.clockDriftS;
           const drifting = drift !== null && Math.abs(drift) > 30;
-          const unhealthy = row.status === 'offline' || row.status === 'degraded';
 
           return (
-            <>
+            <Fragment key={row.id}>
               <tr
-                key={row.id}
                 className={cn(
                   'border-b border-slate-100',
                   expanded ? 'bg-slate-50' : 'hover:bg-slate-50/70',
-                  unhealthy && !expanded && 'bg-rose-50/40',
+                  // Rose for a unit that is down, amber for one that answers but needs a look.
+                  !expanded && row.status === 'offline' && 'bg-rose-50/40',
+                  !expanded && row.status === 'degraded' && 'bg-amber-50/40',
                 )}
               >
                 <td className="px-5 py-2.5">
@@ -430,7 +476,32 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                   </span>
                 </td>
                 <td className="px-2 py-2.5 font-mono text-xs text-slate-600">
-                  {row.useHttps ? 'https' : 'http'}://{row.host}:{row.port}
+                  {/*
+                    A scheme and a port only where they describe how the unit is reached. On a
+                    callback protocol the row used to read `https://192.168.0.22:443` from stored
+                    defaults nothing ever uses, which reads as an address somebody should be able
+                    to open. The serial is shown instead, because that is the identity there — and
+                    its absence is why such a terminal records nothing.
+                  */}
+                  {usesStoredCredentials(row.protocol) ? (
+                    <>
+                      {row.useHttps ? 'https' : 'http'}://{row.host}:{row.port}
+                    </>
+                  ) : (
+                    <>
+                      {row.host}
+                      {row.serialNumber === null ? (
+                        <span className="mt-0.5 flex items-center gap-1 font-sans text-[11px] font-medium text-amber-700">
+                          <TriangleAlert className="size-3 shrink-0" aria-hidden />
+                          <T k="device.row.noSerial" />
+                        </span>
+                      ) : (
+                        <span className="mt-0.5 block text-[11px] text-slate-400">
+                          {row.serialNumber}
+                        </span>
+                      )}
+                    </>
+                  )}
                   {/*
                     On a callback protocol this address is where the unit was last seen, not
                     how it is reached — the terminal dials out to us. Saying so here is what
@@ -445,18 +516,30 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                       />
                     </span>
                   )}
+                  {/*
+                    Who reaches it, when it is not this server. The address above is then the one
+                    the connector dials on its own LAN, and a connector that has not enrolled is why
+                    such a terminal reads as offline — not anything wrong with the unit.
+                  */}
+                  {row.agent !== null && (
+                    <span
+                      className={cn(
+                        'mt-0.5 flex items-center gap-1 font-sans text-[11px]',
+                        row.agent.status === 'active' ? 'text-slate-500' : 'text-amber-700',
+                      )}
+                    >
+                      <Satellite className="size-3 shrink-0" aria-hidden />
+                      <T k="device.row.viaAgent" vars={{ agent: row.agent.name }} />
+                      {row.agent.status !== 'active' && (
+                        <>
+                          {' · '}
+                          <TEnum k={AGENT_STATUS_LABELS[row.agent.status]} fallback={row.agent.status} />
+                        </>
+                      )}
+                    </span>
+                  )}
                 </td>
-                <td className="px-2 py-2.5">
-                  <span
-                    className={cn(
-                      'inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase',
-                      STATUS_BADGE[row.status] ?? 'bg-slate-100 text-slate-600',
-                    )}
-                  >
-                    <TEnum k={STATUS_LABELS[row.status]} fallback={row.status} />
-                  </span>
-                </td>
-                <td className="px-2 py-2.5 font-mono text-xs tabular-nums">
+                <td className="px-2 py-2.5 text-right font-mono text-xs tabular-nums">
                   {drift === null ? (
                     <span className="text-slate-300">—</span>
                   ) : (
@@ -466,7 +549,7 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                     </span>
                   )}
                 </td>
-                <td className="px-2 py-2.5 font-mono text-xs tabular-nums text-slate-600">
+                <td className="px-2 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">
                   {row.enrolled}/{row.faceCapacity}
                 </td>
                 <td className="px-2 py-2.5 font-mono text-xs tabular-nums text-slate-500">
@@ -477,6 +560,11 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                     ? t('device.row.neverSeen')
                     : formatDateTime(row.lastSeenAt)}
                 </td>
+                <td className="px-2 py-2.5">
+                  <Badge tone={STATUS_TONES[row.status] ?? 'neutral'} className="uppercase">
+                    <TEnum k={STATUS_LABELS[row.status]} fallback={row.status} />
+                  </Badge>
+                </td>
                 <td className="px-2 py-2.5 pr-4">
                   <RowActions>
                     <RowAction
@@ -486,23 +574,28 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                       disabled={busy}
                       // To the editor page, not a dialog. Seven tabs of terminal settings
                       // need the viewport, and a dialog would hide the group whose
-                      // control is being changed.
+                      // control is being changed. Open to a viewer too: each tab there
+                      // gates its own writes, and the live readings are worth seeing.
                       onClick={() => void navigate(`/tetapan/peranti/${String(row.id)}`)}
                     />
-                    <RowAction
-                      icon={<RefreshCw className="size-4" aria-hidden />}
-                      label={t('device.row.sync')}
-                      tone="edit"
-                      disabled={busy}
-                      onClick={() => void syncNow(row)}
-                    />
-                    <RowAction
-                      icon={<Download className="size-4" aria-hidden />}
-                      label={t('device.row.importUsers')}
-                      tone="view"
-                      disabled={busy}
-                      onClick={() => void importUsers(row)}
-                    />
+                    {maySync && (
+                      <RowAction
+                        icon={<RefreshCw className="size-4" aria-hidden />}
+                        label={t('device.row.sync')}
+                        tone="edit"
+                        disabled={busy}
+                        onClick={() => void syncNow(row)}
+                      />
+                    )}
+                    {mayImport && (
+                      <RowAction
+                        icon={<Download className="size-4" aria-hidden />}
+                        label={t('device.row.importUsers')}
+                        tone="view"
+                        disabled={busy}
+                        onClick={() => void importUsers(row)}
+                      />
+                    )}
                     <ExpandButton
                       expanded={expanded}
                       onClick={() => setOpen(expanded ? null : row.id)}
@@ -513,10 +606,7 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
               </tr>
 
               {expanded && (
-                <tr
-                  key={`${String(row.id)}-detail`}
-                  className="border-b border-slate-200 bg-slate-50"
-                >
+                <tr className="border-b border-slate-200 bg-slate-50">
                   <td colSpan={8} className="px-5 py-3">
                     <DetailGrid>
                       <Detail label={<T k="device.detail.model" />} value={row.model ?? '—'} />
@@ -539,9 +629,11 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                         label={<T k="device.detail.location" />}
                         value={row.location?.name ?? '—'}
                       />
+                      {/* The terminal's own `timeMode` value, shown as it stores it. */}
                       <Detail
                         label={<T k="device.detail.clockMode" />}
                         value={row.clockMode ?? '—'}
+                        mono
                       />
                       <Detail
                         label={<T k="device.detail.lastSync" />}
@@ -602,7 +694,7 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                   </td>
                 </tr>
               )}
-            </>
+            </Fragment>
           );
         })}
       </RecordTable>
@@ -613,6 +705,7 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
         page={1}
         pageSize={Math.max(1, rows.length)}
         pageSizes={[Math.max(1, rows.length)]}
+        generatedAt={loadedAt}
         loading={loading}
         onPage={() => undefined}
         onPageSize={() => undefined}
@@ -666,6 +759,7 @@ function DeviceDialog({
   const [useHttps, setUseHttps] = useState(true);
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
+  const [serialNumber, setSerialNumber] = useState('');
   const [locationId, setLocationId] = useState('');
   const [locations, setLocations] = useState<Array<{ id: number; name: string }>>([]);
   /** Empty means direct, matching `Device.agentId` being null — the default and the existing behaviour. */
@@ -726,6 +820,9 @@ function DeviceDialog({
         // Omitted entirely for a protocol with no credentials, so the server stores null
         // rather than an empty string that would reach the wire and fail authentication.
         ...(needsCredentials ? { username: username.trim(), password } : {}),
+        // Omitted when blank, so the probe's reading wins rather than an empty string
+        // overwriting what the terminal reports.
+        ...(serialNumber.trim() === '' ? {} : { serialNumber: serialNumber.trim() }),
         locationId: locationId === '' ? null : Number(locationId),
         // Omitted when direct, so a new row takes the server's own default rather than being told
         // null by a form that had nothing to say about it.
@@ -758,6 +855,7 @@ function DeviceDialog({
       title={<T k="device.dialog.add" />}
       titleText={t('device.dialog.add')}
       description={<T k="device.dialog.description" />}
+      width="lg"
       onClose={onClose}
     >
       <div className="space-y-4">
@@ -776,83 +874,114 @@ function DeviceDialog({
           record that follows belongs to this protocol's semantics, so the editor refuses to
           change it later — which makes this the one field on the form worth getting right
           before anything else is typed.
+
+          Which way the connection runs is the protocol's hint: it is the consequence of that
+          one choice, and it is read while the choice is being made.
         */}
-        <FormGrid>
-          <div className="space-y-1.5">
-            <label htmlFor="device-vendor" className="block text-sm font-medium text-slate-700">
-              <T k="device.dialog.vendor" />
-            </label>
-            <select
-              id="device-vendor"
-              value={vendor}
-              onChange={(event) => {
-                const next = event.target.value as DeviceVendor;
-                setVendor(next);
-                // Reset rather than preserved: the previous protocol belongs to the previous
-                // vendor, and the server refuses a mismatched pair.
-                setProtocol(defaultProtocolFor(next));
-              }}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
-            >
-              {Object.keys(VENDOR_PROTOCOLS).map((value) => (
-                <option key={value} value={value}>
-                  {t(VENDOR_LABELS[value] ?? 'device.vendor.hikvision')}
-                </option>
-              ))}
-            </select>
+        <div className="grid items-start gap-4 sm:grid-cols-2">
+          <SelectField
+            label={<T k="device.dialog.vendor" />}
+            value={vendor}
+            onChange={(event) => {
+              const next = event.target.value as DeviceVendor;
+              setVendor(next);
+              // Reset rather than preserved: the previous protocol belongs to the previous
+              // vendor, and the server refuses a mismatched pair.
+              setProtocol(defaultProtocolFor(next));
+            }}
+          >
+            {Object.keys(VENDOR_PROTOCOLS).map((value) => (
+              <option key={value} value={value}>
+                {t(VENDOR_LABELS[value] ?? 'device.vendor.hikvision')}
+              </option>
+            ))}
+          </SelectField>
+
+          <SelectField
+            label={<T k="device.dialog.protocol" />}
+            value={protocol}
+            onChange={(event) => setProtocol(event.target.value)}
+            disabled={VENDOR_PROTOCOLS[vendor].length < 2}
+            hint={
+              <T
+                k={needsCredentials ? 'device.dialog.reach.inbound' : 'device.dialog.reach.outbound'}
+              />
+            }
+          >
+            {VENDOR_PROTOCOLS[vendor].map((value) => (
+              <option key={value} value={value}>
+                {t(PROTOCOL_LABELS[value] ?? 'device.protocol.isapi')}
+              </option>
+            ))}
+          </SelectField>
+        </div>
+
+        {/*
+          The serial, first of the identity fields on a callback protocol because it IS the
+          identity there. Required in that case and the hint says why; optional on a protocol the
+          probe can read it from.
+        */}
+        <Field
+          label={<T k="device.dialog.serial" />}
+          value={serialNumber}
+          onChange={(event) => setSerialNumber(event.target.value)}
+          hint={
+            <T
+              k={
+                needsCredentials
+                  ? 'device.dialog.serial.hint.optional'
+                  : 'device.dialog.serial.hint.required'
+              }
+            />
+          }
+        />
+
+        {/*
+          Port and the HTTPS toggle are asked only where the server dials the unit.
+
+          On a callback protocol nothing here ever opens a connection to the terminal, so these
+          two described a transport that does not exist — and the list then rendered the stored
+          defaults as `https://192.168.0.22:443`, which reads as the address somebody should be
+          able to reach. The host stays: it is the last known address and it is worth having when
+          diagnosing, which is what the column says it is.
+        */}
+        {needsCredentials ? (
+          <div className="grid items-start gap-4 sm:grid-cols-3">
+            <Field
+              label={<T k="device.dialog.host" />}
+              wrapperClassName="sm:col-span-2"
+              value={host}
+              onChange={(event) => setHost(event.target.value)}
+              placeholder="192.168.1.250"
+            />
+            <Field
+              label={<T k="device.dialog.port" />}
+              inputMode="numeric"
+              value={port}
+              onChange={(event) => setPort(event.target.value.replace(/\D/g, ''))}
+            />
           </div>
-
-          <div className="space-y-1.5">
-            <label htmlFor="device-protocol" className="block text-sm font-medium text-slate-700">
-              <T k="device.dialog.protocol" />
-            </label>
-            <select
-              id="device-protocol"
-              value={protocol}
-              onChange={(event) => setProtocol(event.target.value)}
-              disabled={VENDOR_PROTOCOLS[vendor].length < 2}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 disabled:bg-slate-50 disabled:text-slate-500"
-            >
-              {VENDOR_PROTOCOLS[vendor].map((value) => (
-                <option key={value} value={value}>
-                  {t(PROTOCOL_LABELS[value] ?? 'device.protocol.isapi')}
-                </option>
-              ))}
-            </select>
-          </div>
-        </FormGrid>
-
-        <PanelNote tone={needsCredentials ? 'info' : 'success'}>
-          <T k={needsCredentials ? 'device.dialog.reach.inbound' : 'device.dialog.reach.outbound'} />
-        </PanelNote>
-
-        <div className="grid grid-cols-3 gap-3">
+        ) : (
           <Field
-            label={<T k="device.dialog.host" />}
-            wrapperClassName="col-span-2"
+            label={<T k="device.dialog.host.lastKnown" />}
             value={host}
             onChange={(event) => setHost(event.target.value)}
             placeholder="192.168.1.250"
+            hint={<T k="device.dialog.host.lastKnown.hint" />}
           />
-          <Field
-            label={<T k="device.dialog.port" />}
-            inputMode="numeric"
-            value={port}
-            onChange={(event) => setPort(event.target.value.replace(/\D/g, ''))}
-          />
-        </div>
+        )}
 
-        <label className="flex items-center gap-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
+        {needsCredentials && (
+          <CheckCard
             checked={useHttps}
-            onChange={(event) => {
-              setUseHttps(event.target.checked);
-              setPort(event.target.checked ? '443' : '80');
+            onChange={(checked) => {
+              setUseHttps(checked);
+              setPort(checked ? '443' : '80');
             }}
+            icon={<Lock className="size-4" aria-hidden />}
+            title={<T k="device.dialog.https" />}
           />
-          <T k="device.dialog.https" />
-        </label>
+        )}
 
         {needsCredentials && (
           <FormGrid>
@@ -871,18 +1000,13 @@ function DeviceDialog({
           </FormGrid>
         )}
 
-        <div className="space-y-1.5">
-          <label
-            htmlFor="device-location"
-            className="block text-sm font-medium text-slate-700"
-          >
-            <T k="device.dialog.location" />
-          </label>
-          <select
-            id="device-location"
+        {/* The last block when no credential note follows, so it takes the footer clearance. */}
+        <div className={cn('grid items-start gap-4 sm:grid-cols-2', !needsCredentials && 'pb-2')}>
+          {/* Not a `FacetSelect`: no location is a real choice here, not the absence of a filter. */}
+          <SelectField
+            label={<T k="device.dialog.location" />}
             value={locationId}
             onChange={(event) => setLocationId(event.target.value)}
-            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
           >
             <option value="">{t('device.dialog.location.none')}</option>
             {locations.map((row) => (
@@ -890,24 +1014,19 @@ function DeviceDialog({
                 {row.name}
               </option>
             ))}
-          </select>
-        </div>
+          </SelectField>
 
-        {/*
-          Who reaches this terminal. Offered only for ISAPI, because that is the only protocol a
-          connector can drive — and a control that accepts a choice nothing will honour is worse
-          than no control.
-        */}
-        {agentCapable && (
-          <div className="space-y-1.5">
-            <label htmlFor="device-agent" className="block text-sm font-medium text-slate-700">
-              <T k="device.editor.field.agent" />
-            </label>
-            <select
-              id="device-agent"
+          {/*
+            Who reaches this terminal. Offered only for ISAPI, because that is the only protocol a
+            connector can drive — and a control that accepts a choice nothing will honour is worse
+            than no control.
+          */}
+          {agentCapable && (
+            <SelectField
+              label={<T k="device.editor.field.agent" />}
               value={agentId}
               onChange={(event) => setAgentId(event.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+              hint={<T k="device.editor.field.agent.hint" />}
             >
               <option value="">{t('device.editor.field.agent.direct')}</option>
               {agents.map((row) => (
@@ -917,17 +1036,16 @@ function DeviceDialog({
                     : `${row.name} — ${t(AGENT_STATUS_LABELS[row.status] ?? 'agent.status.pending')}`}
                 </option>
               ))}
-            </select>
-            <p className="text-xs text-slate-500">
-              <T k="device.editor.field.agent.hint" />
-            </p>
-          </div>
-        )}
+            </SelectField>
+          )}
+        </div>
 
         {needsCredentials && (
-          <PanelNote>
-            <T k="device.dialog.credentialNote" />
-          </PanelNote>
+          <div className="pb-2">
+            <PanelNote>
+              <T k="device.dialog.credentialNote" />
+            </PanelNote>
+          </div>
         )}
 
         <DialogFooter
@@ -940,7 +1058,11 @@ function DeviceDialog({
             callback terminal, with no field on screen explaining why.
           */
           disabled={
-            name.trim() === '' || host.trim() === '' || (needsCredentials && password === '')
+            name.trim() === '' ||
+            host.trim() === '' ||
+            (needsCredentials && password === '') ||
+            // The server refuses a callback terminal with no serial, so the button says so first.
+            (!needsCredentials && serialNumber.trim() === '')
           }
           submitLabel={<T k={busy ? 'device.dialog.probing' : 'device.dialog.submit.add'} />}
         />
@@ -955,6 +1077,7 @@ function DeviceDialog({
 
 function ConnectionPanel(): ReactNode {
   const { t } = useLabels();
+  const { can } = useAuth();
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [stats, setStats] = useState<IngestStats | null>(null);
   const [environment, setEnvironment] = useState<Record<string, unknown> | null>(null);
@@ -1010,6 +1133,27 @@ function ConnectionPanel(): ReactNode {
   }
 
   const mode = String(environment?.['connectorMode'] ?? '—');
+
+  /*
+    Only terminals this server reaches itself. One behind a connector is pointed at the connector
+    from its own editor tab — this server cannot open a connection to it, and a button that tries
+    is a request that hangs until it times out.
+  */
+  const direct = devices.filter((device) => device.agentId === null);
+
+  /** Terminals on the callback path, and those among them that can never be matched. */
+  const callbackTerminals = devices.filter((device) => isCallbackProtocol(device.protocol));
+  const missingSerial = callbackTerminals.filter((device) => device.serialNumber === null);
+
+  /*
+    The address as the terminal must be configured with it, not as a bare path.
+
+    `window.location.origin` is this browser's view of the server, which for every deployment of
+    this application is also the address a dialling terminal uses — it is a public hostname in the
+    cloud shape and the LAN address in the standalone one. A path alone left somebody to work out
+    the host, and the host is the part that gets typed wrong.
+  */
+  const origin = window.location.origin;
 
   return (
     <>
@@ -1124,46 +1268,142 @@ function ConnectionPanel(): ReactNode {
         )}
       </PanelBody>
 
-      <PanelSection
-        title={<T k="device.push.title" />}
-        subtitle={<T k="device.push.subtitle" />}
-      />
+      {/*
+        The second ingest path, shown only once a terminal is registered on it.
 
-      <PanelBody className="space-y-3">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Field
-            label={<T k="device.push.host" />}
-            wrapperClassName="sm:col-span-2"
-            value={host}
-            onChange={(event) => setHost(event.target.value)}
-            placeholder="192.168.1.102"
+        Terminals that dial out identify themselves by serial number and authenticate with nothing,
+        so this path fails in a way the Digest one cannot: a unit calling in with a serial nobody
+        registered is turned away, and until now that was counted where no screen could read it.
+        Hidden entirely on a site running only Hikvision, where it would be four permanent zeros.
+      */}
+      {callbackTerminals.length > 0 && (
+        <>
+          <PanelSection
+            title={<T k="device.ingest.callback.title" />}
+            subtitle={<T k="device.ingest.callback.subtitle" />}
           />
-          <Field
-            label={<T k="device.dialog.port" />}
-            inputMode="numeric"
-            value={port}
-            onChange={(event) => setPort(event.target.value.replace(/\D/g, ''))}
+
+          <PanelBody className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-4">
+              <StatTile
+                label={<T k="device.ingest.callback.records" />}
+                value={String(stats?.callback.records ?? 0)}
+              />
+              <StatTile
+                label={<T k="device.ingest.callback.handshakes" />}
+                value={String(stats?.callback.handshakes ?? 0)}
+              />
+              <StatTile
+                label={<T k="device.ingest.callback.commands" />}
+                value={String(stats?.callback.commandsSent ?? 0)}
+              />
+              {/*
+                The number that answers "the terminal is online and nothing is arriving". Toned
+                because a non-zero value here is always a configuration mistake, never traffic.
+              */}
+              <StatTile
+                label={<T k="device.ingest.callback.unregistered" />}
+                value={String(stats?.callback.unregistered ?? 0)}
+                tone={(stats?.callback.unregistered ?? 0) > 0 ? 'danger' : 'neutral'}
+              />
+            </div>
+
+            <KeyValueList>
+              <KeyValue
+                label={<T k="device.ingest.path" />}
+                value={`${origin}${stats?.callback.path ?? '/iclock/cdata'}`}
+              />
+              <KeyValue
+                label={<T k="device.ingest.auth" />}
+                value={<T k="device.ingest.callback.auth.none" />}
+                mono={false}
+              />
+              <KeyValue
+                label={<T k="device.ingest.lastContact" />}
+                value={
+                  stats?.callback.lastContactAt === null ||
+                  stats?.callback.lastContactAt === undefined
+                    ? t('device.row.neverSeen')
+                    : formatDateTime(stats.callback.lastContactAt)
+                }
+              />
+              <KeyValue
+                label={<T k="device.ingest.callback.duplicates" />}
+                value={String(stats?.callback.duplicates ?? 0)}
+              />
+              <KeyValue
+                label={<T k="device.ingest.callback.outOfRange" />}
+                value={String(stats?.callback.outOfRange ?? 0)}
+              />
+              <KeyValue
+                label={<T k="device.ingest.undecodable" />}
+                value={String(stats?.callback.undecodable ?? 0)}
+              />
+            </KeyValueList>
+
+            {(stats?.callback.unregistered ?? 0) > 0 && (
+              <PanelNote tone="danger" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+                <T
+                  k="device.ingest.callback.unregistered.note"
+                  vars={{ count: stats?.callback.unregistered ?? 0 }}
+                />
+              </PanelNote>
+            )}
+
+            {/* Named where they are, because this is the screen somebody is on when they ask. */}
+            {missingSerial.length > 0 && (
+              <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+                <T
+                  k="device.ingest.callback.missingSerial"
+                  vars={{ names: missingSerial.map((device) => device.name).join(', ') }}
+                />
+              </PanelNote>
+            )}
+          </PanelBody>
+        </>
+      )}
+
+      {/* Writing the push target is the `sync` grant, so the section exists only for it. */}
+      {can('settings.devices', 'sync') && direct.length > 0 && (
+        <>
+          <PanelSection
+            title={<T k="device.push.title" />}
+            subtitle={<T k="device.push.subtitle" />}
           />
-        </div>
 
-        <div className="flex flex-wrap gap-2">
-          {devices.map((device) => (
-            <Button
-              key={device.id}
-              variant="ghost"
-              disabled={busy || host.trim() === ''}
-              onClick={() => void configurePush(device)}
-            >
-              <Satellite className="size-4" aria-hidden />
-              {device.name}
-            </Button>
-          ))}
-        </div>
+          <PanelBody className="space-y-3">
+            <div className="grid items-start gap-4 sm:grid-cols-3">
+              <Field
+                label={<T k="device.push.host" />}
+                wrapperClassName="sm:col-span-2"
+                value={host}
+                onChange={(event) => setHost(event.target.value)}
+                placeholder="192.168.1.102"
+              />
+              <Field
+                label={<T k="device.dialog.port" />}
+                inputMode="numeric"
+                value={port}
+                onChange={(event) => setPort(event.target.value.replace(/\D/g, ''))}
+              />
+            </div>
 
-        <PanelNote>
-          <T k="device.push.note" />
-        </PanelNote>
-      </PanelBody>
+            <div className="flex flex-wrap gap-2">
+              {direct.map((device) => (
+                <Button
+                  key={device.id}
+                  variant="ghost"
+                  disabled={busy || host.trim() === ''}
+                  onClick={() => void configurePush(device)}
+                >
+                  <Satellite className="size-4" aria-hidden />
+                  {device.name}
+                </Button>
+              ))}
+            </div>
+          </PanelBody>
+        </>
+      )}
     </>
   );
 }
@@ -1187,8 +1427,8 @@ function ModeCard({
       <p className="flex items-center gap-2 text-sm font-medium text-slate-800">
         <T k={titleKey} />
         {active && (
-          <Badge tone="success">
-            <T k="device.connection.active" />
+          <Badge tone="success" className="uppercase">
+            <T k="app.status.active" />
           </Badge>
         )}
       </p>
@@ -1205,14 +1445,19 @@ function ModeCard({
 
 function HealthPanel(): ReactNode {
   const { t, tEnum } = useLabels();
+  const { can } = useAuth();
   const [health, setHealth] = useState<DeviceHealth[]>([]);
   const [devices, setDevices] = useState<DeviceRow[]>([]);
+  const [loadedAt, setLoadedAt] = useState<string | null>(null);
   const [ntpHost, setNtpHost] = useState('192.168.1.1');
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [open, setOpen] = useState<number | null>(null);
+
+  const mayFixClock = can('settings.devices', 'clock');
+  const mayEdit = can('settings.devices', 'edit');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1223,6 +1468,7 @@ function HealthPanel(): ReactNode {
       ]);
       setDevices(rows);
       setHealth(checks);
+      setLoadedAt(new Date().toISOString());
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('device.health.error.load'));
@@ -1240,9 +1486,11 @@ function HealthPanel(): ReactNode {
     setError(null);
     setNotice(null);
     try {
+      // No zone: the server writes the organisation's own. This used to send `CST-8:00:00` for
+      // every terminal, which is UTC+8 whatever the installation's zone is.
       const result = await api.post<{ driftSeconds: number; timeMode: string }>(
         `/api/devices/${String(device.id)}/clock/ntp`,
-        { host: ntpHost.trim(), timeZone: 'CST-8:00:00', intervalMinutes: 60 },
+        { host: ntpHost.trim(), intervalMinutes: 60 },
       );
       setNotice(
         t('device.health.ntp.done', {
@@ -1296,45 +1544,38 @@ function HealthPanel(): ReactNode {
       <PanelBody className="space-y-4">
         <Feedback error={error} notice={notice} />
 
-        <PanelNote tone={drifting > 0 ? 'warn' : 'info'} icon={<Clock className="size-3.5" aria-hidden />}>
-          {/*
-            The drift count is a bold sentence appended only when something is drifting, so
-            it arrives as a var carrying its own leading space and full stop.
-          */}
-          <T
-            k="device.health.silentNote"
-            vars={{
-              drifting:
-                drifting > 0 ? (
-                  <strong className="font-medium">
-                    <T k="device.health.silentNote.drifting" vars={{ count: drifting }} />
-                  </strong>
-                ) : (
-                  ''
-                ),
-            }}
-          />
-        </PanelNote>
+        {/*
+          One note, and only while there is something to do about it. Why the clock matters at all
+          is the section's subtitle; repeating it in a strip under that was the same sentence twice.
+        */}
+        {drifting > 0 && (
+          <PanelNote tone="warn" icon={<Clock className="size-3.5" aria-hidden />}>
+            <T k="device.health.drifting" vars={{ count: drifting }} />
+          </PanelNote>
+        )}
 
-        <div className="max-w-md">
-          <Field
-            label={<T k="device.health.ntp" />}
-            value={ntpHost}
-            onChange={(event) => setNtpHost(event.target.value)}
-            hint={<T k="device.health.ntp.hint" />}
-          />
-        </div>
+        {mayFixClock && (
+          <div className="max-w-md">
+            <Field
+              label={<T k="device.health.ntp" />}
+              value={ntpHost}
+              onChange={(event) => setNtpHost(event.target.value)}
+              hint={<T k="device.health.ntp.hint" />}
+            />
+          </div>
+        )}
       </PanelBody>
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={devices.length}
         empty={<T k="device.health.empty" />}
         columns={[
           { header: <T k="device.health.column.terminal" /> },
-          { header: <T k="device.column.clock" />, width: 'w-28' },
+          { header: <T k="device.column.clock" />, width: 'w-24', align: 'right' },
           { header: <T k="device.detail.clockMode" />, width: 'w-28' },
-          { header: <T k="device.health.column.capacity" />, width: 'w-32' },
+          { header: <T k="device.health.column.capacity" />, width: 'w-28', align: 'right' },
           { header: <T k="device.health.column.warnings" /> },
           { header: <T k="panel.column.actions" />, width: 'w-32', align: 'right' },
         ]}
@@ -1345,19 +1586,21 @@ function HealthPanel(): ReactNode {
           const off = drift !== null && Math.abs(drift) > 30;
           const warnings = check?.warnings ?? [];
           const expanded = open === device.id;
+          // Offered only where the check found it on: elsewhere the control would do nothing.
+          const remoteCheckOn = warnings.some((warning) => warning.key === 'device.warning.remoteCheck');
 
           return (
-            <>
+            <Fragment key={device.id}>
               <tr
-                key={device.id}
                 className={cn(
                   'border-b border-slate-100',
                   expanded ? 'bg-slate-50' : 'hover:bg-slate-50/70',
-                  off && !expanded && 'bg-amber-50/40',
+                  !expanded && check?.error !== undefined && 'bg-rose-50/40',
+                  !expanded && check?.error === undefined && off && 'bg-amber-50/40',
                 )}
               >
                 <td className="px-5 py-2.5 font-medium text-slate-800">{device.name}</td>
-                <td className="px-2 py-2.5 font-mono text-xs tabular-nums">
+                <td className="px-2 py-2.5 text-right font-mono text-xs tabular-nums">
                   {drift === null ? (
                     <span className="text-slate-300">—</span>
                   ) : (
@@ -1370,7 +1613,7 @@ function HealthPanel(): ReactNode {
                 <td className="px-2 py-2.5 font-mono text-xs text-slate-600">
                   {check?.clockMode ?? device.clockMode ?? '—'}
                 </td>
-                <td className="px-2 py-2.5 font-mono text-xs tabular-nums text-slate-600">
+                <td className="px-2 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">
                   {check?.enrolled ?? device.enrolled}/{check?.faceCapacity ?? device.faceCapacity}
                 </td>
                 <td className="px-2 py-2.5 text-xs">
@@ -1388,20 +1631,24 @@ function HealthPanel(): ReactNode {
                 </td>
                 <td className="px-2 py-2.5 pr-4">
                   <RowActions>
-                    <RowAction
-                      icon={<Clock className="size-4" aria-hidden />}
-                      label={t('device.health.row.fixClock')}
-                      tone={off ? 'warn' : 'edit'}
-                      disabled={busy || ntpHost.trim() === ''}
-                      onClick={() => void fixClock(device)}
-                    />
-                    <RowAction
-                      icon={<ShieldOff className="size-4" aria-hidden />}
-                      label={t('device.health.row.disableRemote')}
-                      tone="neutral"
-                      disabled={busy}
-                      onClick={() => void disableRemoteCheck(device)}
-                    />
+                    {mayFixClock && (
+                      <RowAction
+                        icon={<Clock className="size-4" aria-hidden />}
+                        label={t('device.health.row.fixClock')}
+                        tone={off ? 'warn' : 'edit'}
+                        disabled={busy || ntpHost.trim() === ''}
+                        onClick={() => void fixClock(device)}
+                      />
+                    )}
+                    {mayEdit && remoteCheckOn && (
+                      <RowAction
+                        icon={<ShieldOff className="size-4" aria-hidden />}
+                        label={t('device.health.row.disableRemote')}
+                        tone="edit"
+                        disabled={busy}
+                        onClick={() => void disableRemoteCheck(device)}
+                      />
+                    )}
                     <ExpandButton
                       expanded={expanded}
                       onClick={() => setOpen(expanded ? null : device.id)}
@@ -1412,10 +1659,7 @@ function HealthPanel(): ReactNode {
               </tr>
 
               {expanded && (
-                <tr
-                  key={`${String(device.id)}-detail`}
-                  className="border-b border-slate-200 bg-slate-50"
-                >
+                <tr className="border-b border-slate-200 bg-slate-50">
                   <td colSpan={6} className="px-5 py-3">
                     <DetailGrid>
                       {/*
@@ -1485,7 +1729,7 @@ function HealthPanel(): ReactNode {
                   </td>
                 </tr>
               )}
-            </>
+            </Fragment>
           );
         })}
       </RecordTable>
@@ -1496,6 +1740,7 @@ function HealthPanel(): ReactNode {
         page={1}
         pageSize={Math.max(1, devices.length)}
         pageSizes={[Math.max(1, devices.length)]}
+        generatedAt={loadedAt}
         loading={loading}
         onPage={() => undefined}
         onPageSize={() => undefined}
@@ -1556,30 +1801,25 @@ function ConnectorPanel(): ReactNode {
     }
   }
 
+  /*
+    Both let the failure through rather than catching it. `RemoveDialog` shows a thrown error inside
+    the dialog and stays open, which is where somebody is looking — a strip on the page behind it
+    would be read after the dialog was already dismissed.
+  */
   async function revoke(row: AgentRow): Promise<void> {
+    await agentsApi.revoke(row.id);
+    setRevoking(null);
     setError(null);
-    setNotice(null);
-    try {
-      await agentsApi.revoke(row.id);
-      setRevoking(null);
-      setNotice(t('agent.revoked', { name: row.name }));
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('agent.error.revoke'));
-    }
+    setNotice(t('agent.revoked', { name: row.name }));
+    await load();
   }
 
   async function remove(row: AgentRow): Promise<void> {
+    await agentsApi.remove(row.id);
+    setRemoving(null);
     setError(null);
-    setNotice(null);
-    try {
-      await agentsApi.remove(row.id);
-      setRemoving(null);
-      setNotice(t('agent.deleted', { name: row.name }));
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('agent.error.delete'));
-    }
+    setNotice(t('agent.deleted', { name: row.name }));
+    await load();
   }
 
   const needle = search.trim().toLowerCase();
@@ -1813,25 +2053,20 @@ function ConnectorPanel(): ReactNode {
         />
       )}
 
+      {/*
+        Through the shared confirm, like every other destructive action. The connector's name was a
+        line of body text under the description; it belongs in the title, which is where every
+        other one of these names its record.
+      */}
       {revoking !== null && (
-        <Dialog
-          title={<T k="agent.revoke.title" />}
-          titleText={t('agent.revoke.title')}
+        <RemoveDialog
+          title={<T k="agent.revoke.title" vars={{ name: revoking.name }} />}
+          titleText={t('agent.revoke.title', { name: revoking.name })}
           description={<T k="agent.revoke.description" />}
-          width="md"
+          submitLabel={<T k="agent.revoke.submit" />}
+          onConfirm={() => revoke(revoking)}
           onClose={() => setRevoking(null)}
-        >
-          <div className="space-y-4">
-            <p className="pb-2 text-sm text-slate-700">{revoking.name}</p>
-            <DialogFooter
-              onClose={() => setRevoking(null)}
-              onSubmit={() => {
-                void revoke(revoking);
-              }}
-              submitLabel={<T k="agent.revoke.submit" />}
-            />
-          </div>
-        </Dialog>
+        />
       )}
 
       {viewing !== null && (
@@ -1847,24 +2082,14 @@ function ConnectorPanel(): ReactNode {
       )}
 
       {removing !== null && (
-        <Dialog
-          title={<T k="agent.delete.title" />}
-          titleText={t('agent.delete.title')}
+        <RemoveDialog
+          title={<T k="agent.delete.title" vars={{ name: removing.name }} />}
+          titleText={t('agent.delete.title', { name: removing.name })}
           description={<T k="agent.delete.description" />}
-          width="md"
+          submitLabel={<T k="agent.delete.submit" />}
+          onConfirm={() => remove(removing)}
           onClose={() => setRemoving(null)}
-        >
-          <div className="space-y-4">
-            <p className="pb-2 text-sm text-slate-700">{removing.name}</p>
-            <DialogFooter
-              onClose={() => setRemoving(null)}
-              onSubmit={() => {
-                void remove(removing);
-              }}
-              submitLabel={<T k="agent.delete.submit" />}
-            />
-          </div>
-        </Dialog>
+        />
       )}
     </>
   );

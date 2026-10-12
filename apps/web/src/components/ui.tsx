@@ -156,7 +156,7 @@ export function Field({
         id={id}
         className={cn(
           'w-full rounded-lg border bg-white px-3 py-2 text-sm text-slate-800',
-          'placeholder:text-slate-400',
+          'placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500',
           error ? 'border-rose-400' : 'border-slate-300',
         )}
         aria-invalid={error ? true : undefined}
@@ -213,7 +213,7 @@ export function TextArea({
         rows={rows}
         className={cn(
           'w-full resize-y rounded-lg border bg-white px-3 py-2 text-sm text-slate-800',
-          'placeholder:text-slate-400',
+          'placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500',
           error ? 'border-rose-400' : 'border-slate-300',
           className,
         )}
@@ -266,7 +266,7 @@ export function SelectField({
       </label>
       <select
         id={id}
-        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 disabled:bg-slate-50 disabled:text-slate-500"
         aria-describedby={hint !== undefined ? hintId : undefined}
         {...rest}
       >

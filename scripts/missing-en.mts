@@ -48,11 +48,30 @@ for (const [key, source] of Object.entries(LABELS)) {
   if (want !== got) drifted.push({ key, source: want, target: got });
 }
 
+/*
+ * Wording identical to the source.
+ *
+ * A few are expected — `Terminal`, `PIN`, `OT` are the same word in both languages. A file that is
+ * mostly identical is not a translation: it is the registry written over the translation file, and
+ * every check above passes it, because every key is present and every placeholder matches. That has
+ * happened once, from two writes to the file landing at the same moment.
+ */
+const identical = Object.entries(LABELS).filter(
+  ([key, source]) => english.get(key) === String(source),
+).length;
+const copied = registry.size > 0 && identical / registry.size > 0.25;
+
 console.log(
   `registry=${String(registry.size)} english=${String(english.size)} ` +
     `missing=${String(missing.length)} stale=${String(stale.length)} ` +
-    `placeholderDrift=${String(drifted.length)}`,
+    `placeholderDrift=${String(drifted.length)} identical=${String(identical)}`,
 );
+if (copied) {
+  console.log(
+    `\nCOPIED  ${String(identical)} of ${String(registry.size)} entries are word for word the ` +
+      'Malay source. The file is not a translation — restore it from git before going further.',
+  );
+}
 console.log('');
 for (const [key, source] of missing) {
   console.log(`MISSING ${key} :: ${String(source)}`);
@@ -64,4 +83,4 @@ for (const entry of drifted) {
   console.log(`DRIFT   ${entry.key} :: source{${entry.source}} vs en{${entry.target}}`);
 }
 
-process.exit(missing.length + stale.length + drifted.length === 0 ? 0 : 1);
+process.exit(missing.length + stale.length + drifted.length === 0 && !copied ? 0 : 1);

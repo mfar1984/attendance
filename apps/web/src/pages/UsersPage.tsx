@@ -1,10 +1,8 @@
 import {
   Ban,
   CircleCheck,
-  Copy,
-  Eye,
   KeyRound,
-  Loader2,
+  Link2Off,
   Pencil,
   Plus,
   RefreshCw,
@@ -12,10 +10,10 @@ import {
   Smartphone,
   Trash2,
   TriangleAlert,
-  UserRound,
   Users,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import type { LabelKey } from '@attendance/shared';
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
 import {
@@ -25,31 +23,47 @@ import {
   ExpandButton,
   FacetSelect,
   FilterRow,
+  PanelBody,
   PanelCard,
   PanelFooter,
+  PanelNote,
   PanelSection,
   PanelTabs,
   RecordTable,
   RowAction,
   RowActions,
 } from '../components/RecordPanel';
-import { Badge, Button, Field } from '../components/ui';
+import { RemoveDialog } from '../components/RemoveDialog';
+import { RevealSecret } from '../components/RevealSecret';
+import { StaffPicker } from '../components/StaffPicker';
+import { Badge, Button, CheckCard, Field, SelectField } from '../components/ui';
+import { useAuth } from '../lib/auth';
 import { cn } from '../lib/cn';
 import { formatDate, formatDateTime } from '../lib/operations-api';
 import {
   USER_STATUS_LABELS,
+  USER_STATUS_TONES,
   appClientsApi,
-  rolesApi,
   usersApi,
   type AccountCandidate,
+  type AccountRoleOption,
   type AppClientRow,
-  type RoleRow,
   type UserCounts,
   type UserPage,
   type UserRow,
   type UserStatus,
 } from '../lib/settings-api';
 import { T, TEnum, useLabels } from '../lib/translation';
+
+const APPS_SCREEN = 'settings.users.apps';
+
+/** The permission screen for an account type. Each is its own grant on the server. */
+function accountScreen(accountType: 'admin' | 'staff'): string {
+  return accountType === 'admin' ? 'settings.users.admin' : 'settings.users.staff';
+}
+
+/** The policy default, used only until the first list read reports the configured value. */
+const DEFAULT_PASSWORD_MIN = 12;
 
 /**
  * Account management.
@@ -74,10 +88,7 @@ export function UsersPage(): ReactNode {
   useEffect(reloadCounts, [reloadCounts]);
 
   return (
-    <PanelCard
-      title={<T k="users.title" />}
-      subtitle={<T k="users.subtitle" />}
-    >
+    <PanelCard title={<T k="users.title" />} subtitle={<T k="users.subtitle" />}>
       <PanelTabs
         label={t('users.tabs.label')}
         active={tab}
@@ -126,24 +137,12 @@ const STATUS_DOT: Record<UserStatus, string> = {
   suspended: 'bg-rose-500',
 };
 
-const STATUS_BADGE: Record<UserStatus, string> = {
-  active: 'bg-emerald-50 text-emerald-700',
-  pending: 'bg-amber-50 text-amber-800',
-  suspended: 'bg-rose-50 text-rose-700',
-};
-
 function StatusBadge({ status }: { status: UserStatus }): ReactNode {
   return (
-    <span
-      className={cn(
-        'inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide',
-        STATUS_BADGE[status],
-        // Uppercased in CSS: a translated word cannot be upper-cased safely in every language.
-        'uppercase',
-      )}
-    >
+    // Upper case comes from the class: `.toUpperCase()` on a translated word is not safe.
+    <Badge tone={USER_STATUS_TONES[status] ?? 'neutral'} className="uppercase">
       <TEnum k={USER_STATUS_LABELS[status]} fallback={status} />
-    </span>
+    </Badge>
   );
 }
 
@@ -161,10 +160,11 @@ function AccountsPanel({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [status, setStatus] = useState<UserStatus | undefined>(undefined);
+  const [roleId, setRoleId] = useState('');
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [data, setData] = useState<UserPage | null>(null);
-  const [roles, setRoles] = useState<RoleRow[]>([]);
+  const [roles, setRoles] = useState<AccountRoleOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -172,8 +172,14 @@ function AccountsPanel({
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<UserRow | null>(null);
   const [resetting, setResetting] = useState<UserRow | null>(null);
-  const [confirming, setConfirming] = useState<UserRow | null>(null);
+  const [suspending, setSuspending] = useState<UserRow | null>(null);
+  const [removing, setRemoving] = useState<UserRow | null>(null);
   const { t } = useLabels();
+  const { can } = useAuth();
+
+  const screen = accountScreen(accountType);
+  const admin = accountType === 'admin';
+  const minLength = data?.limits.passwordMinLength ?? DEFAULT_PASSWORD_MIN;
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -190,6 +196,7 @@ function AccountsPanel({
         await usersApi.list({
           accountType,
           status,
+          ...(roleId !== '' ? { roleId: Number(roleId) } : {}),
           search: debounced.length > 0 ? debounced : undefined,
           page,
           pageSize,
@@ -201,15 +208,15 @@ function AccountsPanel({
     } finally {
       setLoading(false);
     }
-  }, [accountType, status, debounced, page, pageSize, t]);
+  }, [accountType, status, roleId, debounced, page, pageSize, t]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
-    void rolesApi
-      .list()
+    void usersApi
+      .roles()
       .then(setRoles)
       .catch(() => setRoles([]));
   }, []);
@@ -219,49 +226,40 @@ function AccountsPanel({
     onChanged();
   }, [load, onChanged]);
 
-  async function setAccountStatus(row: UserRow, next: UserStatus): Promise<void> {
+  /** Reactivation only. Suspending goes through its confirmation. */
+  async function reactivate(row: UserRow): Promise<void> {
     setError(null);
     setNotice(null);
     try {
-      await usersApi.update(row.id, { status: next });
-      setNotice(
-        next === 'suspended'
-          ? t('users.suspended', { email: row.email })
-          : t('users.reactivated', { email: row.email }),
-      );
+      await usersApi.update(row.id, { status: 'active' });
+      setNotice(t('users.reactivated', { email: row.email }));
       refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('users.error.status'));
     }
   }
 
-  async function remove(row: UserRow): Promise<void> {
-    setConfirming(null);
-    setError(null);
-    setNotice(null);
-    try {
-      await usersApi.remove(row.id);
-      setNotice(t('users.removed', { email: row.email }));
-      refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('users.error.remove'));
-    }
-  }
-
-  const admin = accountType === 'admin';
+  const rows = data?.rows ?? [];
 
   return (
     <>
       <PanelSection
-        title={<T k={admin ? 'users.section.admin' : 'users.section.staff'} />}
+        title={
+          <T
+            k={admin ? 'users.count.admin' : 'users.count.staff'}
+            vars={{ count: new Intl.NumberFormat('ms-MY').format(data?.total ?? 0) }}
+          />
+        }
         subtitle={
           <T k={admin ? 'users.section.admin.subtitle' : 'users.section.staff.subtitle'} />
         }
         action={
-          <Button onClick={() => setCreating(true)}>
-            <Plus className="size-4" aria-hidden />
-            <T k={admin ? 'users.action.newAdmin' : 'users.action.newStaff'} />
-          </Button>
+          can(screen, 'create') ? (
+            <Button onClick={() => setCreating(true)}>
+              <Plus className="size-4" aria-hidden />
+              <T k={admin ? 'users.action.newAdmin' : 'users.action.newStaff'} />
+            </Button>
+          ) : undefined
         }
       />
 
@@ -283,90 +281,76 @@ function AccountsPanel({
         search={search}
         onSearch={setSearch}
         placeholder={t('users.search')}
-        dirty={search.length > 0 || status !== undefined}
+        dirty={search.length > 0 || status !== undefined || roleId !== ''}
         onReset={() => {
           setSearch('');
           setStatus(undefined);
+          setRoleId('');
           setPage(1);
         }}
       >
         <FacetSelect
           label={t('users.filter.roles')}
-          value=""
-          onChange={() => undefined}
-          options={[]}
-          className="hidden"
+          value={roleId}
+          onChange={(value) => {
+            setRoleId(value);
+            setPage(1);
+          }}
+          options={roles.map((role) => ({ value: String(role.id), label: role.name }))}
         />
       </FilterRow>
 
-      <div className="px-5 pt-3">
-        <Feedback error={error} notice={notice} />
-      </div>
-
-      {accountType === 'staff' && (
-        <p className="mx-5 mt-3 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-          <Smartphone className="mt-0.5 size-3.5 shrink-0 text-slate-400" aria-hidden />
-          <span>
-            <T
-              k="users.staff.note"
-              vars={{
-                pending: (
-                  <strong>
-                    <T k="users.staff.note.pending" />
-                  </strong>
-                ),
-              }}
-            />
-          </span>
-        </p>
+      {(error !== null || notice !== null) && (
+        <PanelBody className="pb-0">
+          <Feedback error={error} notice={notice} />
+        </PanelBody>
       )}
 
-      <div className="mt-3">
-        <RecordTable
-          loading={loading}
-          rowCount={data?.rows.length ?? 0}
-          empty={<T k={admin ? 'users.empty.admin' : 'users.empty.staff'} />}
-          columns={
-            admin
-              ? [
-                  { header: <T k="users.column.email" />, width: 'w-64' },
-                  { header: <T k="users.column.role" />, width: 'w-40' },
-                  { header: <T k="panel.column.created" />, width: 'w-28' },
-                  { header: <T k="panel.column.status" />, width: 'w-24' },
-                  { header: <T k="users.column.twoFactor" />, width: 'w-28' },
-                  { header: <T k="users.column.lastLogin" /> },
-                  { header: <T k="panel.column.actions" />, width: 'w-44', align: 'right' },
-                ]
-              : [
-                  { header: <T k="users.column.email" />, width: 'w-56' },
-                  { header: <T k="users.column.staff" /> },
-                  { header: <T k="users.column.device" />, width: 'w-32' },
-                  { header: <T k="panel.column.status" />, width: 'w-24' },
-                  { header: <T k="users.column.lastLogin" />, width: 'w-44' },
-                  { header: <T k="panel.column.actions" />, width: 'w-44', align: 'right' },
-                ]
-          }
-        >
-          {(data?.rows ?? []).map((row) => (
-            <AccountRow
-              key={row.id}
-              row={row}
-              admin={admin}
-              expanded={open === row.id}
-              onToggle={() => setOpen(open === row.id ? null : row.id)}
-              onEdit={() => setEditing(row)}
-              onReset={() => setResetting(row)}
-              onSuspend={() =>
-                void setAccountStatus(row, row.status === 'suspended' ? 'active' : 'suspended')
-              }
-              onDelete={() => setConfirming(row)}
-            />
-          ))}
-        </RecordTable>
-      </div>
+      <RecordTable
+        framed
+        loading={loading}
+        rowCount={rows.length}
+        empty={<T k={admin ? 'users.empty.admin' : 'users.empty.staff'} />}
+        columns={
+          admin
+            ? [
+                { header: <T k="users.column.email" />, width: 'w-64' },
+                { header: <T k="users.column.role" />, width: 'w-40' },
+                { header: <T k="users.column.twoFactor" />, width: 'w-36' },
+                { header: <T k="users.column.lastLogin" /> },
+                { header: <T k="panel.column.created" />, width: 'w-28' },
+                { header: <T k="panel.column.status" />, width: 'w-32' },
+                { header: <T k="panel.column.actions" />, width: 'w-40', align: 'right' },
+              ]
+            : [
+                { header: <T k="users.column.email" />, width: 'w-56' },
+                { header: <T k="users.column.staff" /> },
+                { header: <T k="users.column.device" />, width: 'w-32' },
+                { header: <T k="users.column.lastLogin" />, width: 'w-40' },
+                { header: <T k="panel.column.status" />, width: 'w-32' },
+                { header: <T k="panel.column.actions" />, width: 'w-40', align: 'right' },
+              ]
+        }
+      >
+        {rows.map((row) => (
+          <AccountRow
+            key={row.id}
+            row={row}
+            admin={admin}
+            screen={screen}
+            expanded={open === row.id}
+            onToggle={() => setOpen(open === row.id ? null : row.id)}
+            onEdit={() => setEditing(row)}
+            onReset={() => setResetting(row)}
+            onSuspend={() => setSuspending(row)}
+            onReactivate={() => void reactivate(row)}
+            onDelete={() => setRemoving(row)}
+          />
+        ))}
+      </RecordTable>
 
       <PanelFooter
-        shown={data?.rows.length ?? 0}
+        shown={rows.length}
         total={data?.total ?? 0}
         page={page}
         pageSize={pageSize}
@@ -384,9 +368,11 @@ function AccountsPanel({
         <CreateAccountDialog
           accountType={accountType}
           roles={roles}
+          minLength={minLength}
           onClose={() => setCreating(false)}
           onSaved={(message) => {
             setCreating(false);
+            setError(null);
             setNotice(message);
             refresh();
           }}
@@ -397,9 +383,11 @@ function AccountsPanel({
         <EditAccountDialog
           account={editing}
           roles={roles}
+          screen={screen}
           onClose={() => setEditing(null)}
           onSaved={(message) => {
             setEditing(null);
+            setError(null);
             setNotice(message);
             refresh();
           }}
@@ -409,30 +397,47 @@ function AccountsPanel({
       {resetting !== null && (
         <ResetPasswordDialog
           account={resetting}
+          minLength={minLength}
           onClose={() => setResetting(null)}
           onSaved={(message) => {
             setResetting(null);
+            setError(null);
             setNotice(message);
             refresh();
           }}
         />
       )}
 
-      {confirming !== null && (
-        <ConfirmDelete
-          title={<T k="users.remove.title" vars={{ email: confirming.email }} />}
-          titleText={t('users.remove.title', { email: confirming.email })}
-          body={
-            <T
-              k={
-                confirming.status === 'suspended'
-                  ? 'users.remove.suspended'
-                  : 'users.remove.active'
-              }
-            />
-          }
-          onClose={() => setConfirming(null)}
-          onConfirm={() => void remove(confirming)}
+      {suspending !== null && (
+        <RemoveDialog
+          title={<T k="users.suspend.title" vars={{ email: suspending.email }} />}
+          titleText={t('users.suspend.title', { email: suspending.email })}
+          description={<T k="users.suspend.body" />}
+          submitLabel={<T k="users.suspend.submit" />}
+          onConfirm={async () => {
+            await usersApi.update(suspending.id, { status: 'suspended' });
+            setSuspending(null);
+            setError(null);
+            setNotice(t('users.suspended', { email: suspending.email }));
+            refresh();
+          }}
+          onClose={() => setSuspending(null)}
+        />
+      )}
+
+      {removing !== null && (
+        <RemoveDialog
+          title={<T k="users.remove.title" vars={{ email: removing.email }} />}
+          titleText={t('users.remove.title', { email: removing.email })}
+          description={<T k="users.remove.suspended" />}
+          onConfirm={async () => {
+            await usersApi.remove(removing.id);
+            setRemoving(null);
+            setError(null);
+            setNotice(t('users.removed', { email: removing.email }));
+            refresh();
+          }}
+          onClose={() => setRemoving(null)}
         />
       )}
     </>
@@ -442,25 +447,35 @@ function AccountsPanel({
 function AccountRow({
   row,
   admin,
+  screen,
   expanded,
   onToggle,
   onEdit,
   onReset,
   onSuspend,
+  onReactivate,
   onDelete,
 }: {
   row: UserRow;
   admin: boolean;
+  screen: string;
   expanded: boolean;
   onToggle: () => void;
   onEdit: () => void;
   onReset: () => void;
   onSuspend: () => void;
+  onReactivate: () => void;
   onDelete: () => void;
 }): ReactNode {
+  const { t } = useLabels();
+  const { can } = useAuth();
   const locked = row.lockedUntil !== null && new Date(row.lockedUntil) > new Date();
   const suspended = row.status === 'suspended';
-  const { t } = useLabels();
+  // A login that outlived its person: the directory says gone, the account still opens.
+  const orphaned = row.staff !== null && !row.staff.active && !suspended;
+
+  const mayEdit = can(screen, 'edit') || (!admin && can(screen, 'unbind'));
+  const mayToggle = can(screen, suspended ? 'activate' : 'suspend');
 
   return (
     <>
@@ -468,9 +483,13 @@ function AccountRow({
         className={cn(
           'border-b border-slate-100',
           expanded ? 'bg-slate-50' : 'hover:bg-slate-50/70',
-          // A suspended row is tinted, so scanning the list surfaces it before the
-          // status column is read.
-          suspended && !expanded && 'bg-rose-50/40',
+          /*
+            Tinted so scanning the list surfaces these before the status column is read: rose for a
+            login that is cut off, amber for one that needs somebody to act — locked out, or still
+            open for a person the directory has already deactivated.
+          */
+          !expanded && suspended && 'bg-rose-50/40',
+          !expanded && !suspended && (locked || orphaned) && 'bg-amber-50/40',
         )}
       >
         <td className="px-5 py-2.5">
@@ -489,29 +508,16 @@ function AccountRow({
             <td className="px-2 py-2.5">
               <Badge tone="neutral">{row.role.name}</Badge>
             </td>
-            <td className="px-2 py-2.5 text-xs whitespace-nowrap text-slate-500">
-              {formatDate(row.createdAt)}
-            </td>
-            <td className="px-2 py-2.5">
-              <div className="flex flex-wrap items-center gap-1">
-                <StatusBadge status={row.status} />
-                {locked && (
-                  <Badge tone="danger">
-                    <T k="users.locked" />
-                  </Badge>
-                )}
-              </div>
-            </td>
             <td className="px-2 py-2.5">
               {row.twoFactorEnabled ? (
-                <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
-                  <ShieldCheck className="size-3.5" aria-hidden />
+                <Badge tone="success" className="uppercase">
+                  <ShieldCheck className="size-3" aria-hidden />
                   <T k="users.twoFactor.on" />
-                </span>
+                </Badge>
               ) : (
-                <span className="text-xs text-amber-700">
+                <Badge tone="warning" className="uppercase">
                   <T k="users.twoFactor.off" />
-                </span>
+                </Badge>
               )}
             </td>
           </>
@@ -522,10 +528,16 @@ function AccountRow({
                 <span className="text-xs text-slate-400">—</span>
               ) : (
                 <>
-                  <span className="block text-slate-800">{row.staff.fullName}</span>
+                  <span className="flex flex-wrap items-center gap-1.5 text-slate-800">
+                    {row.staff.fullName}
+                    {!row.staff.active && (
+                      <Badge tone="warning" className="uppercase">
+                        <T k="users.staffInactive" />
+                      </Badge>
+                    )}
+                  </span>
                   <span className="block text-[11px] tracking-wide text-slate-400 uppercase">
                     {row.staff.department?.name ?? t('users.noDepartment')}
-                    {!row.staff.active && t('users.staffInactive')}
                   </span>
                 </>
               )}
@@ -536,23 +548,10 @@ function AccountRow({
                   <T k="users.device.unclaimed" />
                 </span>
               ) : (
-                <span
-                  className="font-mono text-[11px] text-slate-600"
-                  title={row.boundDeviceId}
-                >
+                <span className="font-mono text-[11px] text-slate-600" title={row.boundDeviceId}>
                   {row.boundDeviceId.slice(0, 10)}…
                 </span>
               )}
-            </td>
-            <td className="px-2 py-2.5">
-              <div className="flex flex-wrap items-center gap-1">
-                <StatusBadge status={row.status} />
-                {locked && (
-                  <Badge tone="danger">
-                    <T k="users.locked" />
-                  </Badge>
-                )}
-              </div>
             </td>
           </>
         )}
@@ -561,50 +560,68 @@ function AccountRow({
           {row.lastLoginAt === null ? t('users.never') : formatDateTime(row.lastLoginAt)}
         </td>
 
+        {admin && (
+          <td className="px-2 py-2.5 text-xs whitespace-nowrap text-slate-500">
+            {formatDate(row.createdAt)}
+          </td>
+        )}
+
+        <td className="px-2 py-2.5">
+          <div className="flex flex-wrap items-center gap-1">
+            <StatusBadge status={row.status} />
+            {locked && (
+              <Badge tone="danger" className="uppercase">
+                <T k="users.locked" />
+              </Badge>
+            )}
+          </div>
+        </td>
+
         <td className="px-2 py-2.5 pr-4">
           <RowActions>
-            <RowAction
-              icon={<Eye className="size-4" aria-hidden />}
-              label={t('users.action.view')}
-              tone="view"
-              onClick={onToggle}
-            />
-            <RowAction
-              icon={<Pencil className="size-4" aria-hidden />}
-              label={t('users.action.edit')}
-              tone="edit"
-              onClick={onEdit}
-            />
-            <RowAction
-              icon={<KeyRound className="size-4" aria-hidden />}
-              label={t('users.action.reset')}
-              tone="success"
-              onClick={onReset}
-            />
+            {mayEdit && (
+              <RowAction
+                icon={<Pencil className="size-4" aria-hidden />}
+                label={t('users.action.edit')}
+                tone="edit"
+                onClick={onEdit}
+              />
+            )}
+            {can(screen, 'reset') && (
+              <RowAction
+                icon={<KeyRound className="size-4" aria-hidden />}
+                label={t('users.action.reset')}
+                tone="success"
+                onClick={onReset}
+              />
+            )}
             {/*
-              The suspend toggle. Suspending ends live sessions immediately, which is
-              the whole point of it existing next to delete: it stops access now and
-              keeps the record.
+              The suspend toggle. Suspending ends live sessions immediately, which is the whole
+              point of it existing next to delete: it stops access now and keeps the record.
             */}
-            <RowAction
-              icon={
-                suspended ? (
-                  <CircleCheck className="size-4" aria-hidden />
-                ) : (
-                  <Ban className="size-4" aria-hidden />
-                )
-              }
-              label={suspended ? t('users.action.reactivate') : t('users.action.suspend')}
-              tone="warn"
-              onClick={onSuspend}
-            />
-            <RowAction
-              icon={<Trash2 className="size-4" aria-hidden />}
-              label={suspended ? t('users.action.remove') : t('users.action.suspendFirst')}
-              tone="danger"
-              disabled={!suspended}
-              onClick={onDelete}
-            />
+            {mayToggle && (
+              <RowAction
+                icon={
+                  suspended ? (
+                    <CircleCheck className="size-4" aria-hidden />
+                  ) : (
+                    <Ban className="size-4" aria-hidden />
+                  )
+                }
+                label={suspended ? t('users.action.reactivate') : t('users.action.suspend')}
+                tone="warn"
+                onClick={suspended ? onReactivate : onSuspend}
+              />
+            )}
+            {can(screen, 'delete') && (
+              <RowAction
+                icon={<Trash2 className="size-4" aria-hidden />}
+                label={suspended ? t('users.action.remove') : t('users.action.suspendFirst')}
+                tone="danger"
+                disabled={!suspended}
+                onClick={onDelete}
+              />
+            )}
             <ExpandButton expanded={expanded} onClick={onToggle} label={t('users.expand')} />
           </RowActions>
         </td>
@@ -625,7 +642,18 @@ function AccountRow({
                 value={row.staff?.department?.name ?? '—'}
               />
               <Detail label={<T k="users.detail.role" />} value={row.role.name} />
-              <Detail label={<T k="users.detail.accountType" />} value={row.accountType} />
+              <Detail
+                label={<T k="users.detail.accountType" />}
+                value={
+                  <T
+                    k={
+                      row.accountType === 'admin'
+                        ? 'users.detail.accountType.admin'
+                        : 'users.detail.accountType.staff'
+                    }
+                  />
+                }
+              />
               <Detail
                 label={<T k="users.detail.created" />}
                 value={formatDateTime(row.createdAt)}
@@ -681,11 +709,14 @@ function AccountRow({
               <Detail label={<T k="users.detail.accountId" />} value={String(row.id)} mono />
             </DetailGrid>
 
-            {row.staff !== null && !row.staff.active && (
-              <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            {orphaned && (
+              <PanelNote
+                tone="warn"
+                icon={<TriangleAlert className="size-3.5" aria-hidden />}
+                className="mt-3"
+              >
                 <T k="users.detail.staffInactiveWarning" />
-              </p>
+              </PanelNote>
             )}
           </td>
         </tr>
@@ -698,8 +729,16 @@ function AccountRow({
 // Apps
 // ---------------------------------------------------------------------------
 
+/** Platform names are proper nouns, shown as the create form offers them. */
+const PLATFORM_NAMES: Record<AppClientRow['platform'], string> = {
+  android: 'Android',
+  ios: 'iOS',
+  web: 'Web',
+};
+
 function AppsPanel({ onChanged }: { onChanged: () => void }): ReactNode {
   const [rows, setRows] = useState<AppClientRow[] | null>(null);
+  const [loadedAt, setLoadedAt] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
@@ -707,16 +746,21 @@ function AppsPanel({ onChanged }: { onChanged: () => void }): ReactNode {
   const [notice, setNotice] = useState<string | null>(null);
   const [open, setOpen] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
-  const [confirming, setConfirming] = useState<AppClientRow | null>(null);
+  const [editing, setEditing] = useState<AppClientRow | null>(null);
+  const [suspending, setSuspending] = useState<AppClientRow | null>(null);
+  const [rotating, setRotating] = useState<AppClientRow | null>(null);
+  const [removing, setRemoving] = useState<AppClientRow | null>(null);
   const [revealed, setRevealed] = useState<{ clientId: string; secret: string; note: string } | null>(
     null,
   );
   const { t } = useLabels();
+  const { can } = useAuth();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       setRows(await appClientsApi.list());
+      setLoadedAt(new Date().toISOString());
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('users.apps.error.load'));
@@ -734,78 +778,48 @@ function AppsPanel({ onChanged }: { onChanged: () => void }): ReactNode {
     onChanged();
   }, [load, onChanged]);
 
-  async function setStatus(row: AppClientRow, status: 'active' | 'suspended'): Promise<void> {
+  /** Reactivation only. Suspending goes through its confirmation. */
+  async function reactivate(row: AppClientRow): Promise<void> {
     setError(null);
     setNotice(null);
     try {
-      await appClientsApi.update(row.id, { status });
-      setNotice(
-        status === 'suspended'
-          ? t('users.apps.suspended', { name: row.name })
-          : t('users.apps.reactivated', { name: row.name }),
-      );
+      await appClientsApi.update(row.id, { status: 'active' });
+      setNotice(t('users.apps.reactivated', { name: row.name }));
       refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('users.error.status'));
     }
   }
 
-  async function rotate(row: AppClientRow): Promise<void> {
-    setError(null);
-    setNotice(null);
-    try {
-      const outcome = await appClientsApi.update(row.id, { rotateSecret: true });
-      if (outcome.secret !== undefined) {
-        setRevealed({
-          clientId: row.clientId,
-          secret: outcome.secret,
-          // The server's own wording when it has one; the registry line is the fallback.
-          note: outcome.note ?? t('users.apps.rotated'),
-        });
-      }
-      refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('users.apps.error.rotate'));
-    }
-  }
-
-  async function remove(row: AppClientRow): Promise<void> {
-    setConfirming(null);
-    setError(null);
-    try {
-      await appClientsApi.remove(row.id);
-      setNotice(t('users.apps.removed', { name: row.name }));
-      refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('users.apps.error.remove'));
-    }
-  }
-
   const all = rows ?? [];
   const needle = search.trim().toLowerCase();
-  const filtered = all.filter((row) => {
-    if (statusFilter !== undefined && row.status !== statusFilter) return false;
-    if (needle.length === 0) return true;
-    return (
-      row.name.toLowerCase().includes(needle) || row.clientId.toLowerCase().includes(needle)
-    );
-  });
+  const searched = all.filter(
+    (row) =>
+      needle.length === 0 ||
+      row.name.toLowerCase().includes(needle) ||
+      row.clientId.toLowerCase().includes(needle),
+  );
+  const filtered =
+    statusFilter === undefined ? searched : searched.filter((row) => row.status === statusFilter);
 
+  // Counted over the search but not over the chip, so choosing one does not zero the other.
   const counts = {
-    active: all.filter((row) => row.status === 'active').length,
-    suspended: all.filter((row) => row.status === 'suspended').length,
+    active: searched.filter((row) => row.status === 'active').length,
+    suspended: searched.filter((row) => row.status === 'suspended').length,
   };
 
   return (
     <>
       <PanelSection
-        title={<T k="users.apps.title" />}
+        title={<T k="users.apps.count" vars={{ count: all.length }} />}
         subtitle={<T k="users.apps.subtitle" />}
         action={
-          <Button onClick={() => setCreating(true)}>
-            <Plus className="size-4" aria-hidden />
-            <T k="users.apps.action.add" />
-          </Button>
+          can(APPS_SCREEN, 'create') ? (
+            <Button onClick={() => setCreating(true)}>
+              <Plus className="size-4" aria-hidden />
+              <T k="users.apps.action.add" />
+            </Button>
+          ) : undefined
         }
       />
 
@@ -815,13 +829,13 @@ function AppsPanel({ onChanged }: { onChanged: () => void }): ReactNode {
         chips={[
           {
             id: 'active',
-            label: <T k="users.apps.chip.active" />,
+            label: <T k="app.status.active" />,
             count: counts.active,
             dot: 'bg-emerald-500',
           },
           {
             id: 'suspended',
-            label: <T k="users.apps.chip.suspended" />,
+            label: <T k="userStatus.suspended" />,
             count: counts.suspended,
             dot: 'bg-rose-500',
           },
@@ -839,93 +853,85 @@ function AppsPanel({ onChanged }: { onChanged: () => void }): ReactNode {
         }}
       />
 
-      <div className="px-5 pt-3">
+      {/* One note: what to do when a secret leaks, which is the decision this tab exists for. */}
+      <PanelBody className="space-y-2 pb-0">
         <Feedback error={error} notice={notice} />
-      </div>
-
-      <p className="mx-5 mt-3 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-        <Smartphone className="mt-0.5 size-3.5 shrink-0 text-slate-400" aria-hidden />
-        <span>
+        <PanelNote icon={<Smartphone className="size-3.5" aria-hidden />}>
           <T k="users.apps.note" />
-        </span>
-      </p>
+        </PanelNote>
+      </PanelBody>
 
-      <div className="mt-3">
-        <RecordTable
-          loading={loading}
-          rowCount={filtered.length}
-          empty={<T k="users.apps.empty" />}
-          columns={[
-            { header: <T k="users.apps.column.name" /> },
-            { header: <T k="users.apps.column.platform" />, width: 'w-28' },
-            { header: <T k="users.apps.column.minVersion" />, width: 'w-32' },
-            { header: <T k="panel.column.status" />, width: 'w-28' },
-            { header: <T k="panel.column.created" />, width: 'w-28' },
-            { header: <T k="panel.column.actions" />, width: 'w-44', align: 'right' },
-          ]}
-        >
-          {filtered.map((row) => {
-            const suspended = row.status === 'suspended';
-            const expanded = open === row.id;
-            return (
-              <>
-                <tr
-                  key={row.id}
-                  className={cn(
-                    'border-b border-slate-100',
-                    expanded ? 'bg-slate-50' : 'hover:bg-slate-50/70',
-                    suspended && !expanded && 'bg-rose-50/40',
+      <RecordTable
+        framed
+        loading={loading}
+        rowCount={filtered.length}
+        empty={<T k="users.apps.empty" />}
+        columns={[
+          { header: <T k="users.apps.column.name" /> },
+          { header: <T k="users.apps.column.platform" />, width: 'w-28' },
+          { header: <T k="users.apps.column.minVersion" />, width: 'w-32' },
+          { header: <T k="panel.column.created" />, width: 'w-28' },
+          { header: <T k="panel.column.status" />, width: 'w-28' },
+          { header: <T k="panel.column.actions" />, width: 'w-40', align: 'right' },
+        ]}
+      >
+        {filtered.map((row) => {
+          const suspended = row.status === 'suspended';
+          const expanded = open === row.id;
+          return (
+            <Fragment key={row.id}>
+              <tr
+                className={cn(
+                  'border-b border-slate-100',
+                  expanded ? 'bg-slate-50' : 'hover:bg-slate-50/70',
+                  suspended && !expanded && 'bg-rose-50/40',
+                )}
+              >
+                <td className="px-5 py-2.5">
+                  <span className="block font-medium text-slate-800">{row.name}</span>
+                  <span className="block font-mono text-[11px] text-slate-400">
+                    {row.clientId}
+                  </span>
+                </td>
+                <td className="px-2 py-2.5">
+                  <Badge tone="neutral">{PLATFORM_NAMES[row.platform] ?? row.platform}</Badge>
+                </td>
+                <td className="px-2 py-2.5">
+                  {row.minVersion === null ? (
+                    <span className="text-xs text-slate-400">
+                      <T k="users.apps.noLimit" />
+                    </span>
+                  ) : (
+                    <span className="font-mono text-xs text-slate-600">{row.minVersion}</span>
                   )}
-                >
-                  <td className="px-5 py-2.5">
-                    <span className="block font-medium text-slate-800">{row.name}</span>
-                    <span className="block font-mono text-[11px] text-slate-400">
-                      {row.clientId}
-                    </span>
-                  </td>
-                  <td className="px-2 py-2.5">
-                    <Badge tone="neutral">{row.platform}</Badge>
-                  </td>
-                  <td className="px-2 py-2.5">
-                    {row.minVersion === null ? (
-                      <span className="text-xs text-slate-400">
-                        <T k="users.apps.noLimit" />
-                      </span>
-                    ) : (
-                      <span className="font-mono text-xs text-slate-600">{row.minVersion}</span>
-                    )}
-                  </td>
-                  <td className="px-2 py-2.5">
-                    <span
-                      className={cn(
-                        'inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide',
-                        suspended ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700',
-                      )}
-                    >
-                      <T
-                        k={
-                          suspended ? 'users.apps.status.suspended' : 'users.apps.status.active'
-                        }
-                      />
-                    </span>
-                  </td>
-                  <td className="px-2 py-2.5 text-xs whitespace-nowrap text-slate-500">
-                    {formatDate(row.createdAt)}
-                  </td>
-                  <td className="px-2 py-2.5 pr-4">
-                    <RowActions>
+                </td>
+                <td className="px-2 py-2.5 text-xs whitespace-nowrap text-slate-500">
+                  {formatDate(row.createdAt)}
+                </td>
+                <td className="px-2 py-2.5">
+                  <Badge tone={suspended ? 'danger' : 'success'} className="uppercase">
+                    <T k={suspended ? 'userStatus.suspended' : 'app.status.active'} />
+                  </Badge>
+                </td>
+                <td className="px-2 py-2.5 pr-4">
+                  <RowActions>
+                    {can(APPS_SCREEN, 'edit') && (
                       <RowAction
-                        icon={<Eye className="size-4" aria-hidden />}
-                        label={t('users.action.view')}
-                        tone="view"
-                        onClick={() => setOpen(expanded ? null : row.id)}
+                        icon={<Pencil className="size-4" aria-hidden />}
+                        label={t('users.apps.action.edit')}
+                        tone="edit"
+                        onClick={() => setEditing(row)}
                       />
+                    )}
+                    {can(APPS_SCREEN, 'rotate') && (
                       <RowAction
                         icon={<RefreshCw className="size-4" aria-hidden />}
                         label={t('users.apps.action.rotate')}
                         tone="edit"
-                        onClick={() => void rotate(row)}
+                        onClick={() => setRotating(row)}
                       />
+                    )}
+                    {can(APPS_SCREEN, suspended ? 'activate' : 'suspend') && (
                       <RowAction
                         icon={
                           suspended ? (
@@ -940,8 +946,10 @@ function AppsPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                             : t('users.apps.action.suspend')
                         }
                         tone="warn"
-                        onClick={() => void setStatus(row, suspended ? 'active' : 'suspended')}
+                        onClick={() => (suspended ? void reactivate(row) : setSuspending(row))}
                       />
+                    )}
+                    {can(APPS_SCREEN, 'delete') && (
                       <RowAction
                         icon={<Trash2 className="size-4" aria-hidden />}
                         label={
@@ -951,55 +959,55 @@ function AppsPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                         }
                         tone="danger"
                         disabled={!suspended}
-                        onClick={() => setConfirming(row)}
+                        onClick={() => setRemoving(row)}
                       />
-                      <ExpandButton
-                        expanded={expanded}
-                        onClick={() => setOpen(expanded ? null : row.id)}
-                        label={t('users.apps.expand')}
+                    )}
+                    <ExpandButton
+                      expanded={expanded}
+                      onClick={() => setOpen(expanded ? null : row.id)}
+                      label={t('users.apps.expand')}
+                    />
+                  </RowActions>
+                </td>
+              </tr>
+
+              {expanded && (
+                <tr className="border-b border-slate-200 bg-slate-50">
+                  <td colSpan={6} className="px-5 py-3">
+                    <DetailGrid>
+                      <Detail
+                        label={<T k="users.apps.detail.clientId" />}
+                        value={row.clientId}
+                        mono
                       />
-                    </RowActions>
+                      <Detail
+                        label={<T k="users.apps.column.platform" />}
+                        value={PLATFORM_NAMES[row.platform] ?? row.platform}
+                      />
+                      <Detail
+                        label={<T k="users.apps.column.minVersion" />}
+                        value={row.minVersion ?? t('users.apps.noLimit')}
+                      />
+                      <Detail
+                        label={<T k="users.detail.created" />}
+                        value={formatDateTime(row.createdAt)}
+                      />
+                      <Detail
+                        label={<T k="users.apps.detail.updated" />}
+                        value={formatDateTime(row.updatedAt)}
+                      />
+                      <Detail
+                        label={<T k="users.apps.detail.secret" />}
+                        value={<T k="users.apps.detail.secret.value" />}
+                      />
+                    </DetailGrid>
                   </td>
                 </tr>
-
-                {expanded && (
-                  <tr key={`${String(row.id)}-detail`} className="border-b border-slate-200 bg-slate-50">
-                    <td colSpan={6} className="px-5 py-3">
-                      <DetailGrid>
-                        <Detail
-                          label={<T k="users.apps.detail.clientId" />}
-                          value={row.clientId}
-                          mono
-                        />
-                        <Detail
-                          label={<T k="users.apps.column.platform" />}
-                          value={row.platform}
-                        />
-                        <Detail
-                          label={<T k="users.apps.column.minVersion" />}
-                          value={row.minVersion ?? t('users.apps.noLimit')}
-                        />
-                        <Detail
-                          label={<T k="users.detail.created" />}
-                          value={formatDateTime(row.createdAt)}
-                        />
-                        <Detail
-                          label={<T k="users.apps.detail.updated" />}
-                          value={formatDateTime(row.updatedAt)}
-                        />
-                        <Detail
-                          label={<T k="users.apps.detail.secret" />}
-                          value={<T k="users.apps.detail.secret.value" />}
-                        />
-                      </DetailGrid>
-                    </td>
-                  </tr>
-                )}
-              </>
-            );
-          })}
-        </RecordTable>
-      </div>
+              )}
+            </Fragment>
+          );
+        })}
+      </RecordTable>
 
       <PanelFooter
         shown={filtered.length}
@@ -1007,6 +1015,7 @@ function AppsPanel({ onChanged }: { onChanged: () => void }): ReactNode {
         page={1}
         pageSize={Math.max(1, all.length)}
         pageSizes={[Math.max(1, all.length)]}
+        generatedAt={loadedAt}
         loading={loading}
         onPage={() => undefined}
         onPageSize={() => undefined}
@@ -1024,15 +1033,83 @@ function AppsPanel({ onChanged }: { onChanged: () => void }): ReactNode {
         />
       )}
 
-      {revealed !== null && <SecretDialog value={revealed} onClose={() => setRevealed(null)} />}
+      {editing !== null && (
+        <EditAppClientDialog
+          client={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            setError(null);
+            setNotice(t('users.apps.updated', { name: editing.name }));
+            refresh();
+          }}
+        />
+      )}
 
-      {confirming !== null && (
-        <ConfirmDelete
-          title={<T k="users.apps.remove.title" vars={{ name: confirming.name }} />}
-          titleText={t('users.apps.remove.title', { name: confirming.name })}
-          body={<T k="users.apps.remove.body" />}
-          onClose={() => setConfirming(null)}
-          onConfirm={() => void remove(confirming)}
+      {revealed !== null && (
+        <RevealSecret
+          title={t('users.apps.secret.title')}
+          identifier={{ label: t('users.apps.secret.clientId'), value: revealed.clientId }}
+          label={t('users.apps.secret.secret')}
+          value={revealed.secret}
+          note={revealed.note}
+          onClose={() => setRevealed(null)}
+        />
+      )}
+
+      {suspending !== null && (
+        <RemoveDialog
+          title={<T k="users.apps.suspend.title" vars={{ name: suspending.name }} />}
+          titleText={t('users.apps.suspend.title', { name: suspending.name })}
+          description={<T k="users.apps.suspend.body" />}
+          submitLabel={<T k="users.suspend.submit" />}
+          onConfirm={async () => {
+            await appClientsApi.update(suspending.id, { status: 'suspended' });
+            setSuspending(null);
+            setError(null);
+            setNotice(t('users.apps.suspended', { name: suspending.name }));
+            refresh();
+          }}
+          onClose={() => setSuspending(null)}
+        />
+      )}
+
+      {rotating !== null && (
+        <RemoveDialog
+          title={<T k="users.apps.rotate.title" vars={{ name: rotating.name }} />}
+          titleText={t('users.apps.rotate.title', { name: rotating.name })}
+          description={<T k="users.apps.rotate.body" />}
+          submitLabel={<T k="users.apps.rotate.submit" />}
+          onConfirm={async () => {
+            const outcome = await appClientsApi.update(rotating.id, { rotateSecret: true });
+            setRotating(null);
+            setError(null);
+            if (outcome.secret !== undefined) {
+              setRevealed({
+                clientId: rotating.clientId,
+                secret: outcome.secret,
+                note: t(outcome.noteKey ?? 'users.apps.secret.rotated'),
+              });
+            }
+            refresh();
+          }}
+          onClose={() => setRotating(null)}
+        />
+      )}
+
+      {removing !== null && (
+        <RemoveDialog
+          title={<T k="users.apps.remove.title" vars={{ name: removing.name }} />}
+          titleText={t('users.apps.remove.title', { name: removing.name })}
+          description={<T k="users.apps.remove.body" />}
+          onConfirm={async () => {
+            await appClientsApi.remove(removing.id);
+            setRemoving(null);
+            setError(null);
+            setNotice(t('users.apps.removed', { name: removing.name }));
+            refresh();
+          }}
+          onClose={() => setRemoving(null)}
         />
       )}
     </>
@@ -1043,22 +1120,39 @@ function AppsPanel({ onChanged }: { onChanged: () => void }): ReactNode {
 // Dialogs
 // ---------------------------------------------------------------------------
 
-const SELECT = 'mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
+/** The edit form's status options. A select option, so its own words rather than the badge's. */
+const EDIT_STATUS_LABELS: Record<UserStatus, LabelKey> = {
+  active: 'users.edit.status.active',
+  pending: 'users.edit.status.pending',
+  suspended: 'users.edit.status.suspended',
+};
+
+/** One option per role, with how much it grants beside the name. */
+function roleOption(role: AccountRoleOption, t: ReturnType<typeof useLabels>['t']): ReactNode {
+  return (
+    <option key={role.id} value={role.id}>
+      {t('users.create.role.option', {
+        name: role.name,
+        granted: role.permissionCount,
+        total: role.permissionTotal,
+      })}
+    </option>
+  );
+}
 
 function CreateAccountDialog({
   accountType,
   roles,
+  minLength,
   onClose,
   onSaved,
 }: {
   accountType: 'admin' | 'staff';
-  roles: RoleRow[];
+  roles: AccountRoleOption[];
+  minLength: number;
   onClose: () => void;
   onSaved: (message: string) => void;
 }): ReactNode {
-  const [query, setQuery] = useState('');
-  const [candidates, setCandidates] = useState<AccountCandidate[]>([]);
-  const [searching, setSearching] = useState(false);
   const [chosen, setChosen] = useState<AccountCandidate | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -1068,28 +1162,21 @@ function CreateAccountDialog({
   const [error, setError] = useState<string | null>(null);
   const { t } = useLabels();
 
-  useEffect(() => {
-    if (chosen !== null) return;
-    setSearching(true);
-    const timer = setTimeout(() => {
-      void usersApi
-        .searchStaff(query)
-        .then(setCandidates)
-        .catch(() => setCandidates([]))
-        .finally(() => setSearching(false));
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [query, chosen]);
+  /*
+    Active roles only. An inactive role refuses login to everyone holding it, so issuing a new
+    account under one creates a login that cannot be used.
+  */
+  const offered = useMemo(() => roles.filter((role) => role.status === 'active'), [roles]);
 
   useEffect(() => {
-    if (roleId !== null || roles.length === 0) return;
+    if (roleId !== null || offered.length === 0) return;
     // Defaults to the least privileged role rather than the first listed, so a
     // mis-click on save does not hand out administration.
-    const fewest = [...roles].sort(
+    const fewest = [...offered].sort(
       (left, right) => left.permissionCount - right.permissionCount,
     )[0];
     if (fewest) setRoleId(fewest.id);
-  }, [roleId, roles]);
+  }, [roleId, offered]);
 
   async function submit(): Promise<void> {
     if (chosen === null || roleId === null) return;
@@ -1104,11 +1191,12 @@ function CreateAccountDialog({
         password,
         allowAppCheckIn,
       });
+      // Two sentences, joined: the server's note, when it sends one, is a sentence of its own.
       onSaved(
-        // The server's note, when it sent one, appended to the registry sentence. It names
-        // something specific to this account that no fixed wording could cover.
-        t('users.created', { name: chosen.fullName }) +
-          (outcome.note === undefined ? '' : ` ${outcome.note}`),
+        [
+          t('users.created', { name: chosen.fullName }),
+          ...(outcome.noteKey === undefined ? [] : [t(outcome.noteKey)]),
+        ].join(' '),
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('users.error.create'));
@@ -1117,94 +1205,43 @@ function CreateAccountDialog({
     }
   }
 
+  const titleKey = accountType === 'admin' ? 'users.create.admin' : 'users.create.staff';
+  const short = password.length > 0 && password.length < minLength;
+
   return (
     <Dialog
-      title={<T k={accountType === 'admin' ? 'users.create.admin' : 'users.create.staff'} />}
-      titleText={t(accountType === 'admin' ? 'users.create.admin' : 'users.create.staff')}
-      description={<T k="users.create.description" />}
+      title={<T k={titleKey} />}
+      titleText={t(titleKey)}
+      description={
+        <T
+          k={accountType === 'admin' ? 'users.create.description' : 'users.create.description.staff'}
+        />
+      }
       width="lg"
       onClose={onClose}
     >
       <div className="space-y-4">
         <Feedback error={error} />
 
-        {chosen === null ? (
-          <div>
-            <Field
-              label={<T k="users.create.searchStaff" />}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t('users.create.searchStaff.placeholder')}
-              autoFocus
-            />
+        {/* Name first, then the form — the same two stages as every form that names a person. */}
+        <StaffPicker<AccountCandidate>
+          value={chosen}
+          onChange={(candidate) => {
+            setChosen(candidate);
+            setEmail(candidate?.email ?? '');
+          }}
+          search={(query) => usersApi.searchStaff(query)}
+          hint={<T k="users.create.searchStaff.hint" />}
+          unavailable={(candidate) =>
+            candidate.existingAccountEmail === null ? undefined : (
+              <T k="users.create.taken" vars={{ email: candidate.existingAccountEmail }} />
+            )
+          }
+        />
 
-            <div className="mt-3 max-h-72 overflow-y-auto rounded-lg border border-slate-200">
-              {searching && candidates.length === 0 ? (
-                <div className="flex min-h-24 items-center justify-center">
-                  <Loader2
-                    className="size-4 animate-spin text-slate-400"
-                    aria-label={t('users.create.searching')}
-                  />
-                </div>
-              ) : candidates.length === 0 ? (
-                <p className="px-3 py-6 text-center text-sm text-slate-500">
-                  <T k="users.create.noMatch" />
-                </p>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {candidates.map((candidate) => {
-                    const taken = candidate.existingAccountEmail !== null;
-                    return (
-                      <li key={candidate.id}>
-                        <button
-                          type="button"
-                          disabled={taken}
-                          onClick={() => {
-                            setChosen(candidate);
-                            setEmail(candidate.email ?? '');
-                          }}
-                          className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50/60"
-                        >
-                          <UserRound className="size-4 shrink-0 text-slate-400" aria-hidden />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium text-slate-800">
-                              {candidate.fullName}
-                            </span>
-                            <span className="block truncate font-mono text-xs text-slate-500">
-                              {candidate.employeeNo}
-                              {candidate.department !== null && ` · ${candidate.department.name}`}
-                            </span>
-                          </span>
-                          {taken && (
-                            <Badge tone="neutral">
-                              <T
-                                k="users.create.taken"
-                                vars={{ email: candidate.existingAccountEmail }}
-                              />
-                            </Badge>
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          </div>
-        ) : (
+        {chosen !== null && (
           <>
-            <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-              <UserRound className="size-4 text-slate-400" aria-hidden />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-slate-800">{chosen.fullName}</p>
-                <p className="font-mono text-xs text-slate-500">{chosen.employeeNo}</p>
-              </div>
-              <Button variant="ghost" onClick={() => setChosen(null)}>
-                <T k="users.create.change" />
-              </Button>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid items-start gap-4 sm:grid-cols-2">
               <Field
                 label={<T k="users.create.email" />}
                 type="email"
@@ -1212,70 +1249,49 @@ function CreateAccountDialog({
                 onChange={(event) => setEmail(event.target.value)}
                 wrapperClassName="sm:col-span-2"
               />
-              <div>
-                <label htmlFor="new-role" className="block text-sm font-medium text-slate-700">
-                  <T k="users.create.role" />
-                </label>
-                <select
-                  id="new-role"
-                  value={roleId ?? ''}
-                  onChange={(event) => setRoleId(Number(event.target.value))}
-                  className={SELECT}
-                >
-                  {roles.map((role) => (
-                    <option key={role.id} value={role.id}>
-                      {t('users.create.role.option', {
-                        name: role.name,
-                        granted: role.permissionCount,
-                        total: role.permissionTotal,
-                      })}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <SelectField
+                label={<T k="users.create.role" />}
+                value={roleId ?? ''}
+                onChange={(event) => setRoleId(Number(event.target.value))}
+              >
+                {offered.map((role) => roleOption(role, t))}
+              </SelectField>
               <Field
                 label={<T k="users.create.password" />}
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                hint={<T k="users.create.password.hint" />}
+                hint={<T k="users.create.password.hint" vars={{ count: minLength }} />}
                 error={
-                  password.length > 0 && password.length < 12
-                    ? t('users.create.password.short', { count: 12 - password.length })
+                  short
+                    ? t('users.create.password.short', { count: minLength - password.length })
                     : undefined
                 }
               />
             </div>
 
-            {accountType === 'staff' && (
-              <label className="flex items-start gap-2 text-sm text-slate-700">
-                <input
-                  type="checkbox"
+            <div className="space-y-2 pb-2">
+              {accountType === 'staff' && (
+                <CheckCard
                   checked={allowAppCheckIn}
-                  onChange={(event) => setAllowAppCheckIn(event.target.checked)}
-                  className="mt-0.5"
+                  onChange={setAllowAppCheckIn}
+                  icon={<Smartphone className="size-4" aria-hidden />}
+                  title={<T k="users.create.allowAppCheckIn" />}
+                  hint={<T k="users.create.allowAppCheckIn.hint" />}
                 />
-                <span>
-                  <T k="users.create.allowAppCheckIn" />
-                  <span className="mt-0.5 block text-xs text-slate-500">
-                    <T k="users.create.allowAppCheckIn.hint" />
-                  </span>
-                </span>
-              </label>
-            )}
-
-            {accountType === 'admin' && (
-              <p className="flex items-start gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                <T k="users.create.adminWarning" />
-              </p>
-            )}
+              )}
+              {accountType === 'admin' && (
+                <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+                  <T k="users.create.adminWarning" />
+                </PanelNote>
+              )}
+            </div>
 
             <DialogFooter
               onClose={onClose}
               onSubmit={() => void submit()}
               busy={busy}
-              disabled={email.trim().length === 0 || password.length < 12 || roleId === null}
+              disabled={email.trim().length === 0 || password.length < minLength || roleId === null}
               submitLabel={<T k="users.create.submit" />}
             />
           </>
@@ -1288,11 +1304,13 @@ function CreateAccountDialog({
 function EditAccountDialog({
   account,
   roles,
+  screen,
   onClose,
   onSaved,
 }: {
   account: UserRow;
-  roles: RoleRow[];
+  roles: AccountRoleOption[];
+  screen: string;
   onClose: () => void;
   onSaved: (message: string) => void;
 }): ReactNode {
@@ -1303,6 +1321,30 @@ function EditAccountDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { t } = useLabels();
+  const { can } = useAuth();
+
+  /*
+    Each field carries its own permission on the server — role and app check-in need `edit`,
+    each status its own verb, the binding `unbind` — so each control is offered only to somebody
+    whose save it would not refuse.
+  */
+  const mayEdit = can(screen, 'edit');
+  const statuses = (['active', 'pending', 'suspended'] as UserStatus[]).filter(
+    (option) =>
+      option === account.status ||
+      (option === 'active' && can(screen, 'activate')) ||
+      (option === 'suspended' && can(screen, 'suspend')) ||
+      (option === 'pending' && mayEdit),
+  );
+  const mayUnbind = account.accountType === 'staff' && can(screen, 'unbind');
+  // The current role stays listed even when inactive, so the select shows what the account holds.
+  const offered = roles.filter((role) => role.status === 'active' || role.id === account.role.id);
+
+  const changed =
+    roleId !== account.role.id ||
+    status !== account.status ||
+    allowAppCheckIn !== account.allowAppCheckIn ||
+    resetBinding;
 
   async function submit(): Promise<void> {
     setBusy(true);
@@ -1323,83 +1365,74 @@ function EditAccountDialog({
   }
 
   return (
-    <Dialog title={account.email} description={account.staff?.fullName} onClose={onClose}>
+    <Dialog
+      title={account.email}
+      description={account.staff?.fullName}
+      width="lg"
+      onClose={onClose}
+    >
       <div className="space-y-4">
         <Feedback error={error} />
 
-        <div>
-          <label htmlFor="edit-role" className="block text-sm font-medium text-slate-700">
-            <T k="users.create.role" />
-          </label>
-          <select
-            id="edit-role"
+        <div className="grid items-start gap-4 sm:grid-cols-2">
+          <SelectField
+            label={<T k="users.create.role" />}
             value={roleId}
             onChange={(event) => setRoleId(Number(event.target.value))}
-            className={SELECT}
+            disabled={!mayEdit}
           >
-            {roles.map((role) => (
-              <option key={role.id} value={role.id}>
-                {t('users.create.role.option', {
-                  name: role.name,
-                  granted: role.permissionCount,
-                  total: role.permissionTotal,
-                })}
-              </option>
-            ))}
-          </select>
-        </div>
+            {offered.map((role) => roleOption(role, t))}
+          </SelectField>
 
-        <div>
-          <label htmlFor="edit-status" className="block text-sm font-medium text-slate-700">
-            <T k="users.edit.status" />
-          </label>
-          <select
-            id="edit-status"
+          <SelectField
+            label={<T k="users.edit.status" />}
             value={status}
             onChange={(event) => setStatus(event.target.value as UserStatus)}
-            className={SELECT}
+            disabled={statuses.length < 2}
+            hint={
+              status === 'suspended' && account.status !== 'suspended' ? (
+                <T k="users.edit.status.warning" />
+              ) : undefined
+            }
           >
-            <option value="active">{t('users.edit.status.active')}</option>
-            <option value="pending">{t('users.edit.status.pending')}</option>
-            <option value="suspended">{t('users.edit.status.suspended')}</option>
-          </select>
-          {status === 'suspended' && account.status !== 'suspended' && (
-            <p className="mt-1.5 text-xs text-amber-800">
-              <T k="users.edit.status.warning" />
-            </p>
-          )}
+            {statuses.map((option) => (
+              <option key={option} value={option}>
+                {t(EDIT_STATUS_LABELS[option])}
+              </option>
+            ))}
+          </SelectField>
         </div>
 
-        {account.accountType === 'staff' && (
-          <label className="flex items-start gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={allowAppCheckIn}
-              onChange={(event) => setAllowAppCheckIn(event.target.checked)}
-              className="mt-0.5"
-            />
-            <T k="users.create.allowAppCheckIn" />
-          </label>
+        {(account.accountType === 'staff' || (account.boundDeviceId !== null && mayUnbind)) && (
+          <div className="space-y-2 pb-2">
+            {account.accountType === 'staff' && (
+              <CheckCard
+                checked={allowAppCheckIn}
+                onChange={setAllowAppCheckIn}
+                disabled={!mayEdit}
+                icon={<Smartphone className="size-4" aria-hidden />}
+                title={<T k="users.create.allowAppCheckIn" />}
+                hint={<T k="users.create.allowAppCheckIn.hint" />}
+              />
+            )}
+            {account.boundDeviceId !== null && mayUnbind && (
+              <CheckCard
+                checked={resetBinding}
+                onChange={setResetBinding}
+                icon={<Link2Off className="size-4" aria-hidden />}
+                title={<T k="users.edit.resetBinding" />}
+                hint={<T k="users.edit.resetBinding.hint" />}
+              />
+            )}
+          </div>
         )}
 
-        {account.boundDeviceId !== null && (
-          <label className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={resetBinding}
-              onChange={(event) => setResetBinding(event.target.checked)}
-              className="mt-0.5"
-            />
-            <span>
-              <T k="users.edit.resetBinding" />
-              <span className="mt-0.5 block text-xs text-slate-500">
-                <T k="users.edit.resetBinding.hint" />
-              </span>
-            </span>
-          </label>
-        )}
-
-        <DialogFooter onClose={onClose} onSubmit={() => void submit()} busy={busy} />
+        <DialogFooter
+          onClose={onClose}
+          onSubmit={() => void submit()}
+          busy={busy}
+          disabled={!changed}
+        />
       </div>
     </Dialog>
   );
@@ -1414,10 +1447,12 @@ function EditAccountDialog({
  */
 function ResetPasswordDialog({
   account,
+  minLength,
   onClose,
   onSaved,
 }: {
   account: UserRow;
+  minLength: number;
   onClose: () => void;
   onSaved: (message: string) => void;
 }): ReactNode {
@@ -1449,6 +1484,7 @@ function ResetPasswordDialog({
           vars={{ email: account.email, name: account.staff?.fullName ?? '—' }}
         />
       }
+      width="lg"
       onClose={onClose}
     >
       <div className="space-y-4">
@@ -1460,24 +1496,25 @@ function ResetPasswordDialog({
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           autoFocus
-          hint={<T k="users.reset.password.hint" />}
+          hint={<T k="users.reset.password.hint" vars={{ count: minLength }} />}
           error={
-            password.length > 0 && password.length < 12
-              ? t('users.create.password.short', { count: 12 - password.length })
+            password.length > 0 && password.length < minLength
+              ? t('users.create.password.short', { count: minLength - password.length })
               : undefined
           }
         />
 
-        <p className="flex items-start gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          <T k="users.reset.warning" />
-        </p>
+        <div className="pb-2">
+          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+            <T k="users.reset.warning" />
+          </PanelNote>
+        </div>
 
         <DialogFooter
           onClose={onClose}
           onSubmit={() => void submit()}
           busy={busy}
-          disabled={password.length < 12}
+          disabled={password.length < minLength}
           submitLabel={<T k="users.reset.submit" />}
         />
       </div>
@@ -1493,7 +1530,7 @@ function CreateAppClientDialog({
   onCreated: (secret: { clientId: string; secret: string; note: string }) => void;
 }): ReactNode {
   const [name, setName] = useState('');
-  const [platform, setPlatform] = useState<'android' | 'ios' | 'web'>('android');
+  const [platform, setPlatform] = useState<AppClientRow['platform']>('android');
   const [minVersion, setMinVersion] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1508,7 +1545,13 @@ function CreateAppClientDialog({
         platform,
         minVersion: minVersion.trim(),
       });
-      onCreated({ clientId: outcome.clientId, secret: outcome.secret, note: outcome.note });
+      onCreated({
+        clientId: outcome.clientId,
+        secret: outcome.secret,
+        // The key the server sent, resolved here. It used to be read as `note`, which the server
+        // no longer sends, so the strip saying this is the only viewing rendered empty.
+        note: t(outcome.noteKey),
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('users.apps.error.create'));
     } finally {
@@ -1520,6 +1563,7 @@ function CreateAppClientDialog({
     <Dialog
       title={<T k="users.apps.create.title" />}
       titleText={t('users.apps.create.title')}
+      width="lg"
       onClose={onClose}
     >
       <div className="space-y-4">
@@ -1533,29 +1577,27 @@ function CreateAppClientDialog({
           autoFocus
         />
 
-        <div>
-          <label htmlFor="platform" className="block text-sm font-medium text-slate-700">
-            <T k="users.apps.create.platform" />
-          </label>
-          <select
-            id="platform"
+        <div className="grid items-start gap-4 pb-2 sm:grid-cols-2">
+          <SelectField
+            label={<T k="users.apps.create.platform" />}
             value={platform}
-            onChange={(event) => setPlatform(event.target.value as typeof platform)}
-            className={SELECT}
+            onChange={(event) => setPlatform(event.target.value as AppClientRow['platform'])}
           >
-            <option value="android">Android</option>
-            <option value="ios">iOS</option>
-            <option value="web">Web</option>
-          </select>
-        </div>
+            {(Object.keys(PLATFORM_NAMES) as Array<AppClientRow['platform']>).map((key) => (
+              <option key={key} value={key}>
+                {PLATFORM_NAMES[key]}
+              </option>
+            ))}
+          </SelectField>
 
-        <Field
-          label={<T k="users.apps.create.minVersion" />}
-          value={minVersion}
-          onChange={(event) => setMinVersion(event.target.value)}
-          placeholder="1.0.0"
-          hint={<T k="users.apps.create.minVersion.hint" />}
-        />
+          <Field
+            label={<T k="users.apps.create.minVersion" />}
+            value={minVersion}
+            onChange={(event) => setMinVersion(event.target.value)}
+            placeholder="1.0.0"
+            hint={<T k="users.apps.create.minVersion.hint" />}
+          />
+        </div>
 
         <DialogFooter
           onClose={onClose}
@@ -1569,93 +1611,67 @@ function CreateAppClientDialog({
   );
 }
 
-/** Shows a freshly generated secret. The only moment it is visible. */
-function SecretDialog({
-  value,
+/**
+ * Raises or clears a client's minimum version.
+ *
+ * The soft form of suspension: builds older than this are refused, which forces an update without
+ * cutting anybody off. Only useful after the client exists — which is when the screen had no
+ * control for it.
+ */
+function EditAppClientDialog({
+  client,
   onClose,
+  onSaved,
 }: {
-  value: { clientId: string; secret: string; note: string };
+  client: AppClientRow;
   onClose: () => void;
+  onSaved: () => void;
 }): ReactNode {
-  const [copied, setCopied] = useState(false);
+  const [minVersion, setMinVersion] = useState(client.minVersion ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { t } = useLabels();
+
+  async function submit(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      await appClientsApi.update(client.id, { minVersion: minVersion.trim() });
+      onSaved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('users.apps.error.update'));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <Dialog
-      title={<T k="users.apps.secret.title" />}
-      titleText={t('users.apps.secret.title')}
+      title={<T k="users.apps.edit.title" vars={{ name: client.name }} />}
+      titleText={t('users.apps.edit.title', { name: client.name })}
+      width="lg"
       onClose={onClose}
     >
-      <div className="space-y-3">
-        <p className="flex items-start gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-          {value.note}
-        </p>
+      <div className="space-y-4">
+        <Feedback error={error} />
 
-        <div>
-          <p className="text-xs font-medium text-slate-600">
-            <T k="users.apps.secret.clientId" />
-          </p>
-          <code className="mt-1 block overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-100">
-            {value.clientId}
-          </code>
+        <div className="pb-2">
+          <Field
+            label={<T k="users.apps.create.minVersion" />}
+            value={minVersion}
+            onChange={(event) => setMinVersion(event.target.value)}
+            placeholder="1.0.0"
+            hint={<T k="users.apps.create.minVersion.hint" />}
+            autoFocus
+          />
         </div>
 
-        <div>
-          <p className="text-xs font-medium text-slate-600">
-            <T k="users.apps.secret.secret" />
-          </p>
-          <code className="mt-1 block overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-100">
-            {value.secret}
-          </code>
-        </div>
-
-        <Button
-          variant="ghost"
-          onClick={() => {
-            void navigator.clipboard.writeText(`${value.clientId}\n${value.secret}`).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
-            });
-          }}
-        >
-          <Copy className="size-4" aria-hidden />
-          <T k={copied ? 'users.apps.secret.copied' : 'users.apps.secret.copy'} />
-        </Button>
-
-        <DialogFooter onClose={onClose} closeLabel={<T k="users.apps.secret.close" />} />
-      </div>
-    </Dialog>
-  );
-}
-
-function ConfirmDelete({
-  title,
-  titleText,
-  body,
-  onClose,
-  onConfirm,
-}: {
-  /** A node so it can carry the label number badge. */
-  title: ReactNode;
-  /** The panel's ria-label cannot take a node, so the text arrives beside it. */
-  titleText: string;
-  body: ReactNode;
-  onClose: () => void;
-  onConfirm: () => void;
-}): ReactNode {
-  return (
-    <Dialog title={title} titleText={titleText} onClose={onClose}>
-      <div className="space-y-3">
-        <p className="text-sm text-slate-700">{body}</p>
-        <div className="flex justify-end gap-2 border-t border-slate-200 pt-3">
-          <Button variant="ghost" onClick={onClose}>
-            <T k="dialog.cancel" />
-          </Button>
-          <Button onClick={onConfirm} className="bg-rose-600 hover:bg-rose-500">
-            <T k="app.remove" />
-          </Button>
-        </div>
+        <DialogFooter
+          onClose={onClose}
+          onSubmit={() => void submit()}
+          busy={busy}
+          disabled={minVersion.trim() === (client.minVersion ?? '')}
+        />
       </div>
     </Dialog>
   );

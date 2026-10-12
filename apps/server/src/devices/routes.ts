@@ -18,6 +18,7 @@ import { db, jsonSafe } from '../db.js';
 import { loadEnv } from '../env.js';
 import { badRequest, conflict, forUpdate, notFound, parseBody } from '../http.js';
 import { syncDevice } from '../sync/worker.js';
+import { toHikvisionTimeZone, zoneOffsetMinutes } from '../time.js';
 import { checkAllDevices, checkDevice } from './health.js';
 import { CommandKind, enqueueReplacing } from './driver/commands.js';
 import { clientFor, driverFor, releaseClient } from './registry.js';
@@ -51,6 +52,20 @@ const deviceInputSchema = z.object({
    */
   username: z.string().trim().min(1).max(64).optional(),
   password: z.string().min(1).optional(),
+  /**
+   * The unit's own serial number, and on a callback protocol its only identity.
+   *
+   * Asked for rather than always discovered, because discovery runs the wrong way round here.
+   * On ISAPI the health probe reads it from the unit and fills this in, so it is optional. On
+   * TA Push nothing can be read — the terminal calls us — and `resolveBySerial` matches an
+   * incoming scan against this column and nothing else. A row without one therefore rejects
+   * every scan its own terminal sends, which the driver reports as `device.warning.noSerial`
+   * while the record otherwise looks complete.
+   *
+   * There was no way to set it from any screen. A ZKTeco terminal added through the form could
+   * not record attendance at all, and the only symptom was a degraded badge.
+   */
+  serialNumber: z.string().trim().min(1).max(96).optional(),
   /**
    * Which on-site connector reaches this terminal. Null means this server reaches it itself.
    *
@@ -126,6 +141,47 @@ async function assertAgentAssignable(agentId: number | null | undefined): Promis
   }
 }
 
+/**
+ * Refuses a callback terminal with no serial number.
+ *
+ * The serial is how a callback protocol identifies itself, so a row without one cannot be matched
+ * to anything the terminal sends. Those scans are counted as coming from an unregistered terminal
+ * and dropped — a unit that looks configured, answers nothing, and records nothing.
+ *
+ * Checked on the edit path too, so the field cannot be cleared back into that state.
+ */
+function assertIdentityMatchesProtocol(
+  protocol: DeviceProtocol,
+  serialNumber: string | null | undefined,
+): void {
+  if (usesStoredCredentials(protocol)) return;
+
+  if (serialNumber === undefined || serialNumber === null || serialNumber === '') {
+    throw badRequest(
+      `Protokol "${protocol}" mengenali terminal melalui nombor sirinya, jadi ia diperlukan. ` +
+        'Tanpa nombor siri, setiap scan yang dihantar terminal itu akan ditolak sebagai ' +
+        'datang dari terminal tidak berdaftar.',
+      'serialNumber',
+    );
+  }
+}
+
+/** One terminal per serial, named rather than left to the unique index and a 500. */
+async function assertSerialFree(serialNumber: string, exceptId?: number): Promise<void> {
+  const clash = await db().device.findFirst({
+    where: { serialNumber, ...(exceptId === undefined ? {} : { id: { not: exceptId } }) },
+    select: { name: true },
+  });
+  if (clash) {
+    throw conflict(
+      `Nombor siri ${serialNumber} sudah digunakan oleh "${clash.name}". ` +
+        'Satu terminal satu nombor siri — dua rekod yang berkongsi satu siri akan ' +
+        'menuntut scan yang sama.',
+      'serialNumber',
+    );
+  }
+}
+
 function assertCredentialsMatchProtocol(
   protocol: DeviceProtocol,
   credentials: { username?: string | undefined; password?: string | undefined },
@@ -192,6 +248,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
 
       const protocol = resolveProtocol(body.vendor, body.protocol);
       assertCredentialsMatchProtocol(protocol, body);
+      assertIdentityMatchesProtocol(protocol, body.serialNumber);
+      if (body.serialNumber !== undefined) await assertSerialFree(body.serialNumber);
       await assertAgentAssignable(body.agentId);
 
       const device = await db().device.create({
@@ -213,6 +271,14 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
           username: body.username ?? null,
           passwordEncrypted:
             body.password === undefined ? null : encryptSecret(body.password),
+          /**
+           * Null rather than empty, for the same reason as the username.
+           *
+           * On ISAPI the probe below overwrites this with what the unit reports, so an operator
+           * who leaves it blank gets the real value a second later. On a callback protocol it is
+           * required above, because nothing will ever fill it in.
+           */
+          serialNumber: body.serialNumber ?? null,
           agentId: body.agentId ?? null,
           doorNo: body.doorNo,
           locationId: body.locationId ?? null,
@@ -297,6 +363,16 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         { passwordAlreadyStored: existing.passwordEncrypted !== null },
       );
 
+      /*
+        The serial, re-checked against the protocol so it cannot be cleared back into a row that
+        rejects its own terminal's scans. An absent key keeps what is stored.
+      */
+      const serialNumber = body.serialNumber ?? existing.serialNumber;
+      assertIdentityMatchesProtocol(existing.protocol as DeviceProtocol, serialNumber);
+      if (body.serialNumber !== undefined && body.serialNumber !== existing.serialNumber) {
+        await assertSerialFree(body.serialNumber, id);
+      }
+
       await assertAgentAssignable(body.agentId);
 
       const device = await db().device.update({
@@ -311,6 +387,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
           ...(body.password !== undefined
             ? { passwordEncrypted: encryptSecret(body.password) }
             : {}),
+          ...(body.serialNumber !== undefined ? { serialNumber: body.serialNumber } : {}),
           ...(body.doorNo !== undefined ? { doorNo: body.doorNo } : {}),
           /**
            * Absent leaves the assignment alone; `null` moves the terminal back to being reached from
@@ -379,14 +456,28 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         z.object({
           host: z.string().trim().min(1).max(64),
           // Hikvision's inverted POSIX notation: CST-8:00:00 means UTC+8.
-          timeZone: z.string().trim().default('CST-8:00:00'),
+          timeZone: z.string().trim().max(64).optional(),
           intervalMinutes: z.coerce.number().int().min(1).max(10080).default(60),
         }),
         request.body,
       );
 
+      /*
+        Absent means the organisation's zone at this moment, derived from ORG_TIMEZONE.
+
+        The default used to be the literal `CST-8:00:00`, and the health tab sent the same literal
+        for every terminal it fixed — right for UTC+8 and for nowhere else, so an installation in
+        another zone had its terminals moved to Malaysian time by the button meant to correct them.
+        The editor still sends the terminal's own zone, which wins; an empty one — a terminal that
+        reported none — falls back here rather than writing a blank zone to the unit.
+      */
+      const timeZone =
+        body.timeZone !== undefined && body.timeZone !== ''
+          ? body.timeZone
+          : toHikvisionTimeZone(zoneOffsetMinutes(new Date(), loadEnv().ORG_TIMEZONE));
+
       const driver = driverFor(device);
-      await driver.clock.configureNtp(body);
+      await driver.clock.configureNtp({ ...body, timeZone });
 
       // Read back, so the reply reports the resulting state rather than "accepted".
       const clock = await driver.clock.read();

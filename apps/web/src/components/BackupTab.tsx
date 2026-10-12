@@ -18,11 +18,13 @@ import { backupApi, type BackupPayload } from '../lib/settings-api';
 import { T, useLabels } from '../lib/translation';
 import { SELECT, Spinner, formatBytes, useSettings } from '../pages/SettingsPage';
 import { CONTROL, ChannelHint, SettingRow, Switch } from './ChannelForm';
-import { Dialog, Feedback } from './Dialog';
+import { Feedback } from './Dialog';
 import {
   KeyValue,
   KeyValueList,
+  PanelActions,
   PanelBody,
+  PanelFooter,
   PanelNote,
   PanelSection,
   RecordTable,
@@ -31,21 +33,22 @@ import {
   SettingsGroup,
   SettingsStack,
 } from './RecordPanel';
-import { Button } from './ui';
+import { RemoveDialog } from './RemoveDialog';
+import { Badge, Button } from './ui';
 
 /**
  * Database backup.
  *
- * The terminal is not a fallback copy of anything. Its internal log is capped and
- * overwrites the oldest records once full, so this database is the only place the
- * attendance history exists, and it is what payroll is computed from.
+ * The terminal is not a fallback copy of anything. Its internal log is capped and overwrites the
+ * oldest records once full, so this database is the only place the attendance history exists, and
+ * it is what payroll is computed from.
  *
- * What this screen does not have, and why: there is no push to FTP, SFTP or object
- * storage. A dump holds every attendance record and every password hash in the system,
- * and shipping it to a remote host unattended means storing credentials for that host and
- * adding a new way for the 2 a.m. job to fail. Until that is built properly, the honest
- * arrangement is a scheduled local dump plus a download the operator takes off the
- * machine — and this screen says so rather than implying otherwise.
+ * What this screen does not have, and why: there is no push to FTP, SFTP or object storage. A dump
+ * holds every attendance record and every password hash in the system, and shipping it to a remote
+ * host unattended means storing credentials for that host and adding a new way for the 2 a.m. job
+ * to fail. Until that is built properly, the honest arrangement is a scheduled local dump plus a
+ * download the operator takes off the machine — and this screen says so rather than implying
+ * otherwise.
  */
 export function BackupTab(): ReactNode {
   const { can } = useAuth();
@@ -54,11 +57,12 @@ export function BackupTab(): ReactNode {
   const { save, busy: savingPolicy } = useSettings();
 
   const [data, setData] = useState<BackupPayload | null>(null);
+  const [loadedAt, setLoadedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
 
   const [enabled, setEnabled] = useState(false);
   const [hour, setHour] = useState('2');
@@ -69,6 +73,7 @@ export function BackupTab(): ReactNode {
     try {
       const payload = await backupApi.load();
       setData(payload);
+      setLoadedAt(new Date().toISOString());
       setEnabled(payload.policy.enabled);
       setHour(String(payload.policy.hour));
       setKeepCount(String(payload.policy.keepCount));
@@ -93,6 +98,7 @@ export function BackupTab(): ReactNode {
         'backup.hour': Number(hour),
         'backup.keepCount': Number(keepCount),
       });
+      setNotice(t('backup.policy.saved'));
       await reload();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('backup.error.savePolicy'));
@@ -105,8 +111,8 @@ export function BackupTab(): ReactNode {
     setNotice(null);
     try {
       const outcome = await backupApi.run();
-      // Three complete sentences joined, so the pruning one can be absent without
-      // leaving a gap in the middle of the other two.
+      // Three complete sentences joined, so the pruning one can be absent without leaving a gap in
+      // the middle of the other two.
       setNotice(
         [
           t('backup.run.result', {
@@ -130,18 +136,6 @@ export function BackupTab(): ReactNode {
     }
   }
 
-  async function remove(name: string): Promise<void> {
-    setConfirming(null);
-    setError(null);
-    try {
-      await backupApi.remove(name);
-      setNotice(t('backup.notice.removed', { name }));
-      await reload();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('backup.error.remove'));
-    }
-  }
-
   if (!data) return <Spinner />;
 
   const editable = can('settings.backup', 'edit');
@@ -150,6 +144,11 @@ export function BackupTab(): ReactNode {
     newest === undefined
       ? null
       : Math.floor((Date.now() - new Date(newest.createdAt).getTime()) / 86_400_000);
+  const keepTooLow = Number(keepCount) < 2;
+  const policyDirty =
+    data.policy.enabled !== enabled ||
+    String(data.policy.hour) !== hour ||
+    String(data.policy.keepCount) !== keepCount;
 
   return (
     <>
@@ -159,7 +158,11 @@ export function BackupTab(): ReactNode {
         subtitle={<T k="backup.subtitle" />}
         action={
           can('settings.backup', 'create') ? (
-            <Button onClick={() => void run()} disabled={running || !data.toolAvailable}>
+            <Button
+              onClick={() => void run()}
+              disabled={running || !data.toolAvailable}
+              {...(data.toolAvailable ? {} : { title: t('backup.run.unavailable') })}
+            >
               {running ? (
                 <Loader2 className="size-4 animate-spin" aria-hidden />
               ) : (
@@ -171,32 +174,37 @@ export function BackupTab(): ReactNode {
         }
       />
 
-      {(error !== null || notice !== null) && (
-        <PanelBody className="pb-0">
+      {/*
+        One note, the most serious that applies: no dump tool means no backup of any kind, which
+        also explains why the button above is grey; after that, how old the newest copy is.
+      */}
+      {(error !== null ||
+        notice !== null ||
+        !data.toolAvailable ||
+        data.files.length === 0 ||
+        (staleDays !== null && staleDays > 7)) && (
+        <PanelBody className="space-y-2 pb-0">
           <Feedback error={error} notice={notice} />
+          {!data.toolAvailable ? (
+            <PanelNote tone="danger" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+              <T
+                k="backup.tool.missing"
+                vars={{ tool: <code className="font-mono">mysqldump</code> }}
+              />
+            </PanelNote>
+          ) : data.files.length === 0 ? (
+            <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+              <T k="backup.empty.warning" />
+            </PanelNote>
+          ) : staleDays !== null && staleDays > 7 ? (
+            <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+              <T k="backup.stale.warning" vars={{ days: staleDays }} />
+            </PanelNote>
+          ) : null}
         </PanelBody>
       )}
 
       <SettingsStack>
-        {!data.toolAvailable && (
-          <PanelNote tone="danger" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-            <T
-              k="backup.tool.missing"
-              vars={{ tool: <code className="font-mono">mysqldump</code> }}
-            />
-          </PanelNote>
-        )}
-
-        {data.files.length === 0 ? (
-          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-            <T k="backup.empty.warning" />
-          </PanelNote>
-        ) : staleDays !== null && staleDays > 7 ? (
-          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-            <T k="backup.stale.warning" vars={{ days: staleDays }} />
-          </PanelNote>
-        ) : null}
-
         <SettingsGroup
           title={<T k="backup.auto.group" />}
           icon={<CalendarClock className="size-3.5" aria-hidden />}
@@ -205,11 +213,17 @@ export function BackupTab(): ReactNode {
             <span
               className={cn(
                 'rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase',
-                enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600',
+                data.policy.enabled
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-slate-100 text-slate-600',
               )}
             >
-              {enabled ? (
-                <T k="backup.auto.summary.on" vars={{ time: `${hour.padStart(2, '0')}:00` }} />
+              {/* What is saved, not what is ticked: the summary answers "what will happen tonight". */}
+              {data.policy.enabled ? (
+                <T
+                  k="backup.auto.summary.on"
+                  vars={{ time: `${String(data.policy.hour).padStart(2, '0')}:00` }}
+                />
               ) : (
                 <T k="backup.auto.summary.off" />
               )}
@@ -248,7 +262,10 @@ export function BackupTab(): ReactNode {
             </select>
           </SettingRow>
 
-          <SettingRow label={<T k="backup.keep.label" />} hint={<T k="backup.keep.hint" />}>
+          <SettingRow
+            label={<T k="backup.keep.label" />}
+            hint={keepTooLow ? <T k="backup.keep.minimum" /> : <T k="backup.keep.hint" />}
+          >
             <div className="flex items-center gap-2">
               <input
                 inputMode="numeric"
@@ -256,35 +273,18 @@ export function BackupTab(): ReactNode {
                 onChange={(event) => setKeepCount(event.target.value.replace(/\D/g, ''))}
                 disabled={!editable}
                 aria-label={t('backup.keep.aria')}
-                className={cn(CONTROL, 'max-w-24 disabled:bg-slate-50')}
+                aria-invalid={keepTooLow ? true : undefined}
+                className={cn(
+                  CONTROL,
+                  'max-w-24 disabled:bg-slate-50',
+                  keepTooLow && 'border-rose-400',
+                )}
               />
               <span className="text-sm text-slate-500">
                 <T k="backup.keep.unit" />
               </span>
-              {Number(keepCount) < 2 && (
-                <span className="text-xs text-rose-700">
-                  <T k="backup.keep.minimum" />
-                </span>
-              )}
             </div>
           </SettingRow>
-
-          {editable && (
-            <div className="my-2">
-              <Button
-                variant="ghost"
-                onClick={() => void savePolicy()}
-                disabled={savingPolicy || Number(keepCount) < 2}
-              >
-                {savingPolicy ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                ) : (
-                  <Save className="size-4" aria-hidden />
-                )}
-                <T k="backup.policy.save" />
-              </Button>
-            </div>
-          )}
         </SettingsGroup>
 
         <SettingsGroup
@@ -296,7 +296,23 @@ export function BackupTab(): ReactNode {
             </span>
           }
         >
-          <div className="my-2 space-y-3">
+          {/*
+            Stated rather than implied by an empty tab. An operator who expects a nightly copy to be
+            leaving the building should find that out here, not after the disk fails.
+          */}
+          <ChannelHint>
+            <T
+              k="backup.destination.warning"
+              vars={{
+                sameDisk: (
+                  <strong className="font-medium">
+                    <T k="backup.destination.warning.sameDisk" />
+                  </strong>
+                ),
+              }}
+            />
+          </ChannelHint>
+          <div className="my-2">
             <KeyValueList>
               <KeyValue label={<T k="backup.destination.directory" />} value={data.directory} />
               <KeyValue
@@ -318,40 +334,40 @@ export function BackupTab(): ReactNode {
                 }
               />
             </KeyValueList>
-
-            {/*
-              Stated rather than implied by an empty tab. An operator who expects a nightly
-              copy to be leaving the building should find that out here, not after the disk
-              fails.
-            */}
-            <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-              <T
-                k="backup.destination.warning"
-                vars={{
-                  sameDisk: (
-                    <strong className="font-medium">
-                      <T k="backup.destination.warning.sameDisk" />
-                    </strong>
-                  ),
-                }}
-              />
-            </PanelNote>
           </div>
         </SettingsGroup>
       </SettingsStack>
 
+      {editable && (
+        <PanelActions hint={<T k="backup.policy.hint" />}>
+          <Button
+            onClick={() => void savePolicy()}
+            disabled={savingPolicy || keepTooLow || !policyDirty}
+            {...(keepTooLow ? { title: t('backup.keep.minimum') } : {})}
+          >
+            {savingPolicy ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <Save className="size-4" aria-hidden />
+            )}
+            <T k="backup.policy.save" />
+          </Button>
+        </PanelActions>
+      )}
+
       <PanelSection
-        title={<T k="backup.files.title" />}
+        title={<T k="backup.files.count" vars={{ count: data.files.length }} />}
         subtitle={<T k="backup.files.subtitle" />}
       />
 
       <RecordTable
+        framed
         loading={loading}
         rowCount={data.files.length}
         empty={<T k="backup.files.empty" />}
         columns={[
           { header: <T k="backup.column.file" /> },
-          { header: <T k="backup.column.size" />, width: 'w-28' },
+          { header: <T k="backup.column.size" />, width: 'w-28', align: 'right' },
           { header: <T k="panel.column.created" />, width: 'w-48' },
           { header: <T k="panel.column.actions" />, width: 'w-28', align: 'right' },
         ]}
@@ -363,13 +379,13 @@ export function BackupTab(): ReactNode {
                 <Database className="size-3.5 shrink-0 text-slate-400" aria-hidden />
                 <span className="truncate font-mono text-xs text-slate-700">{file.name}</span>
                 {index === 0 && (
-                  <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 uppercase">
+                  <Badge tone="success" className="uppercase">
                     <T k="backup.row.newest" />
-                  </span>
+                  </Badge>
                 )}
               </span>
             </td>
-            <td className="px-2 py-2.5 text-xs tabular-nums text-slate-600">
+            <td className="px-2 py-2.5 text-right text-xs text-slate-600 tabular-nums">
               {formatBytes(file.bytes)}
             </td>
             <td className="px-2 py-2.5 text-xs whitespace-nowrap text-slate-500">
@@ -379,13 +395,13 @@ export function BackupTab(): ReactNode {
               <RowActions>
                 {can('settings.backup', 'download') && (
                   // A plain link: the browser handles the download and the filename from
-                  // content-disposition, which a fetch would have to redo for a file that
-                  // should never sit in a tab's memory.
+                  // content-disposition, which a fetch would have to redo for a file that should
+                  // never sit in a tab's memory. Drawn exactly as a reading `RowAction`.
                   <a
                     href={backupApi.downloadUrl(file.name)}
                     title={t('backup.row.download', { name: file.name })}
                     aria-label={t('backup.row.download', { name: file.name })}
-                    className="rounded-md p-1.5 text-sky-500 hover:bg-sky-50 hover:text-sky-700"
+                    className="rounded-md border border-transparent p-1.5 text-sky-500 transition-colors hover:bg-sky-50 hover:text-sky-700"
                   >
                     <Download className="size-4" aria-hidden />
                   </a>
@@ -400,7 +416,7 @@ export function BackupTab(): ReactNode {
                     }
                     tone="danger"
                     disabled={data.files.length <= 1}
-                    onClick={() => setConfirming(file.name)}
+                    onClick={() => setRemoving(file.name)}
                   />
                 )}
               </RowActions>
@@ -409,10 +425,23 @@ export function BackupTab(): ReactNode {
         ))}
       </RecordTable>
 
+      <PanelFooter
+        shown={data.files.length}
+        total={data.files.length}
+        page={1}
+        pageSize={Math.max(1, data.files.length)}
+        pageSizes={[Math.max(1, data.files.length)]}
+        generatedAt={loadedAt}
+        loading={loading}
+        onPage={() => undefined}
+        onPageSize={() => undefined}
+        onRefresh={() => void reload()}
+      />
+
       {/*
-        Restore is shown as a command rather than a button. It overwrites every attendance
-        record in one action, and the right moment to run it is with the server stopped,
-        which a web request cannot arrange for itself.
+        Restore is shown as a command rather than a button. It overwrites every attendance record in
+        one action, and the right moment to run it is with the server stopped, which a web request
+        cannot arrange for itself.
       */}
       <PanelSection
         icon={<Terminal className="size-4" aria-hidden />}
@@ -430,39 +459,28 @@ export function BackupTab(): ReactNode {
         <pre className="overflow-x-auto rounded-lg bg-slate-900 px-3 py-2.5 text-xs text-slate-100">
           <code>{data.restoreHint}</code>
         </pre>
-        <PanelNote>
-          <T k="backup.restore.note" />
-        </PanelNote>
       </PanelBody>
 
-      {confirming !== null && (
-        <Dialog
+      {removing !== null && (
+        <RemoveDialog
           title={<T k="backup.remove.title" />}
           titleText={t('backup.remove.title')}
-          onClose={() => setConfirming(null)}
-        >
-          <div className="space-y-3">
-            <p className="text-sm text-slate-700">
-              <T
-                k="backup.remove.body"
-                vars={{ name: <span className="font-mono text-xs">{confirming}</span> }}
-              />
-            </p>
-            <div className="flex justify-end gap-2 border-t border-slate-200 pt-3">
-              <Button variant="ghost" onClick={() => setConfirming(null)}>
-                <T k="dialog.cancel" />
-              </Button>
-              <Button
-                onClick={() => void remove(confirming)}
-                className="bg-rose-600 hover:bg-rose-500"
-              >
-                <T k="app.remove" />
-              </Button>
-            </div>
-          </div>
-        </Dialog>
+          description={
+            <T
+              k="backup.remove.body"
+              vars={{ name: <span className="font-mono text-xs">{removing}</span> }}
+            />
+          }
+          onConfirm={async () => {
+            await backupApi.remove(removing);
+            setRemoving(null);
+            setError(null);
+            setNotice(t('backup.notice.removed', { name: removing }));
+            await reload();
+          }}
+          onClose={() => setRemoving(null)}
+        />
       )}
-
     </>
   );
 }

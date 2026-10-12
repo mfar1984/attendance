@@ -326,6 +326,11 @@ export const EN_LABELS: Partial<Record<LabelKey, string>> = {
   'logs.tab.activity': 'Activity Log',
   'logs.tab.audit': 'Audit Log',
 
+  'logs.activity.count': '{count} activity entries',
+  'logs.activity.subtitle':
+    'What was done in the system, including sign-ins and reads. What changed on a record is in the Audit Log.',
+  'logs.audit.count': '{count} audit entries',
+
   'logs.activity.error.load': 'Could not load the activity log',
   'logs.activity.search': 'Search messages, users, IP, paths…',
   'logs.activity.empty': 'No activity matches these filters.',
@@ -460,6 +465,11 @@ export const EN_LABELS_ATTENDANCE: Partial<Record<LabelKey, string>> = {
   'dialog.close': 'Close',
   'dialog.cancel': 'Cancel',
   'dialog.save': 'Save',
+  'dialog.copy': 'Copy',
+  'dialog.copyBoth': 'Copy both',
+  'dialog.copied': 'Copied',
+  // Not "Close": closing the credential dialog acknowledges that the value has been stored.
+  'dialog.recorded': 'I have recorded it',
 
   'filter.from': 'From',
   'filter.to': 'To',
@@ -2261,22 +2271,14 @@ export const EN_LABELS_PERMISSIONS: Partial<Record<LabelKey, string>> = {
 export const EN_LABELS_ROLES: Partial<Record<LabelKey, string>> = {
   'roles.title': 'Role Management',
   'roles.subtitle': 'Manage user roles and their access permissions.',
-  'roles.section.title': 'Roles',
+  'roles.count': '{count} roles',
   'roles.section.subtitle':
     'Every account holds one role. That role is what decides what can be seen and what can be changed.',
   'roles.action.new': 'New Role',
   'roles.search': 'Search role name or description…',
   'roles.empty': 'No roles match these filters.',
   'roles.error.load': 'Could not load roles',
-  'roles.error.remove': 'Could not remove the role',
   'roles.notice.removed': 'Role “{name}” removed.',
-  /*
-   * `{emphasis}` carries the sentence below. The last clause is the claim being made: the capability
-   * does not exist in the system, rather than being withheld from most roles.
-   */
-  'roles.note.immutable':
-    '{emphasis} No role — including Super Admin — can be granted permission to alter them. They are the evidence when an attendance record is disputed, so that capability does not exist in the system.',
-  'roles.note.immutable.emphasis': 'The Raw Scan Log and the Audit Log are read-only.',
   'roles.column.name': 'Role name',
   'roles.column.description': 'Description',
   'roles.column.accounts': 'Users',
@@ -2299,8 +2301,6 @@ export const EN_LABELS_ROLES: Partial<Record<LabelKey, string>> = {
   'roles.detail.coverage': 'Coverage per section',
   'roles.viewOnly.heading': 'Can view but not change ({count})',
   'roles.remove.title': 'Remove role “{name}”?',
-  'roles.remove.blocked':
-    '{count} accounts still use this role. The request will be refused — move those accounts to another role first.',
   'roles.remove.safe': 'No accounts use this role, so it is safe to remove.',
 
   'roles.editor.heading.view': 'Permissions: {name}',
@@ -2367,28 +2367,20 @@ export const EN_LABELS_USERS: Partial<Record<LabelKey, string>> = {
   'users.tab.apps': 'Apps',
   'users.error.load': 'Could not load accounts',
   'users.error.status': 'Could not change the status',
-  'users.error.remove': 'Could not remove the account',
   'users.error.create': 'Could not create the account',
   'users.error.update': 'Could not update the account',
   'users.error.password': 'Could not set the password',
 
-  'users.section.admin': 'Administrator Accounts',
+  'users.count.admin': '{count} administrator accounts',
   'users.section.admin.subtitle':
     'Admin panel logins. What each one can do comes from the role assigned to it.',
-  'users.section.staff': 'Staff Accounts',
+  'users.count.staff': '{count} staff accounts',
   'users.section.staff.subtitle':
     'Self-service logins for staff. Personal data is managed under the Staff Directory.',
   'users.action.newAdmin': 'New Administrator',
   'users.action.newStaff': 'New Staff Account',
   'users.search': 'Search email, staff name or staff no.…',
   'users.filter.roles': 'All roles',
-  /*
-   * `{pending}` carries the status name below. The second sentence is the reason app check-in is off
-   * by default, and it is the distinction the whole feature rests on.
-   */
-  'users.staff.note':
-    'A staff account is created {pending} and can only be used once that person claims it from their phone. App check-in is off by default: it only proves possession of a token, not physical presence.',
-  'users.staff.note.pending': 'Pending',
   'users.empty.admin': 'No administrator accounts match these filters.',
   'users.empty.staff':
     'No staff accounts match. Create accounts for staff who need to use the check-in app.',
@@ -2402,11 +2394,9 @@ export const EN_LABELS_USERS: Partial<Record<LabelKey, string>> = {
   'users.twoFactor.on': 'On',
   'users.twoFactor.off': 'Not set up',
   'users.noDepartment': 'No department',
-  // Leading space and separator are deliberate: this clause is appended mid-line.
-  'users.staffInactive': ' · staff inactive',
+  'users.staffInactive': 'Staff inactive',
   'users.device.unclaimed': 'Not claimed',
   'users.never': 'Never',
-  'users.action.view': 'View detail',
   'users.action.edit': 'Change the role and status',
   'users.action.reset': 'Reset the password',
   'users.action.reactivate': 'Reactivate the account',
@@ -2417,12 +2407,18 @@ export const EN_LABELS_USERS: Partial<Record<LabelKey, string>> = {
   'users.suspended': '{email} suspended. Sessions in progress have been ended.',
   'users.reactivated': '{email} reactivated.',
   'users.removed': 'Account {email} removed.',
+  'users.suspend.title': 'Suspend the account {email}?',
+  'users.suspend.body':
+    'Sessions in progress end immediately, and this account cannot sign in until it is reactivated. Its record and audit trail stay.',
+  'users.suspend.submit': 'Suspend',
 
   'users.detail.staffName': 'Staff name',
   'users.detail.employeeNo': 'Staff no.',
   'users.detail.department': 'Department',
   'users.detail.role': 'Role',
   'users.detail.accountType': 'Account type',
+  'users.detail.accountType.admin': 'Administrator',
+  'users.detail.accountType.staff': 'Staff',
   'users.detail.created': 'Created',
   'users.detail.appCheckIn': 'App check-in',
   'users.detail.appCheckIn.allowed': 'Allowed',
@@ -2439,25 +2435,18 @@ export const EN_LABELS_USERS: Partial<Record<LabelKey, string>> = {
   'users.remove.title': 'Remove account {email}?',
   'users.remove.suspended':
     'This account is already suspended, so it is safe to remove. The audit trail stays — the actor’s name is stored as text on every past entry.',
-  'users.remove.active':
-    'This account is still active. The request will be refused: suspend it first so removal is two deliberate steps.',
 
   // ---------------------------------------------------------------------------
   // App clients
   // ---------------------------------------------------------------------------
-  'users.apps.title': 'App Clients',
+  'users.apps.count': '{count} app clients',
   'users.apps.subtitle':
     'An application build, not a person. Its token acts on behalf of one staff member and is limited to that person’s records.',
   'users.apps.action.add': 'New App Client',
   'users.apps.error.load': 'Could not load app clients',
-  'users.apps.error.rotate': 'Could not rotate the secret',
-  'users.apps.error.remove': 'Could not remove the client',
   'users.apps.error.create': 'Could not create the client',
+  'users.apps.error.update': 'Could not update the client',
   'users.apps.search': 'Search name or client ID…',
-  'users.apps.chip.active': 'ACTIVE',
-  'users.apps.chip.suspended': 'SUSPENDED',
-  'users.apps.status.active': 'ACTIVE',
-  'users.apps.status.suspended': 'SUSPENDED',
   /*
    * The last clause is the operational instruction: suspend or rotate rather than waiting for every
    * phone to be reinstalled.
@@ -2469,6 +2458,9 @@ export const EN_LABELS_USERS: Partial<Record<LabelKey, string>> = {
   'users.apps.column.platform': 'Platform',
   'users.apps.column.minVersion': 'Minimum version',
   'users.apps.noLimit': 'No limit',
+  'users.apps.action.edit': 'Change the minimum version',
+  'users.apps.edit.title': 'Minimum version: {name}',
+  'users.apps.updated': '{name} updated.',
   'users.apps.action.rotate': 'Rotate the secret',
   'users.apps.action.reactivate': 'Reactivate the client',
   'users.apps.action.suspend': 'Suspend the client',
@@ -2477,7 +2469,13 @@ export const EN_LABELS_USERS: Partial<Record<LabelKey, string>> = {
   'users.apps.suspended': '{name} suspended. Tokens already issued are no longer accepted.',
   'users.apps.reactivated': '{name} reactivated.',
   'users.apps.removed': '{name} removed.',
-  'users.apps.rotated': 'The old secret is no longer valid.',
+  'users.apps.suspend.title': 'Suspend the client “{name}”?',
+  'users.apps.suspend.body':
+    'Tokens already issued to this app are no longer accepted, so every phone using it stops immediately until the client is reactivated.',
+  'users.apps.rotate.title': 'Rotate the secret of “{name}”?',
+  'users.apps.rotate.body':
+    'The new secret is shown once. The old one stops being valid as soon as this is confirmed, so builds still holding it need updating with the new one.',
+  'users.apps.rotate.submit': 'Rotate secret',
   'users.apps.detail.clientId': 'Client ID',
   'users.apps.detail.updated': 'Updated',
   'users.apps.detail.secret': 'Secret',
@@ -2492,17 +2490,16 @@ export const EN_LABELS_USERS: Partial<Record<LabelKey, string>> = {
   'users.create.admin': 'New administrator',
   'users.create.staff': 'New staff account',
   'users.create.description': 'Choose the staff member first. One person can only have one account.',
-  'users.create.searchStaff': 'Search staff',
-  'users.create.searchStaff.placeholder': 'Name, staff no. or email',
-  'users.create.searching': 'Searching',
-  'users.create.noMatch': 'No staff match.',
+  'users.create.description.staff':
+    'Choose the staff member first. One person can only have one account, and a staff account starts as Pending until that person claims it from their phone.',
+  'users.create.searchStaff.hint':
+    'Active staff only. Anyone who already has an account is marked and cannot be chosen.',
   'users.create.taken': 'Already has an account: {email}',
-  'users.create.change': 'Change',
   'users.create.email': 'Login email',
   'users.create.role': 'Role',
   'users.create.role.option': '{name} ({granted}/{total})',
   'users.create.password': 'Initial password',
-  'users.create.password.hint': 'Minimum 12 characters.',
+  'users.create.password.hint': 'Minimum {count} characters.',
   'users.create.password.short': '{count} more characters needed',
   'users.create.allowAppCheckIn': 'Allow check-in through the app',
   'users.create.allowAppCheckIn.hint':
@@ -2526,7 +2523,7 @@ export const EN_LABELS_USERS: Partial<Record<LabelKey, string>> = {
   'users.reset.description': '{email} · {name}',
   'users.reset.password': 'New password',
   'users.reset.password.hint':
-    'Minimum 12 characters. Deliver it through a channel other than this account’s email.',
+    'Minimum {count} characters. Deliver it through a channel other than this account’s email.',
   'users.reset.warning':
     'Every session for this account will be ended and its lock cleared. The password value is never recorded in the audit log — only the fact that it was changed.',
   'users.reset.submit': 'Reset',
@@ -2544,13 +2541,6 @@ export const EN_LABELS_USERS: Partial<Record<LabelKey, string>> = {
   'users.apps.secret.title': 'App client secret',
   'users.apps.secret.clientId': 'Client ID',
   'users.apps.secret.secret': 'Client secret',
-  'users.apps.secret.copy': 'Copy both',
-  'users.apps.secret.copied': 'Copied',
-  /*
-   * Not "Close". Closing this dialog is an acknowledgement that the value has been stored, and it is
-   * the only chance to store it.
-   */
-  'users.apps.secret.close': 'I have recorded it',
 };
 
 /** Batch 6a: general configuration, the security policy, backup and restore. */
@@ -2753,7 +2743,6 @@ export const EN_LABELS_SETTINGS: Partial<Record<LabelKey, string>> = {
   'backup.error.load': 'Could not read the backup list',
   'backup.error.savePolicy': 'Could not save the schedule',
   'backup.error.run': 'Backup failed',
-  'backup.error.remove': 'Could not remove the file',
   'backup.notice.removed': '{name} removed.',
   'backup.run.result': '{name} ({size}) finished in {seconds}s.',
   'backup.run.pruned': '{count} older files removed under the retention limit.',
@@ -2790,6 +2779,10 @@ export const EN_LABELS_SETTINGS: Partial<Record<LabelKey, string>> = {
   'backup.keep.unit': 'files',
   'backup.keep.minimum': 'Minimum 2',
   'backup.policy.save': 'Save the schedule',
+  'backup.policy.saved': 'Backup schedule saved.',
+  'backup.policy.hint':
+    'Saves the schedule only. A lower retention removes old files on the next run, not now.',
+  'backup.run.unavailable': 'mysqldump was not found on this server',
 
   'backup.destination.group': 'Storage Destination',
   'backup.destination.summary': 'local disk',
@@ -2806,7 +2799,7 @@ export const EN_LABELS_SETTINGS: Partial<Record<LabelKey, string>> = {
     'Dumps are stored on {sameDisk} as the database. Automatic push to FTP, SFTP or cloud storage has not been built: these files contain every attendance record and every password hash, so sending them to an external host unattended would require that host’s credentials stored here and would add one more way a 2 a.m. job can fail. Until that is built properly, download the files off this machine regularly.',
   'backup.destination.warning.sameDisk': 'the same disk',
 
-  'backup.files.title': 'Backup Files',
+  'backup.files.count': '{count} backup files',
   'backup.files.subtitle':
     'Newest first. Download them off this machine — a backup on a disk that failed does not help.',
   'backup.files.empty': 'No backup files yet.',
@@ -2822,12 +2815,6 @@ export const EN_LABELS_SETTINGS: Partial<Record<LabelKey, string>> = {
   'backup.restore.warning':
     'A restore overwrites current data. Stop the server first, otherwise scans arriving during the restore are lost without trace.',
   'backup.restore.lead': 'Run these commands on the server after stopping the application:',
-  /*
-   * The reason the button is absent, stated as a consequence: one click reachable by anybody who can
-   * open this screen would overwrite every attendance record.
-   */
-  'backup.restore.note':
-    'A restore button on a web screen is one click that overwrites every attendance record, reachable by anybody who gets to this screen. Printing the commands keeps that decision with the person running them.',
   'backup.remove.title': 'Remove a backup file?',
   'backup.remove.body':
     '{name} will be removed from disk. If you do not already have a copy off this machine, it is gone.',
@@ -3439,7 +3426,16 @@ export const EN_LABELS_API: Partial<Record<LabelKey, string>> = {
   // ---------------------------------------------------------------------------
   // API tokens
   // ---------------------------------------------------------------------------
-  'token.title': 'API Tokens',
+  'token.count': '{count} API tokens',
+  'token.rotate.title': 'Rotate the token “{name}”?',
+  'token.rotate.body':
+    'A new token is issued with the same scopes and shown once. {prefix} keeps working for {hours} more hours, then is refused.',
+  'token.rotate.submit': 'Rotate token',
+  'token.revoke.title': 'Revoke the token “{name}”?',
+  'token.revoke.body':
+    'Every integration holding {prefix} is refused on its next request. Revoking cannot be undone — issue a new token if the integration is still needed.',
+  'token.revoke.submit': 'Revoke token',
+  'token.create.days': 'Valid for (days)',
   'token.subtitle':
     'One token per integration. The value is shown once, when it is issued.',
   'token.action.new': 'New Token',
@@ -3447,9 +3443,6 @@ export const EN_LABELS_API: Partial<Record<LabelKey, string>> = {
   'token.empty':
     'No tokens. Issue one when an integration genuinely needs to read this data.',
   'token.error.load': 'Could not load the tokens',
-  'token.error.revoke': 'Could not revoke the token',
-  'token.error.rotate': 'Could not rotate the token',
-  'token.error.remove': 'Could not remove the token',
   'token.error.create': 'Could not create the token',
   'token.notice.revoked':
     '{prefix} revoked. The next request carrying that token is refused.',
@@ -3514,12 +3507,8 @@ export const EN_LABELS_API: Partial<Record<LabelKey, string>> = {
   'token.create.name.hint':
     'Who this token is for. A clear name is the only way to know what breaks when you revoke it.',
   'token.create.name.placeholder': 'e.g. HR Portal — attendance reads',
-  'token.create.name.aria': 'Token name',
-  'token.create.validity': 'Validity',
   'token.create.validity.hint':
     'A token with no expiry stays valid until somebody revokes it by hand, including after whoever issued it has moved on.',
-  'token.create.days.aria': 'Number of days',
-  'token.create.days.unit': 'days',
   'token.create.neverExpires': 'No expiry date',
   'token.create.scopes.chosen': '{count} selected',
   /*
@@ -3530,9 +3519,6 @@ export const EN_LABELS_API: Partial<Record<LabelKey, string>> = {
     'Only {view} and {export} are offered. A write scope would let a token change attendance with nobody attached to that change, and the audit trail is built on there always being somebody.',
   // The dash belongs to this label, not to the caller that joins the two halves.
   'token.scope.label': '{screen} — {action}',
-  'token.policy.note':
-    'Rotation is {notAutomatic}. Rotating a static credential on a timer breaks every integration holding it, silently, at whatever hour the timer fires. Instead: press rotate, a new token is issued, and the old one stays valid for {hours} hours so a deployment can pick up the new value on its own schedule. That window is set in the Security tab.',
-  'token.policy.note.notAutomatic': 'not automatic',
 
   // ---------------------------------------------------------------------------
   // Notification triggers, shared by the SMS, Telegram and webhook channels
@@ -3605,15 +3591,17 @@ export const EN_LABELS_API: Partial<Record<LabelKey, string>> = {
 
 /** Batch 7c: outbound webhook subscriptions, signing secrets and the delivery log. */
 export const EN_LABELS_WEBHOOK: Partial<Record<LabelKey, string>> = {
-  'webhook.title': 'Webhooks',
+  'webhook.count': '{count} webhooks',
+  'webhook.regenerate.title': 'Generate a new key for “{name}”?',
+  'webhook.regenerate.body':
+    'The old key stops being valid at once. The receiver refuses every delivery until it is updated with the new key, which is shown once.',
+  'webhook.regenerate.submit': 'Generate new key',
   'webhook.subtitle':
     'Events pushed out to your URL, signed so the receiver can prove they came from here.',
   'webhook.action.add': 'New Webhook',
   'webhook.error.load': 'Could not load the webhooks',
   'webhook.error.test': 'Could not run the test',
   'webhook.error.status': 'Could not change the status',
-  'webhook.error.regenerate': 'Could not generate a new secret',
-  'webhook.error.remove': 'Could not remove the webhook',
   'webhook.error.save': 'Could not save the webhook',
   'webhook.error.deliveries': 'Could not load the log',
   // Chips are uppercased by CSS in Malay too; the words stay uppercase here.
@@ -4044,7 +4032,6 @@ export const EN_LABELS_TRANSLATION: Partial<Record<LabelKey, string>> = {
   'translation.error.load': 'Could not load the language list',
   'translation.error.status': 'Could not change the status',
   'translation.error.default': 'Could not change the default language',
-  'translation.error.remove': 'Could not remove the language',
   'translation.notice.enabled': '{name} enabled.',
   'translation.notice.disabled': '{name} disabled. The interface returns to the source language.',
   'translation.notice.default':
@@ -4053,8 +4040,13 @@ export const EN_LABELS_TRANSLATION: Partial<Record<LabelKey, string>> = {
   'translation.notice.removed': '{name} removed.',
   'translation.notice.removed.withTranslations':
     '{name} removed along with {count} translations.',
-  'translation.numbers.show': 'Show Labels',
-  'translation.numbers.hide': 'Hide Labels',
+  'translation.count': '{count} languages',
+  'translation.numbers.group': 'Diagnostics',
+  'translation.numbers.label': 'Show label numbers',
+  'translation.numbers.hint':
+    'Stamps a number on every label across the interface, so a label can be found without hunting through screens. Switches itself off when the browser tab is closed.',
+  'translation.numbers.state.on': 'Shown',
+  'translation.numbers.state.off': 'Hidden',
   // The three slots carry the coloured sample badges.
   'translation.numbers.legend':
     'Label numbers are being shown across the interface. An amber {source} means it is still the source wording, a green {translated} means it has been translated, and {unregistered} means the label is not registered yet. This mode switches itself off when the browser tab closes.',
@@ -4083,13 +4075,6 @@ export const EN_LABELS_TRANSLATION: Partial<Record<LabelKey, string>> = {
   'translation.row.sourceUndeletable':
     'The source language cannot be removed — the labels are written in it',
   'translation.row.remove': 'Remove {name}',
-  /*
-   * `{inactive}` carries the state word. The reasoning is the second sentence: a half-translated
-   * language that is switched on reads as a broken screen rather than as unfinished work.
-   */
-  'translation.note.addedInactive':
-    'A new language is added {inactive}. A half-translated language that is then enabled shows screens that are half one language and half the other, which reads as a broken screen rather than as a translation that is not finished.',
-  'translation.note.addedInactive.inactive': 'inactive',
   'translation.note.fallback':
     'An empty translation means that label falls back to the source language. No label will ever be blank on screen because it has not been translated.',
   'translation.add.title': 'Add language',
@@ -4123,16 +4108,9 @@ export const EN_LABELS_TRANSLATION: Partial<Record<LabelKey, string>> = {
     'The source language. Its words come from the application code and are not edited here.',
   'translation.editor.progress': '{done} / {total}',
   'translation.editor.back': 'Language list',
-  /*
-   * The last clause is the argument: a stored copy becomes a second place the wording is set, and it
-   * wins over every later correction made in the code.
-   */
-  'translation.editor.sourceWarning':
-    'This is the source language. Its words are written in the application code, so they cannot be edited here — a stored copy would become a second place the wording is set, and that copy would win over every correction made later in the code.',
   'translation.editor.group': 'Labels',
   'translation.editor.group.subtitle':
     'The number beside each label is its ID, and it does not change.',
-  'translation.editor.labelCount': '{count} labels',
   'translation.editor.hint':
     'Leave it blank to use the Malay wording. An untranslated label will not be blank on screen.',
   'translation.editor.dirty': 'There are unsaved changes.',
@@ -5187,6 +5165,8 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
   'device.column.enrolled': 'Enrolled',
   'device.column.serial': 'Serial',
   'device.column.seen': 'Seen',
+  'device.row.viaAgent': 'via {agent}',
+  'device.row.noSerial': 'No serial number — scans refused',
   // Lowercase prose, sits beside the terminal name.
   'device.row.unknownModel': 'model unknown',
   'device.row.neverSeen': 'never',
@@ -5218,7 +5198,16 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
   'device.dialog.name': 'Name',
   'device.dialog.name.placeholder': 'e.g. Main Door',
   'device.dialog.host': 'IP / hostname',
+  'device.dialog.host.lastKnown': 'Last known address',
+  'device.dialog.host.lastKnown.hint':
+    'The server never contacts this terminal — the terminal contacts the server. This address is stored for diagnosis only.',
   'device.dialog.port': 'Port',
+  'device.dialog.serial': 'Serial number',
+  'device.dialog.serial.hint.required':
+    'This terminal identifies itself to the server by its serial number alone. Take it from the label on the unit or from its own menu — without it, every scan is refused as coming from an unregistered terminal.',
+  'device.dialog.serial.hint.optional':
+    'Optional. The probe after saving reads it from the terminal and fills it in.',
+
   'device.dialog.https': 'Use HTTPS',
   'device.dialog.username': 'Username',
   'device.dialog.password': 'Password',
@@ -5250,14 +5239,27 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
   'device.connection.agent': 'Agent',
   'device.connection.agent.body':
     'The server is in the cloud. An on-site connector dials out to the server, so no inbound port has to be opened on the hospital network.',
-  // Lowercase prose, sits beside the mode name.
-  'device.connection.active': 'active',
   'device.connection.fixed':
     'The mode is set through {env} and cannot be changed from this screen.',
 
   // ---------------------------------------------------------------------------
   // Ingest endpoint
   // ---------------------------------------------------------------------------
+  'device.ingest.callback.title': 'Dial-out terminal endpoint',
+  'device.ingest.callback.subtitle':
+    'A ZKTeco terminal contacts the server and identifies itself by serial number. Point the terminal at the address below.',
+  'device.ingest.callback.records': 'Records received',
+  'device.ingest.callback.handshakes': 'Handshakes',
+  'device.ingest.callback.commands': 'Commands sent',
+  'device.ingest.callback.duplicates': 'Duplicates refused',
+  'device.ingest.callback.outOfRange': 'Outside date range',
+  'device.ingest.callback.unregistered': 'Unknown serial',
+  'device.ingest.callback.auth.none': 'None — identified by serial number',
+  'device.ingest.callback.unregistered.note':
+    '{count} requests arrived with a serial number that is on no registered terminal, so they were refused. That terminal works and is reaching the server — it is the record here that lacks its serial number. Copy the serial from the terminal menu and enter it in the device editor.',
+  'device.ingest.callback.missingSerial':
+    'No serial number on: {names}. These terminals cannot be matched to the scans they send until a serial number is entered.',
+
   'device.ingest.title': 'Ingest endpoint',
   'device.ingest.subtitle': 'Where terminals send events, and how well that is going.',
   'device.ingest.pushed': 'Events via push',
@@ -5289,8 +5291,6 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
 
 /** Batch 11b: terminal health and clocks, plus the connection and identity tabs of the editor. */
 export const EN_LABELS_DEVICE_HEALTH: Partial<Record<LabelKey, string>> = {
-  'device.push.note':
-    'Push makes events arrive faster but it is not the source of truth: the firmware keeps no queue and does not retry, so the periodic pull keeps running as a safety net.',
 
   // ---------------------------------------------------------------------------
   // Terminal health
@@ -5300,11 +5300,8 @@ export const EN_LABELS_DEVICE_HEALTH: Partial<Record<LabelKey, string>> = {
     'A terminal clock is the one fault that corrupts every record without producing an error.',
   'device.health.recheck': 'Re-check',
   'device.health.error.load': 'Could not probe the terminals',
-  // `{drifting}` is a mid-sentence clause that carries its own leading space. Hikvision stays.
-  'device.health.silentNote':
-    'The terminal keeps working, scans keep arriving, and the timestamps are simply wrong. Nothing in the Hikvision interface reports it.{drifting}',
-  'device.health.silentNote.drifting':
-    ' {count} terminals have drifted past 30 seconds right now.',
+  'device.health.drifting':
+    '{count} terminals have drifted past 30 seconds. The terminal keeps working and scans keep arriving — the timestamps are simply wrong, and nothing on the terminal reports it.',
   'device.health.ntp': 'NTP source',
   'device.health.ntp.hint':
     'A LAN gateway is more resilient than public NTP — the clocks stay in sync even when the internet is down.',
@@ -6124,10 +6121,15 @@ export const EN_LABELS_DEVICE_VENDOR_HOLIDAY: Partial<Record<LabelKey, string>> 
 
   'device.editor.group.identification': 'Identification',
   'device.editor.field.serialIdentity': 'Serial number',
+  'device.editor.field.serialIdentity.placeholder': 'e.g. BRM9201860523',
   'device.editor.field.serialIdentity.hint':
     'This protocol uses no username or password. The terminal identifies itself by serial number on every request, so that number is the only thing matching an incoming scan to this record.',
+  /*
+   * Corrected: the ingest path looks a terminal up by serial and writes nothing back, so this
+   * never fills itself in. The old wording had operators waiting for it.
+   */
   'device.editor.field.serialIdentity.missing':
-    'The serial number is not known yet. It is filled in when the terminal first contacts the server — until then a scan from it cannot be matched to this record and will be refused.',
+    'There is no serial number, so every scan this terminal sends is refused as coming from an unregistered terminal. It will not fill itself in — take the serial from the terminal menu or the label on the unit and enter it here.',
   'device.editor.field.vendor': 'Make and protocol',
   'device.editor.field.vendor.hint':
     'Cannot be changed once the device exists. Every raw event and ID mapping on this record belongs to that protocol’s semantics, so changing it would reinterpret the history rather than change the connection. For a terminal of another make, add a new record and deactivate the old one.',
@@ -6208,7 +6210,6 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
   'agent.error.load': 'Could not load connectors',
   'agent.error.create': 'Could not create the connector',
   'agent.error.reissue': 'Could not issue an enrolment token',
-  'agent.error.revoke': 'Could not withdraw the credential',
 
   'agent.note.isapiOnly':
     'A connector drives Hikvision ISAPI only. A terminal of another make can be assigned to one here and will be ignored on site, so that site looks healthy while recording nothing.',
@@ -6259,18 +6260,17 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
   'agent.reissue.note':
     'The connector already running at that site keeps reporting attendance until the new install enrols. Nothing is revoked now.',
 
-  'agent.revoke.title': 'Withdraw the connector credential?',
+  'agent.revoke.title': 'Withdraw the credential for “{name}”?',
   'agent.revoke.description':
     'That connector immediately loses the ability to deliver attendance. This server will not dial the terminals at that site itself, so the site stops recording until the connector is reinstalled.',
   'agent.revoke.submit': 'Yes, withdraw it',
   'agent.revoked': 'The credential for “{name}” was withdrawn.',
 
-  'agent.delete.title': 'Remove this connector?',
+  'agent.delete.title': 'Remove the connector “{name}”?',
   'agent.delete.description':
     'This row holds no history — a connector is transport, and no attendance references it. What is lost is its name and when it was last seen. To install that site again, create a new connector.',
   'agent.delete.submit': 'Yes, remove it',
   'agent.deleted': 'Connector “{name}” was removed.',
-  'agent.error.delete': 'Could not remove the connector',
 
   // Connector details, and the self-update.
   'agent.row.view': 'View connector details',

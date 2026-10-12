@@ -1,4 +1,4 @@
-﻿import { ArrowLeft, Grid3x3, Loader2, Lock, Save, Sparkles, TriangleAlert, X } from 'lucide-react';
+﻿import { ArrowLeft, Loader2, Lock, Save, Sparkles, TriangleAlert, X } from 'lucide-react';
 import { groupByDomain } from '@attendance/shared';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
@@ -10,8 +10,10 @@ import {
   PanelBody,
   PanelNote,
   PanelSection,
+  TableFrame,
 } from '../components/RecordPanel';
-import { Badge, Button, Field } from '../components/ui';
+import { Badge, Button, Field, SelectField } from '../components/ui';
+import { useAuth } from '../lib/auth';
 import {
   rolesApi,
   screenActions,
@@ -37,9 +39,16 @@ export function RoleEditorPage(): ReactNode {
   const params = useParams<{ id?: string }>();
   const [query] = useSearchParams();
   const { t, tEnum } = useLabels();
+  const { can } = useAuth();
 
   const roleId = params.id !== undefined && params.id !== 'baharu' ? Number(params.id) : null;
-  const readOnly = query.get('baca') === '1';
+  /*
+    Read-only when asked for, and also when the account cannot write what it opened. The list hides
+    the pencil from a viewer, but the address still opens here — and an editable matrix whose save
+    answers 403 is a screen that lets somebody do twenty minutes of ticking for nothing.
+  */
+  const readOnly =
+    query.get('baca') === '1' || !can('settings.roles', roleId === null ? 'create' : 'edit');
 
   const [matrix, setMatrix] = useState<PermissionMatrix | null>(null);
   const [role, setRole] = useState<RoleRow | null>(null);
@@ -111,13 +120,27 @@ export function RoleEditorPage(): ReactNode {
     ];
   }, [matrix]);
 
-  const toggle = useCallback((screenKey: string, action: string): void => {
+  /**
+   * One checkbox, kept valid against the server's rule that every other grant needs view.
+   *
+   * Ticking edit alone used to be allowed here and refused on save, naming the screen in an error
+   * strip at the top of a forty-row matrix — so the row had to be found again and fixed by hand.
+   * Now ticking any other action brings view with it, and unticking view clears the row: the grants
+   * left behind would describe an account that cannot open the screen they apply to.
+   */
+  const toggle = useCallback((screen: ScreenPermission, action: string): void => {
     setPermissions((current) => {
-      const held = current[screenKey] ?? [];
-      const next = held.includes(action)
-        ? held.filter((entry) => entry !== action)
-        : [...held, action];
-      return { ...current, [screenKey]: next };
+      const held = current[screen.key] ?? [];
+      const gated = screen.actions.includes('view');
+
+      let next: string[];
+      if (held.includes(action)) {
+        next = gated && action === 'view' ? [] : held.filter((entry) => entry !== action);
+      } else {
+        next = [...held, action];
+        if (gated && action !== 'view' && !next.includes('view')) next.push('view');
+      }
+      return { ...current, [screen.key]: next };
     });
   }, []);
 
@@ -245,7 +268,7 @@ export function RoleEditorPage(): ReactNode {
         title={<T k="roles.editor.details" />}
         action={
           role !== null ? (
-            <Badge tone={role.accountCount > 0 ? 'warning' : 'neutral'}>
+            <Badge tone={role.accountCount > 0 ? 'warning' : 'neutral'} className="uppercase">
               <T k="roles.editor.affected" vars={{ count: role.accountCount }} />
             </Badge>
           ) : undefined
@@ -273,26 +296,20 @@ export function RoleEditorPage(): ReactNode {
             placeholder={t('roles.editor.description.placeholder')}
             disabled={readOnly}
           />
-          <div>
-            <label htmlFor="role-status" className="block text-sm font-medium text-slate-700">
-              <T k="roles.editor.status" />
-            </label>
-            <select
-              id="role-status"
-              value={status}
-              onChange={(event) => setStatus(event.target.value as typeof status)}
-              disabled={readOnly || role?.systemRole === true}
-              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
-            >
-              <option value="active">{t('app.status.active')}</option>
-              <option value="inactive">{t('app.status.inactive')}</option>
-            </select>
-            {status === 'inactive' && (
-              <p className="mt-1.5 text-xs text-amber-800">
-                <T k="roles.editor.status.warning" />
-              </p>
-            )}
-          </div>
+          {/*
+            The consequence rides on the field as its hint, and only while it is true: it is the
+            reason to think twice about this one choice, not a policy for the whole page.
+          */}
+          <SelectField
+            label={<T k="roles.editor.status" />}
+            value={status}
+            onChange={(event) => setStatus(event.target.value as typeof status)}
+            disabled={readOnly || role?.systemRole === true}
+            hint={status === 'inactive' ? <T k="roles.editor.status.warning" /> : undefined}
+          >
+            <option value="active">{t('app.status.active')}</option>
+            <option value="inactive">{t('app.status.inactive')}</option>
+          </SelectField>
         </FormGrid>
       </PanelBody>
 
@@ -306,221 +323,236 @@ export function RoleEditorPage(): ReactNode {
         }
       />
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <caption className="sr-only">
-            <T k="roles.editor.matrix.caption" />
-          </caption>
-          <thead>
-            <tr className="border-b border-slate-200 text-left text-[11px] tracking-wide text-slate-500 uppercase">
-              <th scope="col" className="px-5 py-2 font-medium">
-                <T k="roles.editor.matrix.column.screen" />
-              </th>
-              {matrix.standardActions.map((action) => (
-                <th key={action} scope="col" className="px-2 py-2 text-center font-medium">
-                  <TEnum k={matrix.actionLabels[action]} fallback={action} />
+      {/*
+        Framed like every other table, through the same frame `RecordTable framed` uses. The matrix
+        cannot be a `RecordTable` — it is a `tbody` per section with heading rows inside — so it
+        takes the frame directly, the way the work calendar's grid does.
+      */}
+      <TableFrame>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm [&>tbody:last-child>tr:last-child]:border-0">
+            <caption className="sr-only">
+              <T k="roles.editor.matrix.caption" />
+            </caption>
+            <thead className="bg-slate-50/70">
+              <tr className="border-b border-slate-200 text-left text-[11px] tracking-wide text-slate-500 uppercase">
+                <th scope="col" className="px-5 py-2 font-medium">
+                  <T k="roles.editor.matrix.column.screen" />
                 </th>
-              ))}
-              <th
-                scope="col"
-                className="border-l border-slate-300 px-4 py-2 text-left font-medium"
-              >
-                <T k="roles.editor.matrix.column.others" />
-              </th>
-              <th scope="col" className="w-24 px-3 py-2 text-right font-medium">
-                <span className="sr-only">
-                  <T k="roles.editor.matrix.column.fullRow" />
-                </span>
-              </th>
-            </tr>
-          </thead>
+                {matrix.standardActions.map((action) => (
+                  <th key={action} scope="col" className="px-2 py-2 text-center font-medium">
+                    <TEnum k={matrix.actionLabels[action]} fallback={action} />
+                  </th>
+                ))}
+                <th
+                  scope="col"
+                  className="border-l border-slate-300 px-4 py-2 text-left font-medium"
+                >
+                  <T k="roles.editor.matrix.column.others" />
+                </th>
+                <th scope="col" className="w-24 px-3 py-2 text-right font-medium">
+                  <span className="sr-only">
+                    <T k="roles.editor.matrix.column.fullRow" />
+                  </span>
+                </th>
+              </tr>
+            </thead>
 
-          {/*
-            Partitioned by the same shared mapping the sidebar uses.
+            {/*
+              Partitioned by the same shared mapping the sidebar uses.
 
-            The matrix and the rail describe the same structure from two directions — one grants
-            access to the screens the other navigates to — so a role editor whose sections
-            disagreed with the rail would be asking somebody to grant permissions in one
-            arrangement and check the result in another.
+              The matrix and the rail describe the same structure from two directions — one grants
+              access to the screens the other navigates to — so a role editor whose sections
+              disagreed with the rail would be asking somebody to grant permissions in one
+              arrangement and check the result in another.
 
-            `groupByDomain` also imposes the domain order, so the two cannot present the same
-            partition in two sequences even if the underlying arrays drift apart.
-          */}
-          {orderedSections.map((section) => {
-            const progress = sectionProgress(section, permissions);
-            const complete = progress.granted === progress.total;
+              `groupByDomain` also imposes the domain order, so the two cannot present the same
+              partition in two sequences even if the underlying arrays drift apart.
+            */}
+            {orderedSections.map((section) => {
+              const progress = sectionProgress(section, permissions);
+              const complete = progress.granted === progress.total;
 
-            return (
-              <tbody key={section.key}>
-                {/*
-                  A domain heading, emitted on the first section of each domain.
+              return (
+                <tbody key={section.key}>
+                  {/*
+                    A domain heading, emitted on the first section of each domain.
 
-                  Inside the same `tbody` as that section rather than its own, because a `tbody`
-                  holding only a heading row would let a browser break the page between the
-                  heading and the first row it introduces.
-                */}
-                {section.domainLabelKey !== undefined && (
-                  <tr className="border-y border-slate-300 bg-slate-100">
+                    Inside the same `tbody` as that section rather than its own, because a `tbody`
+                    holding only a heading row would let a browser break the page between the
+                    heading and the first row it introduces.
+                  */}
+                  {section.domainLabelKey !== undefined && (
+                    <tr className="border-y border-slate-300 bg-slate-100">
+                      <th
+                        scope="colgroup"
+                        colSpan={matrix.standardActions.length + 3}
+                        className="px-5 py-1.5 text-left text-[11px] font-semibold tracking-wider text-slate-500 uppercase"
+                      >
+                        <T k={section.domainLabelKey} />
+                      </th>
+                    </tr>
+                  )}
+
+                  <tr className="bg-brand-100/50 border-y border-slate-200">
                     <th
                       scope="colgroup"
                       colSpan={matrix.standardActions.length + 3}
-                      className="px-5 py-1.5 text-left text-[11px] font-semibold tracking-wider text-slate-500 uppercase"
+                      className="px-5 py-2 text-left"
                     >
-                      <T k={section.domainLabelKey} />
-                    </th>
-                  </tr>
-                )}
-
-                <tr className="bg-brand-100/50 border-y border-slate-200">
-                  <th
-                    scope="colgroup"
-                    colSpan={matrix.standardActions.length + 3}
-                    className="px-5 py-2 text-left"
-                  >
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="text-brand-600 text-xs font-semibold tracking-wider uppercase">
-                        <T k={section.labelKey} />
-                      </span>
-                      <span className="text-xs tabular-nums text-slate-500">
-                        <T
-                          k="roles.editor.section.progress"
-                          vars={{ granted: progress.granted, total: progress.total }}
-                        />
-                      </span>
-                      {!readOnly && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            for (const screen of section.screens) setRow(screen, !complete);
-                          }}
-                          className="text-brand-600 text-xs font-medium uppercase hover:underline"
-                        >
-                          <T
-                            k={
-                              complete
-                                ? 'roles.editor.section.clear'
-                                : 'roles.editor.section.select'
-                            }
-                          />
-                        </button>
-                      )}
-                    </span>
-                  </th>
-                </tr>
-
-                {section.screens.map((screen) => {
-                  const held = new Set(permissions[screen.key] ?? []);
-                  const available = screenActions(screen);
-                  const full = available.every((action) => held.has(action));
-
-                  return (
-                    <tr key={screen.key} className="border-b border-slate-100 hover:bg-slate-50/70">
-                      <th scope="row" className="max-w-80 px-5 py-2 text-left font-normal">
-                        <span className="block font-medium text-slate-700">
-                          <T k={screen.labelKey} />
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="text-brand-600 text-xs font-semibold tracking-wider uppercase">
+                          <T k={section.labelKey} />
                         </span>
-                        {screen.noteKey !== undefined && (
-                          <span className="mt-0.5 flex items-start gap-1 text-xs text-slate-500">
-                            <Lock className="mt-0.5 size-3 shrink-0" aria-hidden />
-                            <T k={screen.noteKey} />
-                          </span>
-                        )}
-                        {screen.planned === true && (
-                          <span className="mt-1 inline-block">
-                            <Badge tone="warning">
-                              <T k="roles.editor.screen.planned" />
-                            </Badge>
-                          </span>
-                        )}
-                      </th>
-
-                      {matrix.standardActions.map((action) => {
-                        const supported = screen.actions.includes(action);
-                        return (
-                          <td key={action} className="px-2 py-2 text-center">
-                            {supported ? (
-                              <input
-                                type="checkbox"
-                                checked={held.has(action)}
-                                disabled={readOnly}
-                                onChange={() => toggle(screen.key, action)}
-                                aria-label={t('roles.editor.checkbox.aria', {
-                                  action: tEnum(matrix.actionLabels[action], action),
-                                  screen: t(screen.labelKey),
-                                })}
-                              />
-                            ) : (
-                              <span
-                                className="text-slate-300"
-                                aria-label={t('roles.editor.notApplicable')}
-                              >
-                                —
-                              </span>
-                            )}
-                          </td>
-                        );
-                      })}
-
-                      <td className="border-l border-slate-200 px-4 py-2">
-                        {screen.custom === undefined || screen.custom.length === 0 ? (
-                          <span
-                            className="text-slate-300"
-                            aria-label={t('roles.editor.noCustom')}
-                          >
-                            —
-                          </span>
-                        ) : (
-                          <div className="flex flex-wrap gap-x-4 gap-y-1">
-                            {screen.custom.map((action) => (
-                              <label
-                                key={action.id}
-                                title={
-                                  action.noteKey === undefined ? undefined : t(action.noteKey)
-                                }
-                                className="inline-flex items-center gap-1.5 text-xs text-slate-700"
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={held.has(action.id)}
-                                  disabled={readOnly}
-                                  onChange={() => toggle(screen.key, action.id)}
-                                  className="size-3.5"
-                                />
-                                <T k={action.labelKey} />
-                              </label>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-
-                      <td className="px-3 py-2 text-right">
+                        <span className="text-xs tabular-nums text-slate-500">
+                          <T
+                            k="roles.editor.section.progress"
+                            vars={{ granted: progress.granted, total: progress.total }}
+                          />
+                        </span>
                         {!readOnly && (
                           <button
                             type="button"
-                            onClick={() => setRow(screen, !full)}
-                            className="text-brand-600 text-xs font-medium hover:underline"
+                            onClick={() => {
+                              for (const screen of section.screens) setRow(screen, !complete);
+                            }}
+                            className="text-brand-600 text-xs font-medium uppercase hover:underline"
                           >
-                            <T k={full ? 'roles.editor.row.clear' : 'roles.editor.row.all'} />
+                            <T
+                              k={
+                                complete
+                                  ? 'roles.editor.section.clear'
+                                  : 'roles.editor.section.select'
+                              }
+                            />
                           </button>
                         )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            );
-          })}
-        </table>
-      </div>
+                      </span>
+                    </th>
+                  </tr>
+
+                  {section.screens.map((screen) => {
+                    const held = new Set(permissions[screen.key] ?? []);
+                    const available = screenActions(screen);
+                    const full = available.every((action) => held.has(action));
+
+                    return (
+                      <tr
+                        key={screen.key}
+                        className="border-b border-slate-100 hover:bg-slate-50/70"
+                      >
+                        <th scope="row" className="max-w-80 px-5 py-2 text-left font-normal">
+                          <span className="block font-medium text-slate-700">
+                            <T k={screen.labelKey} />
+                          </span>
+                          {screen.noteKey !== undefined && (
+                            <span className="mt-0.5 flex items-start gap-1 text-xs text-slate-500">
+                              <Lock className="mt-0.5 size-3 shrink-0" aria-hidden />
+                              <T k={screen.noteKey} />
+                            </span>
+                          )}
+                          {screen.planned === true && (
+                            <span className="mt-1 inline-block">
+                              <Badge tone="warning" className="uppercase">
+                                <T k="roles.editor.screen.planned" />
+                              </Badge>
+                            </span>
+                          )}
+                        </th>
+
+                        {matrix.standardActions.map((action) => {
+                          const supported = screen.actions.includes(action);
+                          return (
+                            <td key={action} className="px-2 py-2 text-center">
+                              {supported ? (
+                                <input
+                                  type="checkbox"
+                                  checked={held.has(action)}
+                                  disabled={readOnly}
+                                  onChange={() => toggle(screen, action)}
+                                  aria-label={t('roles.editor.checkbox.aria', {
+                                    action: tEnum(matrix.actionLabels[action], action),
+                                    screen: t(screen.labelKey),
+                                  })}
+                                />
+                              ) : (
+                                <span
+                                  className="text-slate-300"
+                                  aria-label={t('roles.editor.notApplicable')}
+                                >
+                                  —
+                                </span>
+                              )}
+                            </td>
+                          );
+                        })}
+
+                        <td className="border-l border-slate-200 px-4 py-2">
+                          {screen.custom === undefined || screen.custom.length === 0 ? (
+                            <span
+                              className="text-slate-300"
+                              aria-label={t('roles.editor.noCustom')}
+                            >
+                              —
+                            </span>
+                          ) : (
+                            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                              {screen.custom.map((action) => (
+                                <label
+                                  key={action.id}
+                                  title={
+                                    action.noteKey === undefined ? undefined : t(action.noteKey)
+                                  }
+                                  className="inline-flex items-center gap-1.5 text-xs text-slate-700"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={held.has(action.id)}
+                                    disabled={readOnly}
+                                    onChange={() => toggle(screen, action.id)}
+                                    className="size-3.5"
+                                  />
+                                  <T k={action.labelKey} />
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="px-3 py-2 text-right">
+                          {!readOnly && (
+                            <button
+                              type="button"
+                              onClick={() => setRow(screen, !full)}
+                              className="text-brand-600 text-xs font-medium hover:underline"
+                            >
+                              <T k={full ? 'roles.editor.row.clear' : 'roles.editor.row.all'} />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              );
+            })}
+          </table>
+        </div>
+      </TableFrame>
 
       {!readOnly && granted === matrix.total && (
-        <PanelBody className="pb-0">
+        <PanelBody>
           <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
             <T k="roles.editor.fullAccess" />
           </PanelNote>
         </PanelBody>
       )}
 
+      {/*
+        Save alone, at the right edge like every other strip that closes a form. The bulk select and
+        clear stay in the header, where they are reached before the ticking starts — a second pair
+        here, as text links beside the commit, was the same two controls drawn twice.
+      */}
       <PanelActions hint={readOnly ? undefined : <T k="roles.editor.hint" />}>
         {readOnly ? (
           <Button variant="ghost" onClick={() => void navigate('/tetapan/peranan')}>
@@ -528,29 +560,10 @@ export function RoleEditorPage(): ReactNode {
             <T k="roles.editor.back" />
           </Button>
         ) : (
-          <>
-            <Button onClick={() => void submit()} disabled={busy || name.trim().length === 0}>
-              <Save className="size-4" aria-hidden />
-              <T k="roles.editor.save" />
-            </Button>
-            <span className="inline-flex items-center gap-1.5 text-xs">
-              <Grid3x3 className="size-3.5 text-slate-400" aria-hidden />
-              <button
-                type="button"
-                onClick={() => setAll(true)}
-                className="text-brand-600 font-medium hover:underline"
-              >
-                <T k="roles.editor.selectAll" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setAll(false)}
-                className="font-medium text-rose-600 hover:underline"
-              >
-                <T k="roles.editor.clearAll" />
-              </button>
-            </span>
-          </>
+          <Button onClick={() => void submit()} disabled={busy || name.trim().length === 0}>
+            <Save className="size-4" aria-hidden />
+            <T k="roles.editor.save" />
+          </Button>
         )}
       </PanelActions>
     </section>

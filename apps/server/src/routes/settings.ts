@@ -26,7 +26,7 @@ import { recordActivity } from '../logging/activity.js';
 import { addressAllowedByList, invalidateMaintenance } from '../maintenance/mode.js';
 import { MINIMUM_RAW_EVENT_MONTHS, previewPurge, runPurge } from '../retention/purge.js';
 import { brandingStatus } from './branding.js';
-import { assertPasswordAcceptable } from '../security/policy.js';
+import { assertPasswordAcceptable, securityPolicy } from '../security/policy.js';
 
 /**
  * Settings the operator controls at runtime.
@@ -611,6 +611,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       .object({
         accountType: z.enum(['admin', 'staff']).default('admin'),
         status: z.enum(['active', 'pending', 'suspended']).optional(),
+        roleId: z.coerce.number().int().positive().optional(),
         search: z.string().trim().max(128).optional(),
         page: z.coerce.number().int().min(1).default(1),
         pageSize: z.coerce.number().int().min(1).max(200).default(30),
@@ -630,14 +631,16 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
           ],
         }
       : {};
+    const role = query.roleId !== undefined ? { roleId: query.roleId } : {};
 
     const where = {
       accountType: query.accountType,
       ...(query.status ? { status: query.status } : {}),
+      ...role,
       ...search,
     };
 
-    const [total, rows, statusCounts] = await Promise.all([
+    const [total, rows, statusCounts, policy] = await Promise.all([
       db().userAccount.count({ where }),
       db().userAccount.findMany({
         where,
@@ -672,12 +675,14 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         },
       }),
       // Counted without the status predicate, so the filter keeps showing what the
-      // other statuses hold rather than zeroing them.
+      // other statuses hold rather than zeroing them. The role and the search still
+      // apply: they are other filters, and the chips count what those leave.
       db().userAccount.groupBy({
         by: ['status'],
-        where: { accountType: query.accountType, ...search },
+        where: { accountType: query.accountType, ...role, ...search },
         _count: { _all: true },
       }),
+      securityPolicy(),
     ]);
 
     const statuses: Record<string, number> = { active: 0, pending: 0, suspended: 0 };
@@ -688,6 +693,13 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       page: query.page,
       pageSize: query.pageSize,
       statuses,
+      /**
+       * The configured minimum, so the create and reset dialogs state and enforce the rule the
+       * server will apply. They used to hard-code twelve — the default — which refused a valid
+       * password once the policy was lowered and let a short one through to a 409 once it was
+       * raised.
+       */
+      limits: { passwordMinLength: policy.passwordMinLength },
       generatedAt: new Date().toISOString(),
       rows: rows.map(({ totpConfirmedAt, ...row }) => ({
         ...row,
@@ -759,6 +771,34 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
 
     return { ok: true };
   });
+
+  /**
+   * Roles as the account screen needs them: a name to choose, its status, and how much it grants.
+   *
+   * Its own read behind the account screens' gate rather than `/api/roles`, which needs
+   * `settings.roles`. Issuing staff logins and managing roles are different jobs, and the screen
+   * read the role list through the other one's door — so for a clerk without role management the
+   * role select in the create dialog was empty, the form could never be submitted, and nothing on
+   * the screen said why. The permission map stays on `/api/roles`: this screen needs the count.
+   */
+  app.get(
+    '/api/users/roles',
+    { preHandler: requireAnyPermission(USER_SCREENS, 'view') },
+    async () => {
+      const rows = await db().role.findMany({
+        orderBy: [{ systemRole: 'desc' }, { name: 'asc' }],
+        select: { id: true, name: true, status: true, permissions: true },
+      });
+      const total = totalPermissionCount();
+      return jsonSafe(
+        rows.map(({ permissions, ...row }) => ({
+          ...row,
+          permissionCount: countGranted((permissions ?? {}) as Record<string, string[]>),
+          permissionTotal: total,
+        })),
+      );
+    },
+  );
 
   /**
    * Staff lookup for the account picker.

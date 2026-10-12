@@ -296,6 +296,8 @@ export interface UserRow {
 export interface UserPage extends Paged<UserRow> {
   /** Counted ignoring the status filter, so selecting one does not zero the rest. */
   statuses: Record<UserStatus, number>;
+  /** The security policy's minimum, so the dialogs enforce the rule the server applies. */
+  limits: { passwordMinLength: number };
   generatedAt: string;
 }
 
@@ -327,8 +329,18 @@ export interface AccountCandidate {
   existingAccountEmail: string | null;
 }
 
+/** A role as the account screens choose it — read through their own gate, not role management's. */
+export interface AccountRoleOption {
+  id: number;
+  name: string;
+  status: 'active' | 'inactive';
+  permissionCount: number;
+  permissionTotal: number;
+}
+
 export const usersApi = {
   counts: () => api.get<UserCounts>('/api/users/counts'),
+  roles: () => api.get<AccountRoleOption[]>('/api/users/roles'),
   searchStaff: (query: string) =>
     api.get<AccountCandidate[]>(
       `/api/users/staff-search?q=${encodeURIComponent(query)}`,
@@ -336,6 +348,7 @@ export const usersApi = {
   list: (query: {
     accountType: 'admin' | 'staff';
     status?: UserStatus;
+    roleId?: number;
     search?: string;
     page: number;
     pageSize: number;
@@ -346,10 +359,15 @@ export const usersApi = {
       pageSize: String(query.pageSize),
     });
     if (query.status) params.set('status', query.status);
+    if (query.roleId !== undefined) params.set('roleId', String(query.roleId));
     if (query.search) params.set('search', query.search);
     return api.get<UserPage>(`/api/users?${params.toString()}`);
   },
   remove: (id: number) => api.delete<{ ok: boolean }>(`/api/users/${id}`),
+  /*
+    `noteKey`, not `note`: the server sends a key and the screen resolves it. This was typed as
+    `note` after the server had moved to keys, so the 2FA reminder never reached the screen.
+  */
   create: (input: {
     staffId: number;
     email: string;
@@ -357,7 +375,7 @@ export const usersApi = {
     roleId: number;
     password: string;
     allowAppCheckIn: boolean;
-  }) => api.post<{ id: number; note?: string }>('/api/users', input),
+  }) => api.post<{ id: number; noteKey?: LabelKey }>('/api/users', input),
   update: (
     id: number,
     input: {
@@ -387,15 +405,20 @@ export interface AppClientRow {
 
 export const appClientsApi = {
   list: () => api.get<AppClientRow[]>('/api/app-clients'),
+  // Keys rather than prose, as the server sends them — see `usersApi.create`.
   create: (input: { name: string; platform: 'android' | 'ios' | 'web'; minVersion?: string }) =>
-    api.post<{ id: number; clientId: string; secret: string; note: string }>(
+    api.post<{ id: number; clientId: string; secret: string; noteKey: LabelKey }>(
       '/api/app-clients',
       input,
     ),
   update: (
     id: number,
     input: { status?: 'active' | 'suspended'; minVersion?: string; rotateSecret?: boolean },
-  ) => api.patch<{ id: number; secret?: string; note?: string }>(`/api/app-clients/${id}`, input),
+  ) =>
+    api.patch<{ id: number; secret?: string; noteKey?: LabelKey }>(
+      `/api/app-clients/${id}`,
+      input,
+    ),
   remove: (id: number) => api.delete<{ ok: boolean }>(`/api/app-clients/${id}`),
 };
 
