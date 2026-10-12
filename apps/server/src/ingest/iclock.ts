@@ -7,6 +7,8 @@ import { recordOutcome, takePending } from '../devices/driver/commands.js';
 import { decodeAttlogLine } from '@attendance/terminal-drivers';
 import { orgOffsetMinutes } from '../devices/drivers/zkteco/driver.js';
 import { logger } from '../logger.js';
+import { addressAllowedByList } from '../maintenance/mode.js';
+import { clientAddress, isPrivateAddress } from '../net/address.js';
 import { storeEvents } from './store.js';
 
 /**
@@ -60,6 +62,33 @@ const stats = {
   commandResults: 0,
   /** Requests whose serial matched no registered terminal. */
   unregistered: 0,
+  /**
+   * Requests refused because the source address is public and not on the allowlist.
+   *
+   * Counted apart from `unregistered` because the two call for opposite actions: an unknown
+   * serial means a record here is missing one, a blocked address means the list is missing one.
+   */
+  blocked: 0,
+  /**
+   * The last public address turned away, so the allowlist can be filled in from the screen.
+   *
+   * This is how an operator learns the site's public address at all. The alternative was reading
+   * the journal on the server, which is a different person from the one configuring terminals.
+   */
+  lastBlockedAddress: null as string | null,
+  lastBlockedAt: null as Date | null,
+  /**
+   * The address the last request appeared to come from, allowed or not.
+   *
+   * Reported because the allowlist is only as good as this value. `trustProxy` is on in
+   * production, so behind a reverse proxy that sets `X-Forwarded-For` this is the real client.
+   * Behind one that does **not**, every request arrives as loopback — which reads as private, is
+   * therefore always allowed, and makes the list decorative while the screen says it is enforced.
+   *
+   * Surfaced rather than assumed: a control that silently does nothing is worse than no control,
+   * and this is the one fact that distinguishes the two.
+   */
+  lastSourceAddress: null as string | null,
   /** Rows that parsed but fell outside the plausible date window. */
   outOfRange: 0,
   /** Rows the decoder could not read at all. */
@@ -322,6 +351,33 @@ async function resolveBySerial(
   reply: FastifyReply,
 ): Promise<Device | null> {
   stats.lastContactAt = new Date();
+  stats.lastSourceAddress = clientAddress(request);
+
+  /*
+    The address check comes before the serial, and before any database work.
+
+    A serial number is not a secret: it is printed on the unit. On a public address that makes
+    this endpoint forgeable by anybody who has read the sticker or guessed the format, and a
+    forged row cannot be removed — the raw log has no delete path anywhere in this application,
+    by design, because it is the evidence attendance is derived from.
+
+    Private sources are trusted without a list. That is the standalone shape, where the terminal
+    and the server share a LAN, and requiring configuration there would be a lockout for the
+    installation that needs the least of it.
+  */
+  if (!(await sourceAllowed(request))) {
+    stats.blocked += 1;
+    stats.lastBlockedAddress = stats.lastSourceAddress;
+    stats.lastBlockedAt = new Date();
+    logger().warn(
+      { ip: stats.lastSourceAddress, peer: request.ip, url: request.url },
+      'TA Push request from a public address that is not on the ingest allow list',
+    );
+    // 404, like an unknown serial. An endpoint that distinguishes "blocked" from "no such
+    // terminal" tells a prober which half to work on.
+    void reply.status(404).type('text/plain').send('');
+    return null;
+  }
 
   const serial = asString(request.query, 'SN');
   if (serial === null || serial.trim() === '') {
@@ -346,6 +402,33 @@ async function resolveBySerial(
   }
 
   return device;
+}
+
+/**
+ * Whether this request may file attendance at all.
+ *
+ * Cached for five seconds, like the security policy, because a terminal polls on a timer whether
+ * or not anybody scans — fifteen units at thirty-second intervals would otherwise put a settings
+ * read on the critical path of every poll. Five seconds is short enough that an operator editing
+ * the list sees it take effect while still on the screen.
+ */
+let allowCache: { at: number; value: string } | null = null;
+
+export function invalidateIngestAllowList(): void {
+  allowCache = null;
+}
+
+async function sourceAllowed(request: FastifyRequest): Promise<boolean> {
+  if (isPrivateAddress(request.ip)) return true;
+
+  if (allowCache === null || Date.now() - allowCache.at >= 5000) {
+    const row = await db().setting.findUnique({ where: { key: 'ingest.callbackAllowIps' } });
+    allowCache = { at: Date.now(), value: typeof row?.value === 'string' ? row.value : '' };
+  }
+
+  // An empty list allows nothing from a public address, which is the safe reading of "not
+  // configured yet" for an endpoint with no credential.
+  return addressAllowedByList(clientAddress(request), allowCache.value);
 }
 
 /**

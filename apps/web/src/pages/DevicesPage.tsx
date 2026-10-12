@@ -11,7 +11,9 @@ import {
   RefreshCw,
   Router,
   Satellite,
+  Save,
   Server,
+  ShieldCheck,
   ShieldOff,
   Trash2,
   TriangleAlert,
@@ -20,6 +22,7 @@ import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'reac
 import { useNavigate } from 'react-router';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
+import { SettingRow, TextControl } from '../components/ChannelForm';
 import {
   ChipBar,
   Detail,
@@ -29,6 +32,7 @@ import {
   FormGrid,
   KeyValue,
   KeyValueList,
+  PanelActions,
   PanelBody,
   PanelCard,
   PanelFooter,
@@ -38,6 +42,8 @@ import {
   RecordTable,
   RowAction,
   RowActions,
+  SettingsGroup,
+  SettingsStack,
 } from '../components/RecordPanel';
 import { RemoveDialog } from '../components/RemoveDialog';
 import { RevealSecret } from '../components/RevealSecret';
@@ -53,6 +59,7 @@ import {
   type IssuedAgentToken,
 } from '../lib/agents-api';
 import { api } from '../lib/api';
+import { settingsApi } from '../lib/settings-api';
 import { cn } from '../lib/cn';
 import { T, TEnum, useLabels } from '../lib/translation';
 import {
@@ -84,6 +91,29 @@ interface CallbackIngest {
   undecodable: number;
   commandsSent: number;
   lastContactAt: string | null;
+  /** Refused because the source address is public and not on the allowlist. */
+  blocked: number;
+  /**
+   * The last public address turned away.
+   *
+   * This is how the allowlist gets filled in: the site's public address is something only the
+   * server can observe, and the alternative was reading the journal on the host.
+   */
+  lastBlockedAddress: string | null;
+  lastBlockedAt: string | null;
+  /**
+   * What the last request appeared to come from.
+   *
+   * Loopback here on a public installation means the reverse proxy is not forwarding the client
+   * address, so every request reads as private and the allowlist cannot refuse anything.
+   */
+  lastSourceAddress: string | null;
+}
+
+/** Loopback in either form, which is what a proxy that forwards nothing looks like. */
+function isLoopbackAddress(address: string): boolean {
+  const value = address.replace(/^::ffff:/i, '');
+  return value === '127.0.0.1' || value === '::1';
 }
 
 interface DeviceRow {
@@ -1086,22 +1116,50 @@ function ConnectionPanel(): ReactNode {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** The ingest allowlist, as stored and as being edited. */
+  const [allowIps, setAllowIps] = useState('');
+  const [storedAllowIps, setStoredAllowIps] = useState('');
+  const [allowEditable, setAllowEditable] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const [deviceRows, ingest, settings] = await Promise.all([
         api.get<DeviceRow[]>('/api/devices'),
         api.get<IngestStats>('/api/ingest/stats'),
-        api.get<{ environment: Record<string, unknown> }>('/api/settings'),
+        settingsApi.load(),
       ]);
       setDevices(deviceRows);
       setStats(ingest);
-      setEnvironment(settings.environment);
+      setEnvironment(settings.environment as unknown as Record<string, unknown>);
+      const stored =
+        typeof settings.values['ingest.callbackAllowIps'] === 'string'
+          ? settings.values['ingest.callbackAllowIps']
+          : '';
+      setStoredAllowIps(stored);
+      setAllowIps(stored);
+      // Narrowed server-side, so a disabled field is a disabled field rather than a save
+      // that fails after the fact.
+      setAllowEditable(settings.editableKeys.includes('ingest.callbackAllowIps'));
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('device.connection.error.load'));
     }
   }, [t]);
+
+  async function saveAllowList(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await settingsApi.save({ 'ingest.callbackAllowIps': allowIps.trim() });
+      setNotice(t('device.ingest.callback.allow.saved'));
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('app.error.save'));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     void load();
@@ -1339,7 +1397,35 @@ function ConnectionPanel(): ReactNode {
                 label={<T k="device.ingest.undecodable" />}
                 value={String(stats?.callback.undecodable ?? 0)}
               />
+              {/* What the server actually saw, which is what the allowlist is matched against. */}
+              <KeyValue
+                label={<T k="device.ingest.callback.lastSource" />}
+                value={stats?.callback.lastSourceAddress ?? t('device.row.neverSeen')}
+              />
             </KeyValueList>
+
+            {/*
+              The misconfiguration that would make the allowlist decorative, named where it can be
+              seen. Only shown once something has actually arrived, because before that loopback
+              would be a guess rather than an observation.
+            */}
+            {stats?.callback.lastSourceAddress !== null &&
+              stats?.callback.lastSourceAddress !== undefined &&
+              isLoopbackAddress(stats.callback.lastSourceAddress) && (
+                <PanelNote tone="danger" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+                  <T
+                    k="device.ingest.callback.proxyBlind"
+                    vars={{
+                      address: (
+                        <code className="font-mono font-semibold">
+                          {stats.callback.lastSourceAddress}
+                        </code>
+                      ),
+                      header: <code className="font-mono">X-Forwarded-For</code>,
+                    }}
+                  />
+                </PanelNote>
+              )}
 
             {(stats?.callback.unregistered ?? 0) > 0 && (
               <PanelNote tone="danger" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
@@ -1360,6 +1446,92 @@ function ConnectionPanel(): ReactNode {
               </PanelNote>
             )}
           </PanelBody>
+
+          {/*
+            The allowlist, and it is the only gate this path has.
+
+            TA Push carries no credential — the identity is a serial number printed on the unit —
+            so on a public address anybody who has read that sticker can file attendance, and a
+            forged row cannot be removed: the raw log has no delete path anywhere in this
+            application, deliberately, because it is the evidence.
+
+            Private sources are trusted without a list, which is the standalone shape and needs no
+            configuration. Public sources are refused until named here.
+          */}
+          <SettingsStack>
+            <SettingsGroup
+              title={<T k="device.ingest.callback.allow.group" />}
+              icon={<ShieldCheck className="size-3.5" aria-hidden />}
+              action={
+                <Badge tone={storedAllowIps.trim() === '' ? 'warning' : 'success'} className="uppercase">
+                  <T
+                    k={
+                      storedAllowIps.trim() === ''
+                        ? 'device.ingest.callback.allow.state.empty'
+                        : 'device.ingest.callback.allow.state.set'
+                    }
+                  />
+                </Badge>
+              }
+            >
+              <SettingRow
+                label={<T k="device.ingest.callback.allow.label" />}
+                hint={<T k="device.ingest.callback.allow.hint" />}
+              >
+                <TextControl
+                  label={t('device.ingest.callback.allow.label')}
+                  value={allowIps}
+                  disabled={!allowEditable}
+                  onChange={(event) => setAllowIps(event.target.value)}
+                  placeholder="203.0.113.7, 203.0.113.0/24"
+                />
+              </SettingRow>
+
+              {/*
+                The address to paste, when one has been turned away. Shown rather than described,
+                because the site's public address is a fact only the server has seen.
+              */}
+              {stats?.callback.lastBlockedAddress !== null &&
+                stats?.callback.lastBlockedAddress !== undefined && (
+                  <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+                    <T
+                      k="device.ingest.callback.blocked.note"
+                      vars={{
+                        count: stats.callback.blocked,
+                        address: (
+                          <code className="font-mono font-semibold">
+                            {stats.callback.lastBlockedAddress}
+                          </code>
+                        ),
+                        when:
+                          stats.callback.lastBlockedAt === null
+                            ? ''
+                            : formatDateTime(stats.callback.lastBlockedAt),
+                      }}
+                    />
+                  </PanelNote>
+                )}
+
+              {/* Only while it is true, and only where there is a terminal it applies to. */}
+              {storedAllowIps.trim() === '' && (
+                <PanelNote tone="info">
+                  <T k="device.ingest.callback.allow.empty.note" />
+                </PanelNote>
+              )}
+            </SettingsGroup>
+          </SettingsStack>
+
+          {allowEditable && (
+            <PanelActions hint={<T k="device.ingest.callback.allow.actions.hint" />}>
+              <Button
+                onClick={() => void saveAllowList()}
+                disabled={busy || allowIps.trim() === storedAllowIps.trim()}
+              >
+                <Save className="size-4" aria-hidden />
+                <T k="device.ingest.callback.allow.save" />
+              </Button>
+            </PanelActions>
+          )}
         </>
       )}
 

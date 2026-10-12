@@ -4548,6 +4548,46 @@ export const LABELS = {
   'device.ingest.callback.missingSerial':
     'Tiada nombor siri pada: {names}. Terminal ini tidak boleh dipadankan dengan scan yang dihantarnya sendiri sampai nombor siri dimasukkan.',
 
+  /**
+   * The allowlist, which is the only gate this path has.
+   *
+   * TA Push carries no credential: the identity is a serial number printed on the unit. On a
+   * public address that makes the endpoint forgeable by anybody who has read the sticker, and a
+   * forged row is permanent — the raw log has no delete path anywhere, deliberately, because it
+   * is the evidence every attendance figure is derived from.
+   */
+  'device.ingest.callback.allow.group': 'Alamat yang dibenarkan',
+  'device.ingest.callback.allow.label': 'Alamat sumber',
+  'device.ingest.callback.allow.hint':
+    'Dipisahkan koma. Alamat tepat, julat CIDR, atau wildcard seperti 203.0.113.* diterima. Alamat rangkaian persendirian sentiasa dibenarkan tanpa disenaraikan.',
+  'device.ingest.callback.allow.state.set': 'Disenaraikan',
+  'device.ingest.callback.allow.state.empty': 'Kosong',
+  'device.ingest.callback.allow.save': 'Simpan senarai',
+  'device.ingest.callback.allow.actions.hint':
+    'Berkuat kuasa dalam beberapa saat. Terminal dalam LAN yang sama tidak terjejas.',
+  /** Stated as the consequence it is, not as a policy. */
+  'device.ingest.callback.allow.empty.note':
+    'Senarai kosong, jadi hanya terminal dalam rangkaian persendirian boleh memfailkan kehadiran. Terminal yang menghubungi pelayan ini melalui internet akan ditolak sampai alamat awam tapaknya disenaraikan di sini.',
+  /**
+   * The address to paste, because the site's public address is a fact only the server has seen.
+   *
+   * Without this the list could only be filled in by reading the journal on the host, which is a
+   * different person from the one configuring terminals.
+   */
+  'device.ingest.callback.blocked.note':
+    '{count} permintaan ditolak kerana alamat sumbernya awam dan tiada dalam senarai. Yang terakhir dari {address} pada {when} — kalau itu tapak anda, tambahkannya di atas.',
+  'device.ingest.callback.allow.saved': 'Senarai alamat disimpan.',
+  'device.ingest.callback.lastSource': 'Sumber terakhir dilihat',
+  /**
+   * The misconfiguration that makes the allowlist decorative.
+   *
+   * Behind a reverse proxy that does not forward the client address, every request arrives as
+   * loopback — which reads as a private network, is therefore always allowed, and leaves this
+   * endpoint open while the screen reports a list being enforced.
+   */
+  'device.ingest.callback.proxyBlind':
+    'Permintaan tiba sebagai {address}, jadi pelayan tidak dapat melihat dari mana ia datang. Setiap permintaan terbaca sebagai rangkaian persendirian dan dibenarkan, jadi senarai alamat di bawah tidak menolak apa-apa. Reverse proxy di hadapan pelayan ini mesti menetapkan {header} sebelum senarai itu bermakna.',
+
   'device.ingest.title': 'Endpoint ingest',
   'device.ingest.subtitle': 'Tempat terminal menghantar event, dan sejauh mana ia berjaya.',
   'device.ingest.pushed': 'Event via push',

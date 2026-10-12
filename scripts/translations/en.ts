@@ -5260,6 +5260,24 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
   'device.ingest.callback.missingSerial':
     'No serial number on: {names}. These terminals cannot be matched to the scans they send until a serial number is entered.',
 
+  'device.ingest.callback.allow.group': 'Allowed addresses',
+  'device.ingest.callback.allow.label': 'Source addresses',
+  'device.ingest.callback.allow.hint':
+    'Comma separated. An exact address, a CIDR range, or a wildcard such as 203.0.113.* are all accepted. Private network addresses are always allowed without being listed.',
+  'device.ingest.callback.allow.state.set': 'Listed',
+  'device.ingest.callback.allow.state.empty': 'Empty',
+  'device.ingest.callback.allow.save': 'Save list',
+  'device.ingest.callback.allow.actions.hint':
+    'Takes effect within seconds. Terminals on the same LAN are unaffected.',
+  'device.ingest.callback.allow.empty.note':
+    'The list is empty, so only terminals on a private network can file attendance. A terminal reaching this server over the internet is refused until its site’s public address is listed here.',
+  'device.ingest.callback.blocked.note':
+    '{count} requests were refused because their source address is public and not on the list. The most recent came from {address} at {when} — if that is your site, add it above.',
+  'device.ingest.callback.allow.saved': 'Address list saved.',
+  'device.ingest.callback.lastSource': 'Last source seen',
+  'device.ingest.callback.proxyBlind':
+    'Requests are arriving as {address}, so the server cannot see where they came from. Every request reads as a private network and is allowed, so the address list below refuses nothing. The reverse proxy in front of this server must set {header} before that list means anything.',
+
   'device.ingest.title': 'Ingest endpoint',
   'device.ingest.subtitle': 'Where terminals send events, and how well that is going.',
   'device.ingest.pushed': 'Events via push',

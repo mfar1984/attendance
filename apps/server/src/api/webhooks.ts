@@ -5,7 +5,7 @@ import { decryptSecret } from '../crypto.js';
 import { db } from '../db.js';
 import { logger } from '../logger.js';
 import { sanitiseTriggers } from '../notify/triggers.js';
-import { addressMatches } from './guard.js';
+import { addressMatches, isPrivateAddress } from './guard.js';
 
 /**
  * Outbound webhooks.
@@ -107,16 +107,6 @@ const BLOCKED = [
   'ff00::/8', // IPv6 multicast
 ];
 
-/** Ranges where plain HTTP is tolerated, because the traffic never leaves the site. */
-const PRIVATE = [
-  '10.0.0.0/8',
-  '172.16.0.0/12',
-  '192.168.0.0/16',
-  '127.0.0.0/8',
-  '::1/128',
-  'fc00::/7',
-];
-
 export interface TargetVerdict {
   ok: boolean;
   reason?: string;
@@ -161,7 +151,7 @@ export async function checkTarget(rawUrl: string): Promise<TargetVerdict> {
     };
   }
 
-  const isPrivate = PRIVATE.some((range) => addressMatches(address, range));
+  const isPrivate = isPrivateAddress(address);
   if (url.protocol === 'http:' && !isPrivate) {
     return {
       ok: false,

@@ -49,6 +49,29 @@ const schema = z.object({
    */
   REQUIRE_ADMIN_2FA: z.stringbool().default(true),
 
+  /**
+   * Proxies whose forwarded client address may be believed.
+   *
+   * Comma-separated addresses or CIDR ranges. A forwarded header from anything else is ignored
+   * and the socket address is used, because a client talking to this server directly can write
+   * that header itself — which is how three access controls here came to be satisfiable by
+   * `curl -H 'X-Forwarded-For: ...'`.
+   *
+   * Loopback by default, which is every proxied deployment: the proxy runs on this host. A direct
+   * LAN install has no proxy and no forwarded headers, so the default costs it nothing.
+   */
+  TRUSTED_PROXY_IPS: z.string().default('127.0.0.1,::1'),
+
+  /**
+   * Header a trusted proxy states the client address in.
+   *
+   * `x-forwarded-for` is the default and is read from the right, since a chain appends. Behind an
+   * edge that **overwrites** a single-value header — `cf-connecting-ip` for Cloudflare — name that
+   * instead: an appended chain still carries whatever the original client chose to send at its
+   * left, and only an overwritten header is free of it.
+   */
+  CLIENT_IP_HEADER: z.string().default('x-forwarded-for'),
+
   /** Credentials the terminal uses when posting events to us. */
   INGEST_USERNAME: z.string().min(1).default('hikpush'),
   INGEST_PASSWORD: z.string().min(8).max(16),

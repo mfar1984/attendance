@@ -252,6 +252,22 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
         undecodable: callback.undecodable,
         commandsSent: callback.commandsSent,
         lastContactAt: callback.lastContactAt,
+        /*
+          The address half. This protocol carries no credential, so on a public address the
+          allowlist is the only gate — and the address a terminal arrives from is something only
+          the server can report. Without it an operator has no way to fill the list in except by
+          reading the journal, which is a different person from the one configuring terminals.
+        */
+        blocked: callback.blocked,
+        lastBlockedAddress: callback.lastBlockedAddress,
+        lastBlockedAt: callback.lastBlockedAt,
+        /*
+          What the last request looked like it came from. The allowlist is only as good as this
+          value, and behind a reverse proxy that does not set `X-Forwarded-For` it is loopback for
+          every request — which reads as private, is always allowed, and leaves the list
+          decorative. The screen compares it against loopback and says so.
+        */
+        lastSourceAddress: callback.lastSourceAddress,
       },
     };
   });

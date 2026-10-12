@@ -32,6 +32,7 @@ import { badRequest, notFound, parseBody, unauthorized } from '../http.js';
 import { storeEvents } from '../ingest/store.js';
 import { storeSnapshots } from '../devices/snapshots.js';
 import { logger } from '../logger.js';
+import { clientAddress } from '../net/address.js';
 
 /**
  * Endpoints an on-site connector talks to.
@@ -72,14 +73,6 @@ const COMMANDS_PER_POLL = 20;
  * and an authenticated site posting two hundred events with snapshots legitimately exceeds it.
  */
 const AGENT_BODY_LIMIT = 8 * 1024 * 1024;
-
-function clientAddress(request: FastifyRequest): string {
-  const forwarded = request.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return (forwarded.split(',')[0] ?? request.ip).trim();
-  }
-  return request.ip;
-}
 
 /**
  * Authenticates an agent.

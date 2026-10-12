@@ -1,9 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
-import { addressMatches } from '../api/guard.js';
 import { db } from '../db.js';
 import { ICLOCK_PATH } from '../ingest/iclock.js';
 import { INGEST_PATH } from '../ingest/routes.js';
+import { addressMatches, clientAddress } from '../net/address.js';
 
 /**
  * Maintenance mode.
@@ -166,11 +166,4 @@ export function registerMaintenanceHook(app: FastifyInstance): void {
   });
 }
 
-/** Honours a proxy header, the same way the session and API layers do. */
-function clientAddress(request: FastifyRequest): string {
-  const forwarded = request.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return (forwarded.split(',')[0] ?? request.ip).trim();
-  }
-  return request.ip;
-}
+

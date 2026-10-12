@@ -13,6 +13,7 @@ import { deviceRoutes } from './devices/routes.js';
 import { deviceTerminalRoutes } from './devices/terminal.js';
 import { loadEnv } from './env.js';
 import { HttpError, sendError } from './http.js';
+import { trustedProxies } from './net/address.js';
 import { identityRoutes } from './identity/routes.js';
 import { ICLOCK_PATH, iclockRoutes } from './ingest/iclock.js';
 import { ingestRoutes, INGEST_PATH } from './ingest/routes.js';
@@ -61,9 +62,18 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   const app = Fastify({
     logger: loggerOptions(),
-    // Terminals identify themselves by MAC in the body; trusting the proxy header
-    // only matters for operator requests behind a reverse proxy.
-    trustProxy: env.NODE_ENV === 'production',
+    /**
+     * The configured proxies, not `true`.
+     *
+     * `true` means "believe `X-Forwarded-For` from anybody", which let any client set its own
+     * apparent address — and `request.ip` is what the global rate limiter buckets on, so a caller
+     * could rotate a header to get an unlimited share of it. Naming the proxies means a client
+     * talking to this server directly is measured by its socket, which it cannot forge.
+     *
+     * The same list drives `clientAddress()` in `net/address.ts`, so the two cannot disagree
+     * about who the caller is.
+     */
+    trustProxy: trustedProxies(),
     bodyLimit: 2 * 1024 * 1024,
   });
 

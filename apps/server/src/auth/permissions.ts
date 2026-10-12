@@ -849,6 +849,12 @@ export const SELF_REPAIR_REQUIREMENTS: Array<{ key: string; action: string }> = 
  * schedule would become editable by anyone who can rename the organisation.
  */
 export function settingScreen(settingKey: string): string {
+  /*
+    The callback ingest allowlist decides which addresses may file attendance without a
+    credential, so it belongs to whoever manages terminals — not to whoever can rename the
+    organisation, which is where the fallthrough would have put it.
+  */
+  if (settingKey.startsWith('ingest.')) return 'settings.devices';
   if (settingKey.startsWith('retention.')) return 'settings.maintenance';
   if (settingKey.startsWith('maintenance.')) return 'settings.maintenance';
   if (settingKey.startsWith('logging.')) return 'settings.maintenance';

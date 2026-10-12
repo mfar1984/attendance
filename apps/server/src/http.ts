@@ -1,6 +1,8 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
+import { clientAddress } from './net/address.js';
+
 /** An error with an intended HTTP status and a message safe to show a user. */
 export class HttpError extends Error {
   constructor(
@@ -112,13 +114,16 @@ function stripDefault(field: z.ZodTypeAny): z.ZodTypeAny {
   }
 }
 
-/** Best-effort client address, honouring a proxy header when present. */
+/**
+ * The address a request came from.
+ *
+ * Delegates to the one resolver, which reads a forwarded header only from a configured proxy.
+ * This used to take the leftmost `X-Forwarded-For` entry from any peer, so every login audit row
+ * recorded an address the caller chose. See `net/address.ts`.
+ */
 export function clientIp(request: FastifyRequest): string | undefined {
-  const forwarded = request.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0]?.trim();
-  }
-  return request.ip;
+  const address = clientAddress(request);
+  return address.length > 0 ? address : undefined;
 }
 
 export function userAgent(request: FastifyRequest): string | undefined {

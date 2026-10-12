@@ -24,6 +24,7 @@ import { loadEnv } from '../env.js';
 import { clientIp, conflict, forUpdate, notFound, parseBody, unauthorized } from '../http.js';
 import { recordActivity } from '../logging/activity.js';
 import { addressAllowedByList, invalidateMaintenance } from '../maintenance/mode.js';
+import { invalidateIngestAllowList } from '../ingest/iclock.js';
 import { MINIMUM_RAW_EVENT_MONTHS, previewPurge, runPurge } from '../retention/purge.js';
 import { brandingStatus } from './branding.js';
 import { assertPasswordAcceptable, securityPolicy } from '../security/policy.js';
@@ -49,6 +50,14 @@ const SETTING_KEYS = [
    * disk and then fetch it. The upload route is their only writer, and it derives the
    * path itself rather than accepting one.
    */
+  /**
+   * Source addresses allowed to file attendance on the callback ingest path.
+   *
+   * TA Push carries no credential — the identity is a serial number printed on a sticker — so on
+   * a public address this list is the only thing between the endpoint and forged attendance that
+   * can never be deleted. Private sources are trusted without it, which is the standalone shape.
+   */
+  'ingest.callbackAllowIps',
   'attendance.driftWarnSeconds',
   'attendance.dedupWindowSeconds',
   'retention.rawEventMonths',
@@ -337,6 +346,22 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
      * deliberate change waits. Turning maintenance mode off is the action of somebody who
      * wants the system back now, and a toggle that appears not to work gets clicked again.
      */
+    /*
+      Same reasoning for the ingest allowlist, and it is logged at `warn` for the same reason the
+      maintenance toggle is: this list decides which addresses may file attendance with no
+      credential, so a change to it is never routine.
+    */
+    if (body.values['ingest.callbackAllowIps'] !== undefined) {
+      invalidateIngestAllowList();
+      await recordActivity({
+        request,
+        action: 'ingest.allowList',
+        category: 'devices',
+        level: 'warn',
+        detail: `senarai putih ingest callback: ${String(body.values['ingest.callbackAllowIps']) || '(kosong — sumber awam ditolak)'}`,
+      });
+    }
+
     if (Object.keys(body.values).some((key) => key.startsWith('maintenance.'))) {
       invalidateMaintenance();
 
