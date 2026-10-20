@@ -180,12 +180,34 @@ function isTrustedProxy(address: string): boolean {
  * than over-trusts.
  */
 export function clientAddress(request: FastifyRequest): string {
+  return resolveClientAddress(request).address;
+}
+
+/**
+ * The address, and whether it was asserted by a header rather than observed on the socket.
+ *
+ * The distinction matters wherever a private address is treated as trustworthy on its own. A
+ * socket address cannot be forged: a caller that appears to be on 192.168.0.0/16 genuinely is,
+ * because that is where the packets came from. A **forwarded** private address is a different
+ * claim entirely — a private address cannot route to a public edge, so one arriving in a header
+ * was made up.
+ *
+ * That gap was live: the callback ingest guard let any private address through without consulting
+ * the allow list, so one header closed the whole thing —
+ * `CF-Connecting-IP: 192.168.1.50` — with no knowledge of what the list contained.
+ */
+export function resolveClientAddress(request: FastifyRequest): {
+  address: string;
+  forwarded: boolean;
+} {
   const peer = peerAddress(request);
-  if (!isTrustedProxy(peer)) return peer;
+  if (!isTrustedProxy(peer)) return { address: peer, forwarded: false };
 
   const header = request.headers[loadEnv().CLIENT_IP_HEADER.toLowerCase()];
   const raw = Array.isArray(header) ? header.join(',') : header;
-  if (typeof raw !== 'string' || raw.trim().length === 0) return peer;
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
+    return { address: peer, forwarded: false };
+  }
 
   const chain = raw
     .split(',')
@@ -195,9 +217,19 @@ export function clientAddress(request: FastifyRequest): string {
   for (let index = chain.length - 1; index >= 0; index -= 1) {
     const candidate = chain[index];
     if (candidate === undefined) continue;
-    if (!isTrustedProxy(candidate)) return candidate;
+    if (!isTrustedProxy(candidate)) return { address: candidate, forwarded: true };
   }
 
-  // Every hop named itself a trusted proxy, so there is no client address in here to find.
-  return peer;
+  /*
+    Every hop named itself a trusted proxy, so there is no client address in here to find.
+
+    Still reported as forwarded, and that distinction is the difference between a hole and a
+    closed door. A header **was** present and could not be resolved, so this address is asserted
+    rather than observed — claiming otherwise let `CF-Connecting-IP: 127.0.0.1` sent straight at
+    the origin resolve to loopback, which the callback ingest guard then waved through as a
+    private source needing no allow list.
+
+    A genuine local caller sends no such header at all and returns above, unaffected.
+  */
+  return { address: peer, forwarded: true };
 }

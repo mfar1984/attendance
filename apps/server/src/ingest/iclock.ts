@@ -8,7 +8,7 @@ import { decodeAttlogLine } from '@attendance/terminal-drivers';
 import { orgOffsetMinutes } from '../devices/drivers/zkteco/driver.js';
 import { logger } from '../logger.js';
 import { addressAllowedByList } from '../maintenance/mode.js';
-import { clientAddress, isPrivateAddress } from '../net/address.js';
+import { isPrivateAddress, resolveClientAddress } from '../net/address.js';
 import { storeEvents } from './store.js';
 
 /**
@@ -351,7 +351,7 @@ async function resolveBySerial(
   reply: FastifyReply,
 ): Promise<Device | null> {
   stats.lastContactAt = new Date();
-  stats.lastSourceAddress = clientAddress(request);
+  stats.lastSourceAddress = resolveClientAddress(request).address;
 
   /*
     The address check comes before the serial, and before any database work.
@@ -419,16 +419,30 @@ export function invalidateIngestAllowList(): void {
 }
 
 async function sourceAllowed(request: FastifyRequest): Promise<boolean> {
-  if (isPrivateAddress(request.ip)) return true;
+  const source = resolveClientAddress(request);
+
+  /*
+    The automatic pass applies to the socket only.
+
+    A peer that appears to be on a private range genuinely is, because that is where the packets
+    came from — that is the standalone shape, and it needs no configuration. A **forwarded**
+    private address is fabricated: a private address cannot route to a public edge. Granting it
+    the same pass meant one header opened this endpoint with no knowledge of the allow list at
+    all, which is a worse hole than the one the list was added to close.
+
+    A proxy genuinely sitting on a LAN still works; its terminals' addresses just have to be
+    listed, like any other address somebody is asking us to believe.
+  */
+  if (!source.forwarded && isPrivateAddress(source.address)) return true;
 
   if (allowCache === null || Date.now() - allowCache.at >= 5000) {
     const row = await db().setting.findUnique({ where: { key: 'ingest.callbackAllowIps' } });
     allowCache = { at: Date.now(), value: typeof row?.value === 'string' ? row.value : '' };
   }
 
-  // An empty list allows nothing from a public address, which is the safe reading of "not
-  // configured yet" for an endpoint with no credential.
-  return addressAllowedByList(clientAddress(request), allowCache.value);
+  // An empty list allows nothing beyond the LAN, which is the safe reading of "not configured
+  // yet" for an endpoint with no credential.
+  return addressAllowedByList(source.address, allowCache.value);
 }
 
 /**
