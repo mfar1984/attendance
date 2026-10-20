@@ -5195,15 +5195,19 @@ export const LABELS = {
   'device.editor.field.agent.direct': 'Pelayan ini terus (LAN)',
   'device.editor.field.agent.hint':
     'Pilih connector untuk terminal yang pelayan ini tidak boleh hubungi terus. Bacaan langsung berhenti berfungsi selepas itu — status dan jam datang dari laporan connector — dan tulisan dibariskan dan bukan serta-merta.',
-  /**
-   * Said on the form rather than discovered at the site.
+  /*
+   * No `device.editor.field.agent.isapiOnly` any more.
    *
-   * The agent's `buildDriver` refuses a non-ISAPI terminal with a log line nobody at the cloud
-   * reads, so assigning one here would be accepted and then ignored: a site that looks configured
-   * and records nothing.
+   * It said a connector drives Hikvision ISAPI only, which was true until 0.3.0 and is now the
+   * opposite of the point: one build answers both delivery paths, and a ZKTeco terminal behind a
+   * connector is the arrangement that keeps it off the internet entirely. The control is offered
+   * for every protocol, so there is nothing left for the sentence to explain.
+   *
+   * What replaced it is a comparison rather than a rule in the form: the connector reports which
+   * protocols its build drives, and `agent.mismatch.note` names any terminal assigned to a build
+   * that cannot. That stays correct for a protocol added later, which a sentence naming one vendor
+   * could not.
    */
-  'device.editor.field.agent.isapiOnly':
-    'Connector memandu Hikvision ISAPI sahaja, jadi terminal ini mesti dicapai terus oleh pelayan.',
 
   // -------------------------------------------------------------------------
   // Tetapan › Senarai Peranti › Connector
@@ -5225,14 +5229,15 @@ export const LABELS = {
   'agent.error.reissue': 'Gagal menjana token pendaftaran',
 
   /**
-   * Stated on the screen, not only in a steering document.
+   * What a connector is, said where somebody is creating one.
    *
-   * A non-ISAPI terminal assigned to a connector is accepted by the cloud and refused by the
-   * agent's `buildDriver`, so the site looks configured and records nothing. That failure is
-   * invisible from here unless the screen says so before somebody assigns one.
+   * Replaces a line that said it drives Hikvision ISAPI only. That is no longer true, and the
+   * sentence was also the wrong shape: it stated a rule the form was enforcing, where the real
+   * arrangement is that the build reports what it drives and the screen compares. So this says what
+   * a connector is for, and the comparison says when one is wrong.
    */
-  'agent.note.isapiOnly':
-    'Connector memandu Hikvision ISAPI sahaja. Terminal jenama lain boleh ditugaskan kepadanya di sini dan akan diabaikan di tapak, jadi tapak itu kelihatan sihat sambil merekod sifar.',
+  'agent.note.protocols':
+    'Satu connector melayan kedua-dua Hikvision ISAPI dan ZKTeco TA Push, jadi satu tapak bercampur ialah satu connector. Selepas ia mendaftar, tab ini menamakan mana-mana terminal yang ditugaskan kepada binaan yang tidak boleh memandunya.',
 
   'agent.column.name': 'Nama tapak',
   'agent.column.devices': 'Terminal',
@@ -5365,6 +5370,34 @@ export const LABELS = {
   'agent.detail.lastSeen': 'Dilihat',
   'agent.detail.devices': 'Terminal dilayan',
   'agent.detail.queued': 'Arahan dalam giliran',
+
+  /**
+   * What the running build says it can drive.
+   *
+   * Three states, and `unreported` is not a softer `none`. A connector on code before 0.3.0 sends
+   * nothing, so "tiada" there would read as a site that cannot drive anything — a broken
+   * installation rather than an old one, which sends somebody to the wrong repair.
+   *
+   * `unknown` is for a protocol this screen has no name for, which happens when the connector is
+   * newer than the cloud. The code is shown rather than hidden, because it is what the devices
+   * screen stores and what somebody will search for.
+   */
+  'agent.detail.protocols': 'Protokol dipandu',
+  'agent.detail.protocols.unreported':
+    'belum dilaporkan — binaan sebelum 0.3.0 tidak melaporkannya',
+  'agent.detail.protocols.none': 'tiada',
+  'agent.detail.protocols.unknown': '{protocol}',
+
+  /**
+   * A terminal assigned to a connector whose build has no driver for it.
+   *
+   * States the symptom, because the symptom is indistinguishable from hardware failure: the
+   * connector leaves the terminal off its roster, so its pushes are discarded as coming from a unit
+   * it does not serve, and the devices screen shows it offline. Somebody would drive to the site to
+   * inspect a terminal that is working.
+   */
+  'agent.mismatch.note':
+    '{count} terminal di tapak ini menggunakan protokol yang binaan connector itu tidak boleh pandu: {terminals}. Terminal itu tidak akan melaporkan apa-apa dan akan kelihatan offline — itu bukan terminal rosak. Kemas kini connector, atau pindahkan terminal itu.',
   'agent.detail.never': 'belum pernah',
 
   'agent.update.action': 'Kemas kini connector',

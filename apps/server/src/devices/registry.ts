@@ -48,7 +48,25 @@ export function driverFor(device: Device): TerminalDriver {
 
 function build(device: Device): TerminalDriver {
   /**
-   * A terminal behind an on-site connector is not ours to reach, whatever it speaks.
+   * A callback terminal is driven the same way whoever is holding the wire.
+   *
+   * Checked before the connector test, unlike every other protocol. TA Push has the terminal
+   * collecting its own work: a write is a row in `device_commands` carrying a protocol command
+   * string, and the unit asks for it on its next poll. That is true for a direct installation and
+   * for one behind a connector — only **who hands the string over** differs, and the connector is
+   * a relay rather than an executor there.
+   *
+   * Routing it through `AgentProxyDriver` would queue neutral JSON arguments for a driver the
+   * connector would then try to execute itself, against a protocol with nothing to call. The
+   * queue would fill with work the terminal can never be given.
+   *
+   * `AgentCommandItem.payload` is documented for exactly this: one column, two readers, with the
+   * kind and the device's protocol saying which.
+   */
+  if (device.protocol === DeviceProtocol.taPush) return new ZktecoTaPushDriver(device);
+
+  /**
+   * A terminal behind an on-site connector is not ours to reach, whatever else it speaks.
    *
    * Checked before the protocol switch, because the protocol is still ISAPI — it is the same unit
    * speaking the same language, and only the thing holding the socket has moved. Dispatching on
@@ -62,20 +80,6 @@ function build(device: Device): TerminalDriver {
   switch (device.protocol) {
     case DeviceProtocol.isapi:
       return new HikvisionDriver(isapiClient(device));
-
-    case DeviceProtocol.taPush:
-      /**
-       * Built from the device row rather than a connection.
-       *
-       * There is nothing to connect to: this protocol has the terminal calling us. The driver
-       * needs the record because every read it can answer is served from what the unit last
-       * reported, and because its capability list depends on the firmware version stored there.
-       *
-       * Which also means the cache fingerprint has to include the fields the capabilities are
-       * derived from — otherwise a unit that reports a newer firmware on its next handshake
-       * would keep the driver that declared face upload unavailable.
-       */
-      return new ZktecoTaPushDriver(device);
 
     default:
       /**

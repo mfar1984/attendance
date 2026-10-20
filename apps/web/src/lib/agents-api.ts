@@ -44,6 +44,30 @@ export interface AgentRow {
   buildStatus: string;
 
   /**
+   * Protocols the running build says it can drive.
+   *
+   * Null until the connector has reported since the server started — which is a third state, not
+   * an empty list. A build before 0.3.0 reports nothing at all, and rendering that as "drives
+   * nothing" would mark every terminal at every working site as unsupported.
+   *
+   * There is no connector "type" to set. One build answers both delivery paths and the roster
+   * picks a driver per assignment, so a mixed site is one connector — and a type chosen in a form
+   * would be a second source of truth beside each terminal's own protocol, free to disagree with
+   * it. This is the report instead.
+   */
+  protocols: string[] | null;
+
+  /**
+   * Terminals assigned here whose protocol this build cannot drive.
+   *
+   * The actionable half, and the only reason the comparison exists: the connector leaves such a
+   * terminal off its roster, so the unit delivers nothing and reads exactly like a broken one.
+   * Empty while the connector has not reported, because a warning there would send somebody to
+   * fix a site that is working.
+   */
+  protocolMismatch: Array<{ id: number; name: string; protocol: string }>;
+
+  /**
    * Set while a self-update is waiting to be collected. Cleared when the connector reports the
    * target build, and also when it reports a failure — a failed attempt is over, not waiting.
    */
@@ -63,6 +87,14 @@ export const AGENT_BUILD_LABELS: Record<string, LabelKey> = {
   outdated: 'agent.build.outdated',
   unknown: 'agent.build.unknown',
 };
+
+/*
+ * Protocol names come from `PROTOCOL_LABELS` in `operations-api.ts`, not from a copy here.
+ *
+ * The connector detail renders the same vocabulary the terminal rows do, and a second map would be
+ * a second answer to "what is this protocol called" — with the one that drifted being the one a
+ * reader compares against the other tab.
+ */
 
 /**
  * The reply to creating or reissuing. Carries the token, and nothing else does.

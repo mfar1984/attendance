@@ -224,6 +224,27 @@ export const agentHeartbeatSchema = z.strictObject({
    * sent a sentence of their own, which is still accepted and shown as written.
    */
   updateError: z.string().max(UPDATE_ERROR_MAX).nullable().optional(),
+
+  /**
+   * Protocols this build can actually drive.
+   *
+   * Derived from the code rather than typed by an operator, which is the whole point. A
+   * connector "type" chosen in a form would be a second source of truth beside `Device.protocol`,
+   * free to disagree with the terminal assigned to it — and the disagreement would present as a
+   * site reading healthy while recording nothing, which is the failure this field exists to make
+   * impossible.
+   *
+   * One build serves a mixed site: the listener answers both paths at once and the roster picks a
+   * driver per assignment. So there is nothing to choose, only something to report.
+   *
+   * **Optional, and that matters for the rollout.** This schema is `strictObject`, so a connector
+   * sending a field an older cloud does not know is rejected — and a rejected heartbeat is
+   * retried, so every one after it is rejected too and the site goes dark. Optional means an
+   * older connector still validates here; the cloud must still be deployed first, which is
+   * already the documented order and is separately enforced by `selfupdate` refusing to build a
+   * version the cloud did not ask for.
+   */
+  protocols: z.array(z.string().max(32)).max(8).optional(),
 });
 
 export type AgentHeartbeat = z.infer<typeof agentHeartbeatSchema>;
@@ -286,8 +307,16 @@ export type AgentCommandOutcome = z.infer<typeof agentCommandOutcomeSchema>;
  * minutes a working terminal's push carried the nonce that had just expired, and the journal read
  * "Refused a terminal push" for a retry that succeeded a moment later. The first release
  * delivered by the update button rather than by hand.
+ *
+ * 0.3.0 — ZKTeco TA Push. The connector answers `/iclock/*` as well as the Hikvision push path, so
+ * a callback terminal posts to the Pi on its LAN and never needs a route to the internet. Writes
+ * are relayed rather than executed, because on that protocol the terminal collects its own work.
+ * One build serves a mixed site; `protocols` on the heartbeat is what the cloud compares against
+ * each assignment. **Deploy the cloud first** — the reply now carries the organisation's UTC
+ * offset, and a connector that never receives one refuses to decode attendance rather than
+ * guessing the zone.
  */
-export const AGENT_VERSION = '0.2.3';
+export const AGENT_VERSION = '0.3.0';
 
 /**
  * What a connector reports about one terminal's own settings.
@@ -399,6 +428,27 @@ export interface AgentHeartbeatReply {
    * clock at all.
    */
   now: string;
+
+  /**
+   * The organisation's current offset from UTC, in minutes east.
+   *
+   * Sent for the same reason `now` is, and refused the same way when absent. A callback terminal
+   * reports its attendance as `YYYY-MM-DD HH:mm:ss` with nothing to say which zone that is, so
+   * decoding a row needs an offset — and a connector that used its own would shift every punch at
+   * a site by whole hours whenever the Pi was left on UTC. That reads as staff arriving at dawn
+   * rather than as a configuration mistake, and raw events have no delete path.
+   *
+   * A number rather than a zone name, and refreshed on every beat rather than cached. Computed
+   * through `Intl` on the cloud, so a zone that observes daylight saving stays correct and the
+   * connector picks the change up within one heartbeat — without a second copy of the time
+   * arithmetic living on the Pi.
+   *
+   * Optional, because an older cloud does not send it. A connector that has never received one
+   * refuses to decode rather than guessing; the terminal keeps the records and re-sends, which is
+   * what `ErrorDelay` in the handshake options is for.
+   */
+  timeZoneOffsetMinutes?: number;
+
   /** Terminals this agent serves, with what it needs to reach them. */
   devices: AgentDeviceAssignment[];
 

@@ -13,6 +13,7 @@ import { db, jsonSafe } from '../db.js';
 import { loadEnv } from '../env.js';
 import { conflict, notFound, parseBody } from '../http.js';
 import { logger } from '../logger.js';
+import { agentProtocols, forgetAgentProtocols, supportsProtocol } from './agent-capabilities.js';
 import {
   ENROL_TOKEN_TTL_MS,
   issueAgentKey,
@@ -103,7 +104,7 @@ export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
 
       const devices = await db().device.findMany({
         where: { agentId: { not: null } },
-        select: { id: true, agentId: true },
+        select: { id: true, agentId: true, name: true, protocol: true, active: true },
       });
 
       const queueByAgent = new Map<number, number>();
@@ -111,6 +112,27 @@ export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
         const owner = devices.find((device) => device.id === row.deviceId)?.agentId;
         if (owner === null || owner === undefined) continue;
         queueByAgent.set(owner, (queueByAgent.get(owner) ?? 0) + row._count._all);
+      }
+
+      /**
+       * Terminals assigned to a connector whose build has no driver for their protocol.
+       *
+       * The one failure this comparison exists to catch, and it is silent otherwise: the connector
+       * leaves the terminal off its roster, so pushes are discarded as coming from a unit it does
+       * not serve — and the device simply never reports. Nothing on any screen would say why.
+       *
+       * Only computed where the connector has actually told us what it drives. `unknown` is left
+       * out on purpose: a connector on older code reports nothing, and listing every terminal at
+       * every existing site as a problem is a screen of warnings about something that works.
+       */
+      const mismatched = new Map<number, Array<{ id: number; name: string; protocol: string }>>();
+      for (const device of devices) {
+        if (device.agentId === null || !device.active) continue;
+        if (supportsProtocol(device.agentId, device.protocol) !== 'unsupported') continue;
+
+        const list = mismatched.get(device.agentId) ?? [];
+        list.push({ id: device.id, name: device.name, protocol: device.protocol });
+        mismatched.set(device.agentId, list);
       }
 
       return jsonSafe(
@@ -140,6 +162,16 @@ export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
                 : agent.version === AGENT_VERSION
                   ? 'current'
                   : 'outdated',
+            /**
+             * What the running build says it can drive, and what it has been given anyway.
+             *
+             * Null until the connector has reported, which is a state the screen says out loud
+             * rather than treating as "none" — see `agent-capabilities.ts`. The mismatch list is
+             * the actionable half: each entry is a terminal that will deliver nothing until either
+             * the connector is updated or the terminal is moved.
+             */
+            protocols: agentProtocols(agent.id)?.protocols ?? null,
+            protocolMismatch: mismatched.get(agent.id) ?? [],
           }),
         ),
       );
@@ -365,6 +397,9 @@ export async function agentAdminRoutes(app: FastifyInstance): Promise<void> {
       }
 
       await db().deviceAgent.delete({ where: { id: agent.id } });
+      // Autoincrement does not reuse ids, but the in-memory map outlives the row — and a stale
+      // entry would answer for whatever took its place.
+      forgetAgentProtocols(agent.id);
 
       logger().info(
         { agentId: agent.id, agentKey: agent.agentKey, name: agent.name },

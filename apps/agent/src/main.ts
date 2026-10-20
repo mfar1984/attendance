@@ -1,6 +1,12 @@
 import type { AgentHeartbeat } from '@attendance/shared';
 
-import { clockIsTrusted, localDriftSeconds, noteCloudTime } from './clock.js';
+import {
+  clockIsTrusted,
+  localDriftSeconds,
+  noteCloudTime,
+  noteOrgOffsetMinutes,
+  orgOffsetMinutes,
+} from './clock.js';
 import { Cloud } from './cloud.js';
 import { assertSecureCloud, loadConfig } from './config.js';
 import { Executor } from './executor.js';
@@ -9,7 +15,8 @@ import { resolveLanHost } from './lan.js';
 import { createListener } from './listener.js';
 import { logger } from './logging.js';
 import { Puller } from './puller.js';
-import { Roster } from './roster.js';
+import { Relay } from './relay.js';
+import { Roster, SUPPORTED_PROTOCOLS } from './roster.js';
 import { selfUpdate } from './selfupdate.js';
 import { Snapshotter } from './snapshots.js';
 import { Spool } from './spool.js';
@@ -39,6 +46,14 @@ const spool = new Spool(config);
 const cloud = new Cloud(config);
 const state = new SiteState();
 const roster = new Roster();
+/**
+ * Work for terminals that collect it themselves.
+ *
+ * In memory, which is safe because the durability is the cloud's: a command stays `sent` there
+ * until an outcome is reported, and anything unreported is revived and offered again. A second
+ * durable queue on the Pi would be a second place for the same fact to live.
+ */
+const relay = new Relay();
 
 /**
  * First boot: exchange the installer's token for a credential.
@@ -69,9 +84,9 @@ if (!cloud.enrolled) {
 
 const puller = new Puller(config, roster, spool, state);
 const forwarder = new Forwarder(config, cloud, spool);
-const executor = new Executor(cloud, roster, config);
+const executor = new Executor(cloud, roster, config, relay);
 const snapshotter = new Snapshotter(cloud, roster);
-const { app, stats } = createListener(config, roster, spool, state);
+const { app, stats } = createListener(config, roster, spool, state, relay, cloud);
 
 /**
  * Assigned once the timers are created, and declared here so shutdown can always clear them.
@@ -150,6 +165,15 @@ async function heartbeat(): Promise<void> {
      * an update was requested and nothing else.
      */
     ...(updateError === null ? {} : { updateError }),
+    /*
+     * What this build can drive, read from the code rather than chosen by anybody.
+     *
+     * A connector "type" set in a form would be a second source of truth beside `Device.protocol`
+     * and free to disagree with it — and the disagreement presents as a site reading healthy while
+     * recording nothing. Reporting instead lets the cloud compare and flag the one case that is a
+     * real mistake: a terminal assigned to a connector whose build has no driver for its protocol.
+     */
+    protocols: [...SUPPORTED_PROTOCOLS],
   };
 
   const result = await cloud.heartbeat(payload);
@@ -173,8 +197,26 @@ async function heartbeat(): Promise<void> {
     log.warn({ now: result.value.now }, 'Cloud reported a clock value that could not be parsed');
   }
 
+  /*
+   * The organisation's zone, relayed the same way the clock is.
+   *
+   * A callback terminal reports attendance as local wall-clock with no zone attached, so reading
+   * one needs this — and a connector that used the Pi's own offset would file a Malaysian morning
+   * against the previous evening whenever the machine was left on UTC. An older cloud sends
+   * nothing, which leaves the offset unknown and the callback path refusing rather than guessing.
+   */
+  noteOrgOffsetMinutes(result.value.timeZoneOffsetMinutes);
+
   roster.replace(result.value.devices);
-  state.retain(result.value.devices.map((device) => device.deviceId));
+
+  const served = result.value.devices.map((device) => device.deviceId);
+  state.retain(served);
+  /*
+   * Relayed work for a terminal that has moved to another connector goes with it. Left behind, it
+   * would be held here forever — and held by the other connector too, so the first outcome to
+   * arrive would be reported twice.
+   */
+  relay.retain(served);
 
   const drift = localDriftSeconds();
   if (drift !== null && Math.abs(drift) > 60) {
@@ -278,6 +320,12 @@ log.info(
     devices: roster.all().length,
     spooled: spool.count(),
     clockTrusted: clockIsTrusted(),
+    /*
+     * Logged because a null here is the one condition that stops a callback terminal's attendance
+     * being read, and it means the cloud is older than this build rather than anything at the site.
+     */
+    orgOffsetMinutes: orgOffsetMinutes(),
+    protocols: SUPPORTED_PROTOCOLS,
   },
   'Connector started',
 );

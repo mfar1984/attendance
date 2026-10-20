@@ -65,6 +65,13 @@ export class Snapshotter {
     this.stats.sweeps += 1;
 
     for (const entry of this.roster.all()) {
+      /*
+        Nothing to sweep on a terminal this connector does not dial. A callback unit reports
+        nothing on request, so there is no settings reading to take — the editor shows the fields
+        as unsupported by the protocol rather than as a read that failed.
+      */
+      if (entry.driver === null) continue;
+
       const snapshots = await this.collect(entry.driver, entry.assignment.doorNo);
       if (snapshots.length === 0) continue;
 

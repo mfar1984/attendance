@@ -15,6 +15,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import { db } from '../db.js';
 import { decryptSecret } from '../crypto.js';
+import { noteAgentProtocols } from '../devices/agent-capabilities.js';
 import {
   agentDevice,
   agentDevices,
@@ -23,6 +24,7 @@ import {
   verifyAgentSecret,
   type AgentIdentity,
 } from '../devices/agents.js';
+import { orgOffsetMinutes } from '../devices/drivers/zkteco/driver.js';
 import {
   recordOutcome,
   takePendingForDevices,
@@ -242,9 +244,29 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
        */
       const update = await settleUpdate(agent.id, body.version, body.updateError ?? null);
 
+      /**
+       * What this build can drive, held in memory rather than stored.
+       *
+       * It is a fact about the code currently running at the site, so the only honest value is the
+       * one from the last heartbeat — a column would survive a downgrade and keep claiming a
+       * capability the site no longer has. See `agent-capabilities.ts` for why a connector has no
+       * type field at all.
+       */
+      noteAgentProtocols(agent.id, body.protocols);
+
       reply.header('cache-control', 'no-store');
       return {
         now: new Date().toISOString(),
+        /**
+         * The organisation's offset, sent for the same reason `now` is.
+         *
+         * A callback terminal reports attendance as local wall-clock with no zone attached, so the
+         * connector needs this to read one — and it must not fall back to the Pi's own offset,
+         * which on a machine left at UTC would file a Malaysian morning against the previous
+         * evening. Computed here through `Intl`, so a zone observing daylight saving stays correct
+         * and the site picks a transition up within one heartbeat.
+         */
+        timeZoneOffsetMinutes: orgOffsetMinutes(),
         devices: await rosterFor(agent.id),
         ...(update.requested ? { updateRequested: true } : {}),
         targetVersion: AGENT_VERSION,

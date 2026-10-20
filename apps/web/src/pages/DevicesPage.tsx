@@ -70,7 +70,6 @@ import {
   lookupsApi,
 } from '../lib/operations-api';
 import {
-  DeviceProtocol,
   DeviceVendor,
   VENDOR_PROTOCOLS,
   defaultProtocolFor,
@@ -807,13 +806,20 @@ function DeviceDialog({
    */
   const needsCredentials = usesStoredCredentials(protocol);
 
-  /**
-   * Only ISAPI can be served by a connector, so the choice is withdrawn rather than refused later.
+  /*
+   * No protocol gate on the connector choice, and that is a change.
    *
-   * The agent's `buildDriver` skips anything else with a log line nobody at the cloud reads, which
-   * would leave a site looking configured and recording nothing.
+   * It used to be offered for ISAPI only, because that was the only protocol a connector could
+   * drive. From 0.3.0 one build serves both — it answers the callback path as well, relaying work
+   * for a terminal that collects its own — so the gate would now withhold the arrangement that
+   * exists precisely to keep a ZKTeco unit off the internet.
+   *
+   * Nothing replaces it with a second list, deliberately. Which protocols a build drives is a fact
+   * about the code running at that site, and a copy of it here would be a copy free to drift from
+   * the connector it describes. The connector reports what it drives, and the Connector tab names
+   * any terminal assigned to a build that cannot — which is also the honest answer for a protocol
+   * added later.
    */
-  const agentCapable = protocol === DeviceProtocol.isapi;
 
   useEffect(() => {
     void lookupsApi
@@ -825,16 +831,6 @@ function DeviceDialog({
       .then(setAgents)
       .catch(() => undefined);
   }, []);
-
-  /*
-   * Cleared when the protocol changes away from ISAPI.
-   *
-   * Otherwise switching vendor after picking a connector would submit an assignment the agent
-   * cannot drive, from a control that is no longer on screen to explain it.
-   */
-  useEffect(() => {
-    if (!agentCapable) setAgentId('');
-  }, [agentCapable]);
 
   async function submit(): Promise<void> {
     setBusy(true);
@@ -856,7 +852,7 @@ function DeviceDialog({
         locationId: locationId === '' ? null : Number(locationId),
         // Omitted when direct, so a new row takes the server's own default rather than being told
         // null by a form that had nothing to say about it.
-        ...(agentCapable && agentId !== '' ? { agentId: Number(agentId) } : {}),
+        ...(agentId === '' ? {} : { agentId: Number(agentId) }),
       });
 
       /*
@@ -1047,27 +1043,24 @@ function DeviceDialog({
           </SelectField>
 
           {/*
-            Who reaches this terminal. Offered only for ISAPI, because that is the only protocol a
-            connector can drive — and a control that accepts a choice nothing will honour is worse
-            than no control.
+            Who reaches this terminal. Offered for every protocol — see the note above `submit`
+            for why there is no longer a gate here.
           */}
-          {agentCapable && (
-            <SelectField
-              label={<T k="device.editor.field.agent" />}
-              value={agentId}
-              onChange={(event) => setAgentId(event.target.value)}
-              hint={<T k="device.editor.field.agent.hint" />}
-            >
-              <option value="">{t('device.editor.field.agent.direct')}</option>
-              {agents.map((row) => (
-                <option key={row.id} value={String(row.id)}>
-                  {row.status === 'active'
-                    ? row.name
-                    : `${row.name} — ${t(AGENT_STATUS_LABELS[row.status] ?? 'agent.status.pending')}`}
-                </option>
-              ))}
-            </SelectField>
-          )}
+          <SelectField
+            label={<T k="device.editor.field.agent" />}
+            value={agentId}
+            onChange={(event) => setAgentId(event.target.value)}
+            hint={<T k="device.editor.field.agent.hint" />}
+          >
+            <option value="">{t('device.editor.field.agent.direct')}</option>
+            {agents.map((row) => (
+              <option key={row.id} value={String(row.id)}>
+                {row.status === 'active'
+                  ? row.name
+                  : `${row.name} — ${t(AGENT_STATUS_LABELS[row.status] ?? 'agent.status.pending')}`}
+              </option>
+            ))}
+          </SelectField>
         </div>
 
         {needsCredentials && (
@@ -2068,6 +2061,12 @@ function ConnectorPanel(): ReactNode {
               // Colour before the status column is read.
               row.status === 'pending' && 'bg-amber-50/40',
               row.status === 'revoked' && 'bg-rose-50/40',
+              /*
+                An active connector holding a terminal it cannot drive is toned too, because
+                nothing in its own columns says so: status reads active, the terminal count reads
+                normal, and the unit it cannot serve is simply offline on the other tab.
+              */
+              row.status === 'active' && row.protocolMismatch.length > 0 && 'bg-amber-50/40',
             )}
           >
             <td className="px-5 py-2.5">
@@ -2366,6 +2365,30 @@ function AgentDetailDialog({
             }
             mono
           />
+          {/*
+            What the running build says it can drive.
+ 
+            Three states, like the build comparison above it: a list, an empty list, or no report at
+            all. Null is the connector on code older than 0.3.0, which said nothing — rendering that
+            as "none" would read as a broken site rather than an old one.
+          */}
+          <KeyValue
+            label={<T k="agent.detail.protocols" />}
+            value={
+              row.protocols === null ? (
+                <T k="agent.detail.protocols.unreported" />
+              ) : row.protocols.length === 0 ? (
+                <T k="agent.detail.protocols.none" />
+              ) : (
+                row.protocols
+                  .map((protocol) =>
+                    t(PROTOCOL_LABELS[protocol] ?? 'agent.detail.protocols.unknown', { protocol }),
+                  )
+                  .join(' · ')
+              )
+            }
+            mono={false}
+          />
           <KeyValue label={<T k="agent.detail.devices" />} value={row.devices} />
           <KeyValue label={<T k="agent.detail.queued" />} value={row.queued} />
           {/* When the installer actually ran, which is not the same as when the row was created. */}
@@ -2387,6 +2410,37 @@ function AgentDetailDialog({
             mono
           />
         </KeyValueList>
+
+        {/*
+          Terminals this build cannot drive, named here rather than as a strip over the list.
+
+          This is where the fix is: updating the connector is the usual answer, and the button for it
+          is a few lines below. A note over the table would state the problem a long way from the one
+          control that resolves it — and the list already carries one strip, for a connector that has
+          never enrolled.
+
+          The symptom is worth stating because it is indistinguishable from hardware failure: the
+          connector leaves such a terminal off its roster, so it delivers nothing and shows offline.
+        */}
+        {row.protocolMismatch.length > 0 && (
+          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+            <T
+              k="agent.mismatch.note"
+              vars={{
+                count: row.protocolMismatch.length,
+                terminals: row.protocolMismatch
+                  .map(
+                    (device) =>
+                      `${device.name} (${t(
+                        PROTOCOL_LABELS[device.protocol] ?? 'agent.detail.protocols.unknown',
+                        { protocol: device.protocol },
+                      )})`,
+                  )
+                  .join(', '),
+              }}
+            />
+          </PanelNote>
+        )}
 
         {/*
           The failure is shown above the note, because it is what the operator came back for.
@@ -2495,13 +2549,17 @@ function CreateAgentDialog({
         />
 
         {/*
-          The caveat sits at the moment of the decision, not under the table.
-          A non-ISAPI terminal assigned to a connector is accepted here and refused by the agent,
-          so the site reads as healthy and records nothing.
+          What a connector is, read at the moment one is being created.
+
+          Informational rather than a warning now. It used to say a connector drives ISAPI only and
+          carried an amber strip, because assigning anything else produced a site that looked
+          configured and recorded nothing. One build serves both protocols from 0.3.0, and the case
+          that is still wrong — a terminal on a build too old to drive it — is named against the
+          connector itself, where the update button is.
         */}
         <div className="pb-2">
-          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-            <T k="agent.note.isapiOnly" />
+          <PanelNote>
+            <T k="agent.note.protocols" />
           </PanelNote>
         </div>
 

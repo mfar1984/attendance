@@ -52,6 +52,39 @@ export function clockIsTrusted(): boolean {
 }
 
 /**
+ * The organisation's offset from UTC, as the cloud last reported it.
+ *
+ * Needed to read a callback terminal's timestamps, which are local wall-clock with no zone
+ * attached. Held here beside the cloud's instant because it is the same kind of fact and carries
+ * the same rule: the connector relays it and never sources it.
+ *
+ * The alternative was computing it on the Pi from a zone name, which means a second copy of the
+ * time arithmetic this project keeps in exactly one place — and the copy that drifts would be the
+ * one deciding which day a punch belongs to.
+ */
+let orgOffset: number | null = null;
+
+export function noteOrgOffsetMinutes(value: number | undefined): void {
+  /*
+   * A plausibility bound, not a validation. Real zones span UTC-12 to UTC+14; anything outside
+   * that is a field that arrived corrupted, and taking it would move every punch at the site.
+   */
+  if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 14 * 60) return;
+  orgOffset = Math.round(value);
+}
+
+/**
+ * The offset, or null when the cloud has never reported one.
+ *
+ * Null is a refusal in the same way `cloudNow()` returning null is. Defaulting to this machine's
+ * own offset here would undo the point: a Pi left on UTC would file a Malaysian morning against
+ * the previous evening, and raw events have no delete path.
+ */
+export function orgOffsetMinutes(): number | null {
+  return orgOffset;
+}
+
+/**
  * The current instant according to the cloud, or null if it has never been reported.
  *
  * Null is a refusal, not a fallback. Every caller must treat it as "do not write a clock", and
@@ -78,4 +111,5 @@ export function localDriftSeconds(): number | null {
 /** Test seam. Never called in normal operation. */
 export function resetClockForTests(): void {
   anchor = null;
+  orgOffset = null;
 }

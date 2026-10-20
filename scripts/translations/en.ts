@@ -6229,8 +6229,16 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
   'agent.error.create': 'Could not create the connector',
   'agent.error.reissue': 'Could not issue an enrolment token',
 
-  'agent.note.isapiOnly':
-    'A connector drives Hikvision ISAPI only. A terminal of another make can be assigned to one here and will be ignored on site, so that site looks healthy while recording nothing.',
+  'agent.note.protocols':
+    'One connector serves both Hikvision ISAPI and ZKTeco TA Push, so a mixed site is one connector. Once it has enrolled, this tab names any terminal assigned to a build that cannot drive it.',
+
+  'agent.detail.protocols': 'Protocols driven',
+  'agent.detail.protocols.unreported': 'not reported — a build before 0.3.0 did not report them',
+  'agent.detail.protocols.none': 'none',
+  'agent.detail.protocols.unknown': '{protocol}',
+
+  'agent.mismatch.note':
+    '{count} terminal at this site use a protocol this connector’s build cannot drive: {terminals}. Those terminals will report nothing and will appear offline — that is not a faulty terminal. Update the connector, or move the terminals.',
 
   'agent.column.name': 'Site name',
   'agent.column.devices': 'Terminals',
@@ -6350,8 +6358,6 @@ export const EN_LABELS_AGENT: Partial<Record<LabelKey, string>> = {
   'device.editor.field.agent.direct': 'This server directly (LAN)',
   'device.editor.field.agent.hint':
     'Choose a connector for a terminal this server cannot reach directly. Live reads stop working after that — status and clock come from the connector’s reports — and writes are queued rather than immediate.',
-  'device.editor.field.agent.isapiOnly':
-    'A connector drives Hikvision ISAPI only, so this terminal has to be reached directly by the server.',
 };
 
 /**

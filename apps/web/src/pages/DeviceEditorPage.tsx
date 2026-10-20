@@ -1,4 +1,4 @@
-import { DeviceProtocol, usesStoredCredentials, type LabelKey } from '@attendance/shared';
+import { usesStoredCredentials, type LabelKey } from '@attendance/shared';
 import {
   Activity,
   ArrowLeft,
@@ -523,14 +523,20 @@ function ConnectionTab({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  /**
-   * Only ISAPI can be served by a connector, and the form has to say so rather than accept it.
+  /*
+   * Every protocol may be assigned to a connector, and that is a change from 0.2.x.
    *
-   * `buildDriver` on the agent refuses anything else with a log line, so a ZKTeco terminal
-   * assigned here would be accepted by the cloud and ignored at the site — a site that reads as
-   * configured and records nothing, which is the failure this whole system exists to prevent.
+   * It used to be ISAPI only, because that was all a connector could drive. One build now serves
+   * both — it answers the callback path too, relaying work for a terminal that collects its own —
+   * so withholding the choice would withhold the arrangement that exists to keep a ZKTeco unit off
+   * the internet entirely.
+   *
+   * No replacement list lives here. Which protocols a build drives is a fact about the code at that
+   * site, and a copy of it in the browser is a copy free to drift from the connector it describes.
+   * The connector reports what it drives and the Connector tab names any terminal assigned to a
+   * build that cannot — which stays correct for a protocol added later, as a hardcoded list would
+   * not.
    */
-  const agentCapable = device.protocol === DeviceProtocol.isapi;
 
   useEffect(() => {
     void lookupsApi
@@ -547,12 +553,11 @@ function ConnectionTab({
    * cannot route.
    */
   useEffect(() => {
-    if (!agentCapable) return;
     void agentsApi
       .list()
       .then(setAgents)
       .catch(() => undefined);
-  }, [agentCapable]);
+  }, []);
 
   async function submit(): Promise<void> {
     setBusy(true);
@@ -591,10 +596,8 @@ function ConnectionTab({
           /*
             Sent explicitly as null for direct rather than omitted, because the server treats an
             absent `agentId` as "leave it alone" — which is what makes an assignment undoable.
-            Omitted entirely on a protocol no connector can drive, so the field cannot be set on a
-            terminal where the control was never shown.
           */
-          ...(agentCapable ? { agentId: agentId === '' ? null : Number(agentId) } : {}),
+          agentId: agentId === '' ? null : Number(agentId),
         },
       );
 
@@ -748,36 +751,24 @@ function ConnectionTab({
           */}
           <SettingRow
             label={<T k="device.editor.field.agent" />}
-            hint={
-              agentCapable ? (
-                <T k="device.editor.field.agent.hint" />
-              ) : (
-                <T k="device.editor.field.agent.isapiOnly" />
-              )
-            }
+            hint={<T k="device.editor.field.agent.hint" />}
           >
-            {agentCapable ? (
-              <SelectControl
-                label={t('device.editor.field.agent')}
-                value={agentId}
-                disabled={!editable}
-                onChange={(event) => setAgentId(event.target.value)}
-              >
-                {/* Not a `FacetSelect`: empty is a real choice here, not the absence of a filter. */}
-                <option value="">{t('device.editor.field.agent.direct')}</option>
-                {agents.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.status === 'active'
-                      ? row.name
-                      : `${row.name} — ${t(AGENT_STATUS_LABELS[row.status] ?? 'agent.status.pending')}`}
-                  </option>
-                ))}
-              </SelectControl>
-            ) : (
-              <Unsupported>
-                <T k="device.editor.field.agent.direct" />
-              </Unsupported>
-            )}
+            <SelectControl
+              label={t('device.editor.field.agent')}
+              value={agentId}
+              disabled={!editable}
+              onChange={(event) => setAgentId(event.target.value)}
+            >
+              {/* Not a `FacetSelect`: empty is a real choice here, not the absence of a filter. */}
+              <option value="">{t('device.editor.field.agent.direct')}</option>
+              {agents.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.status === 'active'
+                    ? row.name
+                    : `${row.name} — ${t(AGENT_STATUS_LABELS[row.status] ?? 'agent.status.pending')}`}
+                </option>
+              ))}
+            </SelectControl>
           </SettingRow>
         </SettingsGroup>
 

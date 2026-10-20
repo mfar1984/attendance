@@ -279,6 +279,11 @@ Tanpanya butang itu gagal pada setiap tapak dengan `git pull --ff-only`.
 cloud lama tidak ada, dapat 404, dan log amaran pada setiap pusingan. Tiada kerosakan, tetapi ia
 bunyi yang menghantar seseorang memburu bug yang tidak wujud.
 
+Dari **0.3.0 susunan itu bukan lagi kosmetik.** Balasan heartbeat membawa offset zon organisasi,
+dan connector menolak menyahkod kehadiran terminal callback tanpanya. Cloud lama tidak
+menghantarnya, jadi connector baharu di belakangnya akan merekod **sifar** daripada setiap unit
+ZKTeco — sambil Hikvision terus berfungsi, yang menjadikannya kelihatan seperti masalah peranti.
+
 Susunan itu juga yang menentukan **binaan mana** yang connector bina. Ia membandingkan
 `AGENT_VERSION` dalam kod yang baru diambil dengan versi yang cloud minta, dan enggan membina
 kalau berbeza. Repo yang sudah membawa connector lebih baharu sementara cloud masih pada binaan
@@ -470,11 +475,73 @@ mentah, tambah/buang pengguna, tambah/buang wajah, reboot, NTP, tetapan pintu da
 pembaca, mod kehadiran, mengosongkan slot push, menuding terminal ke connector
 sendiri, dan kemas kini connector sendiri.
 
-**Hikvision ISAPI sahaja.** Driver ZKTeco TA Push menulis melalui baris giliran
-cloud yang connector tiada akses, dan rentetan arahannya datang dari transkripsi
-pihak ketiga dan belum pernah disemak terhadap SenseFace sebenar. `roster.ts`
-menolaknya dengan baris log, bukan secara senyap — connector yang mendakwa
-menyokongnya akan menghasilkan tapak yang kelihatan sihat dan merekod sifar.
+**Dan dari 0.3.0: ZKTeco TA Push** — penerimaan kehadiran, handshake, dan penyerahan arahan
+melalui relay. Lihat bahagian di bawah.
+
+### ZKTeco TA Push melalui connector (0.3.0)
+
+Satu binaan melayan kedua-dua protokol. Tiada "jenis connector" untuk dipilih, dan itu
+disengajakan — lihat `devices/agent-capabilities.ts` untuk tiga sebabnya.
+
+Pendengar connector menjawab `/iclock/*` juga, jadi terminal ZKTeco menghantar ke Pi pada
+LANnya dan **tidak perlukan laluan ke internet sama sekali**. Itu keseluruhan tujuannya:
+`/iclock` pada cloud tiada kredensial — protokol itu tidak ada satu — jadi ia boleh kekal
+tertutup kepada awam.
+
+**Connector ialah relay, bukan executor, untuk protokol ini.** Terminal mengutip kerjanya
+sendiri, jadi tiada apa untuk connector panggil. `driverFor` pada cloud mengekalkan driver
+TA Push sebenar untuk unit begitu walaupun ia ditugaskan kepada connector — `payload` ialah
+rentetan arahan protokol, dihantar **verbatim** melalui `relay.ts`, dan hanya *siapa yang
+menyerahkannya* yang berbeza. Melaluikannya melalui `AgentProxyDriver` akan membariskan
+argumen JSON neutral untuk driver yang connector kemudian cuba jalankan sendiri, terhadap
+protokol yang tiada apa untuk dipanggil.
+
+Hasilnya `Executor` ada hasil keempat, `relayed`: **tiada apa dilaporkan kepada cloud.**
+Baris itu kekal `sent`, iaitu keadaan yang jujur — diserahkan, hasil belum diketahui — dan
+hasil sebenar datang dari terminal melalui `POST /iclock/devicecmd` kemudian. Melaporkan
+`done` di situ akan memberitahu operator wajah sudah didaftar pada saat rentetannya difailkan.
+
+**Baris giliran relay dalam memori, dan itu selamat.** Ketahanan ada pada cloud:
+`takePendingForDevices` menanda baris `sent`, dan sapuan lapuk menghidupkan semula apa-apa
+yang tidak pernah dilaporkan. `hold` mengenali arahan yang sudah dipegangnya, jadi tawaran
+kedua tidak menduakan yang pertama. Had 50 per peranti ada untuk unit yang **tidak**
+mengutip — tanpanya sepetang pendaftaran terhadap terminal yang dicabut akan membesar tanpa
+batas.
+
+**Offset zon datang dari cloud, bukan dari Pi.** `ATTLOG` melaporkan jam-dinding tempatan
+tanpa zon, jadi menyahkodnya perlukan offset — dan Pi yang ditinggalkan pada UTC akan
+memfailkan pagi Malaysia pada petang sebelumnya. `AgentHeartbeatReply.timeZoneOffsetMinutes`
+membawanya, dan connector **menolak menyahkod** tanpanya: `503`, dan terminal menawarkannya
+semula selepas `ErrorDelay`. Peraturan yang sama dengan jam — connector merelay masa, tidak
+pernah menjadi sumbernya.
+
+Sebab itu **cloud mesti di-deploy dahulu.** Sudah pun susunan yang didokumen; di sini ia
+mempunyai gigi, kerana connector 0.3.0 terhadap cloud lama tidak akan menerima offset dan
+tapak itu merekod sifar sambil kelihatan sihat.
+
+**Pendengar `/iclock/*` tiada kredensial.** Tiada yang mungkin — protokol mengenal pasti
+dirinya dengan `SN=` dalam query string, dan serial itu dicetak pada pelekat. Dua perbezaan
+daripada `/iclock` cloud: ia mengikat antara muka LAN pada rangkaian tapak itu sendiri, dan
+serial hanya diselesaikan terhadap **roster connector ini** — terminal yang ditugaskan ke
+tapak itu, bukan seluruh jadual peranti. Itu bukan sebab untuk meletakkan pendengar ini pada
+alamat awam.
+
+**Belum disahkan terhadap perkakasan.** Susunan lajur `ATTLOG` dan rentetan arahan TA Push
+datang dari transkripsi pihak ketiga, bukan daripada spesifikasi ZKTeco. Menerima scan
+berkemungkinan berfungsi; **menulis** (pendaftaran wajah) mungkin tidak. `protocol.ts`
+menyatakannya dengan lebih terperinci dan di situlah mana-mana pembetulan pergi — baris mentah
+disimpan dalam `payload`, jadi penyahkod yang dibetulkan boleh dijalankan ke atasnya tanpa
+perlu scan itu berlaku semula.
+
+**Apa yang skrin paparkan.** Connector melaporkan `protocols` pada setiap heartbeat; cloud
+memegangnya **dalam memori** (bukan lajur — lihat `agent-capabilities.ts`) dan `/api/agents`
+mendedahkannya bersama `protocolMismatch`: terminal yang ditugaskan kepada binaan yang tidak
+boleh memandunya. Itu satu-satunya kegagalan yang senyap — connector meninggalkannya daripada
+rosternya, jadi unit itu tidak melaporkan apa-apa dan terbaca **sama seperti terminal rosak**.
+Dinamakan dalam dialog butiran connector, di sebelah butang kemas kini yang membetulkannya.
+Connector yang belum melaporkan ialah `null`, bukan senarai kosong: binaan sebelum 0.3.0 tidak
+melaporkannya, dan menandakan setiap terminal di setiap tapak yang berfungsi sebagai masalah
+akan menghantar seseorang membetulkan yang bukan rosak.
 
 **Bacaan ialah snapshot, bukan langsung.** Connector menyapu terminalnya pada
 pemasa `SNAPSHOT_SECONDS` (lalai 600) dan melaporkan apa yang dibacanya ke

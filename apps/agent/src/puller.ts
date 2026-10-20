@@ -56,7 +56,10 @@ export class Puller {
     const entries = this.roster.all().filter((entry) => {
       // A driver that cannot pull is not a failure. A callback protocol buffers its own
       // transactions and re-sends what was never acknowledged, so there is no gap to close.
-      return supports(entry.driver.capabilities, DriverOperation.pullEvents);
+      // Null for a protocol nothing here dials, which also has nothing to pull.
+      return (
+        entry.driver !== null && supports(entry.driver.capabilities, DriverOperation.pullEvents)
+      );
     });
 
     if (entries.length === 0) return;
@@ -87,8 +90,16 @@ export class Puller {
     const stored = this.spool.cursorFor(deviceId);
     const cursor = stored ?? entry.assignment.cursor;
 
+    /*
+     * Already excluded by the filter in `runOnce`, which keeps only entries whose driver can
+     * pull. Re-checked because this method is reachable on its own and the compiler cannot carry
+     * the narrowing across the call — and a thrown null dereference here would kill the timer.
+     */
+    const driver = entry.driver;
+    if (driver === null) return;
+
     try {
-      const result = await entry.driver.events.pull({
+      const result = await driver.events.pull({
         sequence: cursor.sequence,
         since: cursor.since === null ? null : new Date(cursor.since),
       });

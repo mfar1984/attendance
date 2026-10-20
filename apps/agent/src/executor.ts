@@ -18,6 +18,7 @@ import type { Cloud } from './cloud.js';
 import type { AgentConfig } from './config.js';
 import { resolveLanHost } from './lan.js';
 import { logger } from './logging.js';
+import type { Relay } from './relay.js';
 import type { Roster } from './roster.js';
 
 /**
@@ -45,22 +46,33 @@ import type { Roster } from './roster.js';
  * the firmware's thirty-minute lockout, so four automatic retries would hold an operator out of
  * their own door controller for longer than the original lockout — while appearing to work hard at
  * fixing it.
+ *
+ * ## And one group that is neither
+ *
+ * A callback terminal collects its own work. There is nothing here to call, so the command is
+ * **relayed**: held for the unit to fetch, and no outcome is reported — because the outcome is not
+ * known yet and will arrive from the terminal itself on a later request. Reporting `done` there
+ * would tell an operator a face is enrolled at the moment the string was filed, which is the one
+ * claim the queue exists to avoid making.
  */
 
 export interface ExecutorStats {
   executed: number;
   failed: number;
   deferred: number;
+  /** Handed to the relay for a terminal to collect. Not yet a success or a failure. */
+  relayed: number;
 }
 
 /** Outcome of running one command locally, before deciding what to tell the cloud. */
 type Attempt =
   | { outcome: 'done'; detail: string }
+  | { outcome: 'relayed'; detail: string }
   | { outcome: 'permanent'; detail: string }
   | { outcome: 'transient'; detail: string };
 
 export class Executor {
-  readonly stats: ExecutorStats = { executed: 0, failed: 0, deferred: 0 };
+  readonly stats: ExecutorStats = { executed: 0, failed: 0, deferred: 0, relayed: 0 };
 
   constructor(
     private readonly cloud: Cloud,
@@ -72,6 +84,8 @@ export class Executor {
      * hold them and should not — so the command that uses them has to be able to read them.
      */
     private readonly config: AgentConfig,
+    /** Where a callback terminal's work waits until the unit comes to collect it. */
+    private readonly relay: Relay,
   ) {}
 
   /**
@@ -109,6 +123,24 @@ export class Executor {
 
   private async run(command: AgentCommandItem): Promise<void> {
     const attempt = await this.attempt(command);
+
+    /*
+     * Held for the terminal, and deliberately not reported.
+     *
+     * The cloud's row stays `sent`, which is the honest state: handed over, outcome unknown. When
+     * the unit executes it and says so, the listener reports that outcome and the relay drops the
+     * command. If the unit never does, the cloud's stale sweep revives the row and offers it
+     * again — and `hold` recognises a command it is already carrying, so the second offer does not
+     * duplicate the first.
+     */
+    if (attempt.outcome === 'relayed') {
+      this.stats.relayed += 1;
+      logger().info(
+        { commandId: command.commandId, deviceId: command.deviceId, kind: command.kind },
+        'Holding a command for a callback terminal to collect',
+      );
+      return;
+    }
 
     if (attempt.outcome === 'transient') {
       this.stats.deferred += 1;
@@ -159,6 +191,31 @@ export class Executor {
           'Terminal ini tiada dalam senarai connector. Ia mungkin sudah dipindahkan ke connector ' +
           'lain atau dinyahaktifkan.',
       };
+    }
+
+    /**
+     * No driver means a terminal that collects its own work, so this is a relay rather than a
+     * call — and the branch has to come before the JSON parse below.
+     *
+     * The payload for one of these is not JSON at all. It is the protocol command string the
+     * cloud's TA Push driver built, which travels verbatim; parsing it first would reject every
+     * one of them as a malformed payload and fail them permanently.
+     */
+    if (entry.driver === null) {
+      const held = this.relay.hold(command);
+
+      /*
+       * A full queue defers rather than fails. The commands ahead of it are for a terminal that
+       * is not collecting — unplugged, or moved — and the right outcome is to leave this one with
+       * the cloud, which offers it again once the unit starts polling. Failing it would discard an
+       * enrolment for a device that is merely asleep.
+       */
+      return held
+        ? { outcome: 'relayed', detail: 'Menunggu terminal mengambilnya.' }
+        : {
+            outcome: 'transient',
+            detail: 'Baris giliran relay untuk terminal ini penuh; arahan dibiarkan pada cloud.',
+          };
     }
 
     let parsed: unknown;

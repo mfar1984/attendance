@@ -24,7 +24,14 @@ import { logger } from './logging.js';
 
 interface Entry {
   assignment: AgentDeviceAssignment;
-  driver: TerminalDriver;
+  /**
+   * Null for a protocol the connector does not dial.
+   *
+   * TA Push has the terminal collecting its own work, so there is genuinely nothing to call — and
+   * a stub driver that rejected every method would be a lie with a shape, which the puller and
+   * the snapshot sweep would both have to interrogate anyway. Null says it once.
+   */
+  driver: TerminalDriver | null;
   fingerprint: string;
 }
 
@@ -51,18 +58,18 @@ export class Roster {
         continue;
       }
 
-      if (existing) void existing.driver.close();
+      if (existing) void existing.driver?.close();
 
-      const driver = buildDriver(assignment);
-      if (!driver) continue;
+      const built = buildDriver(assignment);
+      if (!built.served) continue;
 
-      next.set(assignment.deviceId, { assignment, driver, fingerprint });
+      next.set(assignment.deviceId, { assignment, driver: built.driver, fingerprint });
     }
 
     for (const [deviceId, entry] of this.entries) {
       if (!next.has(deviceId)) {
         logger().info({ deviceId }, 'Terminal is no longer assigned to this connector');
-        void entry.driver.close();
+        void entry.driver?.close();
       }
     }
 
@@ -106,7 +113,9 @@ export class Roster {
   }
 
   async closeAll(): Promise<void> {
-    const drivers = this.all().map((entry) => entry.driver);
+    const drivers = this.all()
+      .map((entry) => entry.driver)
+      .filter((driver): driver is TerminalDriver => driver !== null);
     this.entries.clear();
     await Promise.all(drivers.map((driver) => driver.close()));
   }
@@ -132,22 +141,50 @@ function fingerprintOf(assignment: AgentDeviceAssignment): string {
   ].join('|');
 }
 
+/** Protocols this build can serve. Reported on every heartbeat so the cloud can flag a mismatch. */
+export const SUPPORTED_PROTOCOLS: readonly string[] = [
+  DeviceProtocol.isapi,
+  DeviceProtocol.taPush,
+];
+
 /**
- * Builds the driver for one assignment, or refuses with a reason.
+ * Whether this connector serves the terminal at all, and the driver to reach it with.
  *
- * Only ISAPI for now, and that limit is stated rather than papered over. The ZKTeco TA Push
- * driver performs every write by inserting into the cloud's command queue, which this process
- * has no access to, and its command strings have never been checked against a real SenseFace.
- * A connector that claimed to support it would produce a site that looks healthy and records
- * nothing, which is the failure this whole system exists to prevent.
+ * Two outcomes rather than one, because "served with no driver" is a real state. A callback
+ * terminal belongs on this roster — the listener matches its serial to find it, and the relay
+ * holds its commands — while nothing here ever dials it. Collapsing that into a null driver
+ * meaning "not served" is what kept TA Push units off the roster entirely, so their pushes were
+ * discarded as coming from a terminal this connector does not serve.
  */
-function buildDriver(assignment: AgentDeviceAssignment): TerminalDriver | null {
+function buildDriver(
+  assignment: AgentDeviceAssignment,
+): { served: boolean; driver: TerminalDriver | null } {
+  /**
+   * Served, with nothing to dial.
+   *
+   * The terminal posts its scans to this connector's own listener and collects its own work, so
+   * the connector needs its serial number and nothing else. A unit with no serial cannot be
+   * matched to anything it sends, which is a cloud-side configuration gap rather than a connector
+   * one — so it is named here and left off the roster, because serving it would mean accepting
+   * pushes that can never be attributed.
+   */
+  if (assignment.protocol === DeviceProtocol.taPush) {
+    if (assignment.serialNumber === null || assignment.serialNumber.trim() === '') {
+      logger().warn(
+        { deviceId: assignment.deviceId },
+        'Callback terminal has no serial number, so its pushes could not be matched; not served',
+      );
+      return { served: false, driver: null };
+    }
+    return { served: true, driver: null };
+  }
+
   if (assignment.protocol !== DeviceProtocol.isapi) {
     logger().warn(
       { deviceId: assignment.deviceId, protocol: assignment.protocol },
       'This connector has no driver for that protocol, so the terminal is not served here',
     );
-    return null;
+    return { served: false, driver: null };
   }
 
   if (assignment.username === null || assignment.password === null) {
@@ -155,17 +192,20 @@ function buildDriver(assignment: AgentDeviceAssignment): TerminalDriver | null {
       { deviceId: assignment.deviceId },
       'Terminal has no stored credential, so it cannot be reached',
     );
-    return null;
+    return { served: false, driver: null };
   }
 
   const scheme = assignment.useHttps ? 'https' : 'http';
-  return new HikvisionDriver(
-    new HikvisionClient({
-      baseUrl: `${scheme}://${assignment.host}:${assignment.port}`,
-      username: assignment.username,
-      password: assignment.password,
-      verifyTls: assignment.verifyTls,
-      timeoutMs: 15_000,
-    }),
-  );
+  return {
+    served: true,
+    driver: new HikvisionDriver(
+      new HikvisionClient({
+        baseUrl: `${scheme}://${assignment.host}:${assignment.port}`,
+        username: assignment.username,
+        password: assignment.password,
+        verifyTls: assignment.verifyTls,
+        timeoutMs: 15_000,
+      }),
+    ),
+  };
 }
