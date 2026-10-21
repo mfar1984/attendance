@@ -343,7 +343,21 @@ note "log       : journalctl -u attendance-agent -f"
 note "keadaan   : $STATE_DIR"
 note "pendengar : http://$LAN_HOST:$LISTEN_PORT"
 printf '\n'
-printf 'Tuding terminal di tapak ini ke:\n\n'
+
+# ---------------------------------------------------------------------------
+# Where to point the terminals, per protocol.
+#
+# Two paths, because the connector answers two and they are not interchangeable. This used to name
+# only the Hikvision one — which is the instruction somebody follows while standing at the unit, so
+# on a ZKTeco site it sent them to a path that authenticates with Digest against firmware that has
+# no Digest to offer. The unit would be refused on every poll and look like a wiring fault.
+#
+# Hikvision takes a full URL plus credentials. ZKTeco takes an address and a port on its own keypad
+# and appends `/iclock/cdata` itself, so it is written as parts rather than as a URL: typing the
+# full path into a field that wants a hostname is the other way this goes wrong.
+# ---------------------------------------------------------------------------
+
+printf 'Tuding terminal Hikvision (ISAPI) ke:\n\n'
 printf '    http://%s:%s/hik/events\n\n' "$LAN_HOST" "$LISTEN_PORT"
 printf '  Nama pengguna Digest : %s\n' "$INGEST_USERNAME"
 if [[ "$GENERATED_PASSWORD" -eq 1 ]]; then
@@ -355,4 +369,12 @@ elif [[ "$KEPT_PASSWORD" -eq 1 ]]; then
 else
   printf '  Kata laluan Digest   : (yang anda berikan)\n'
 fi
+
+printf '\nTuding terminal ZKTeco (TA Push / ADMS) pada keypadnya sendiri ke:\n\n'
+printf '    Alamat pelayan : %s\n' "$LAN_HOST"
+printf '    Port           : %s\n\n' "$LISTEN_PORT"
+printf '  Terminal menambah /iclock/cdata sendiri. Tiada kata laluan — protokol itu\n'
+printf '  mengenal pasti unit dengan nombor serialnya, jadi serial itu MESTI diisi pada\n'
+printf '  rekod peranti atau setiap scan ditolak sebagai dari terminal tidak berdaftar.\n'
+
 printf '\nSeterusnya: tambah peranti pada skrin dan pilih connector ini padanya.\n\n'
