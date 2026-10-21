@@ -315,8 +315,15 @@ export type AgentCommandOutcome = z.infer<typeof agentCommandOutcomeSchema>;
  * each assignment. **Deploy the cloud first** — the reply now carries the organisation's UTC
  * offset, and a connector that never receives one refuses to decode attendance rather than
  * guessing the zone.
+ *
+ * 0.3.1 — a failed call to the cloud says why. `fetch` rejects with a bare "fetch failed" and puts
+ * the reason in `cause`, which was being discarded — so a real site reported every heartbeat as
+ * unreachable for minutes while `curl` from the same machine answered 200, and the journal named
+ * nothing. The cause chain is now walked, including `AggregateError.errors`, which is the only
+ * place a per-address failure is visible and therefore the only way an IPv6 route that does not
+ * work is distinguishable from a firewall.
  */
-export const AGENT_VERSION = '0.3.0';
+export const AGENT_VERSION = '0.3.1';
 
 /**
  * What a connector reports about one terminal's own settings.

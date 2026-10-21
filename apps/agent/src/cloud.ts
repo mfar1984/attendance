@@ -148,13 +148,7 @@ export class Cloud {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
-      return {
-        ok: false,
-        failure: {
-          kind: 'unreachable',
-          detail: error instanceof Error ? error.message : String(error),
-        },
-      };
+      return { ok: false, failure: { kind: 'unreachable', detail: describeFetchFailure(error) } };
     }
 
     if (response.ok) {
@@ -171,7 +165,7 @@ export class Cloud {
           ok: false,
           failure: {
             kind: 'unreachable',
-            detail: `balasan bukan JSON: ${error instanceof Error ? error.message : 'ralat'}`,
+            detail: `balasan bukan JSON: ${describeFetchFailure(error)}`,
           },
         };
       }
@@ -193,6 +187,68 @@ export class Cloud {
 
     return { ok: false, failure: { kind: 'rejected', status: response.status, detail } };
   }
+}
+
+/**
+ * Why a call to the cloud never got an answer, in words that name the cause.
+ *
+ * `fetch` rejects with a bare `TypeError: fetch failed` and puts the real reason in `cause` — so
+ * keeping only `error.message` produced a journal that said a site was unreachable and nothing
+ * about why. That is not a small loss: `ENETUNREACH`, `ECONNREFUSED`, `EAI_AGAIN` and a TLS date
+ * failure call for four different repairs, and the line reaches the devices screen as the
+ * connector's last error, read by somebody who cannot see the machine.
+ *
+ * This is the same mistake `selfupdate.ts` already corrected once, where only the first line of a
+ * failed command was kept and the reason had been cut off. Worth stating because the shape repeats:
+ * Node's wrapper errors are summaries, and the diagnosis is always one level down.
+ *
+ * The chain is walked rather than read one deep. undici nests — a connect failure arrives as
+ * `fetch failed` wrapping `ConnectTimeoutError` wrapping the `AggregateError` that holds the
+ * per-address `ENETUNREACH`, which is exactly the shape a host with AAAA records and no working
+ * IPv6 produces.
+ */
+export function describeFetchFailure(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  for (let depth = 0; depth < 6 && current !== null && current !== undefined; depth += 1) {
+    if (seen.has(current)) break;
+    seen.add(current);
+
+    const node = current as { message?: unknown; code?: unknown; cause?: unknown; errors?: unknown };
+
+    const code = typeof node.code === 'string' ? node.code : null;
+    const message = typeof node.message === 'string' ? node.message : null;
+
+    // The code is what somebody searches for; the message is what explains it. Either alone is
+    // routinely useless — "fetch failed" has no code, and a bare `ENETUNREACH` has no subject.
+    const piece = [code, message].filter((value) => value !== null && value !== '').join(' ');
+    if (piece !== '' && !parts.includes(piece)) parts.push(piece);
+
+    /*
+     * `AggregateError.errors` is where a multi-address connect attempt records what happened per
+     * address. That is the one place the IPv6-versus-IPv4 distinction is visible, so it is read
+     * rather than skipped over in favour of the single `cause`.
+     */
+    if (Array.isArray(node.errors)) {
+      for (const inner of node.errors.slice(0, 4)) {
+        const child = inner as { code?: unknown; message?: unknown };
+        const childPiece = [
+          typeof child.code === 'string' ? child.code : null,
+          typeof child.message === 'string' ? child.message : null,
+        ]
+          .filter((value) => value !== null && value !== '')
+          .join(' ');
+        if (childPiece !== '' && !parts.includes(childPiece)) parts.push(childPiece);
+      }
+    }
+
+    current = node.cause;
+  }
+
+  const detail = parts.join(' ← ');
+  return detail === '' ? String(error) : detail.slice(0, 400);
 }
 
 function credentialPath(config: AgentConfig): string {
