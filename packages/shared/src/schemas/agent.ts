@@ -322,8 +322,16 @@ export type AgentCommandOutcome = z.infer<typeof agentCommandOutcomeSchema>;
  * nothing. The cause chain is now walked, including `AggregateError.errors`, which is the only
  * place a per-address failure is visible and therefore the only way an IPv6 route that does not
  * work is distinguishable from a firewall.
+ *
+ * 0.3.2 — a connector that cannot reach the cloud no longer refuses attendance. Attribution needs
+ * the roster and the roster only arrives on a heartbeat, so a restart during an upstream outage
+ * came up serving nothing and answered 404 to every push — and this firmware keeps no queue, so
+ * those scans stopped existing rather than arriving late. The identity half of the roster is now
+ * remembered on disk: enough to attribute an event and spool it, and deliberately not enough to
+ * dial a terminal, so no credential is written. Found on a site whose link drops a quarter of its
+ * requests, which made that window routine rather than theoretical.
  */
-export const AGENT_VERSION = '0.3.1';
+export const AGENT_VERSION = '0.3.2';
 
 /**
  * What a connector reports about one terminal's own settings.

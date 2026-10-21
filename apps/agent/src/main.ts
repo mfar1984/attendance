@@ -45,7 +45,15 @@ const log = logger();
 const spool = new Spool(config);
 const cloud = new Cloud(config);
 const state = new SiteState();
-const roster = new Roster();
+/*
+ * The spool doubles as the roster's memory.
+ *
+ * Attribution needs the roster and the roster only arrives on a heartbeat, so a connector that
+ * restarted while the cloud was unreachable used to answer 404 to every push — and this firmware
+ * never resends, so those scans stopped existing rather than arriving late. Identity only: enough
+ * to spool an event, never enough to dial a terminal.
+ */
+const roster = new Roster(spool);
 /**
  * Work for terminals that collect it themselves.
  *

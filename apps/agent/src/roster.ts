@@ -3,6 +3,7 @@ import { DeviceProtocol, type AgentDeviceAssignment } from '@attendance/shared';
 import { HikvisionDriver, type TerminalDriver } from '@attendance/terminal-drivers';
 
 import { logger } from './logging.js';
+import type { CachedIdentity } from './spool.js';
 
 /**
  * The terminals this connector serves, and one long-lived driver per terminal.
@@ -35,8 +36,62 @@ interface Entry {
   fingerprint: string;
 }
 
+/**
+ * Where the identity half of the roster is remembered between restarts.
+ *
+ * An interface rather than the `Spool` itself, so this module can be exercised without a database
+ * and so the dependency points the right way: the roster knows it has somewhere to persist, not
+ * what that somewhere is.
+ */
+export interface RosterCache {
+  saveRosterIdentity(entries: readonly CachedIdentity[]): void;
+  cachedRosterIdentity(): CachedIdentity[];
+}
+
+/** Enough to attribute a push to a device. Never enough to reach one. */
+export interface Attribution {
+  deviceId: number;
+  serialNumber: string | null;
+  /** True when this came from the cache rather than from a live roster. */
+  cached: boolean;
+}
+
 export class Roster {
   private entries = new Map<number, Entry>();
+
+  /**
+   * The last roster the cloud reported, identity only.
+   *
+   * Consulted for attribution when the live roster has no answer, which is the state a connector
+   * boots into when the cloud is unreachable. Without it the listener refuses every push — and
+   * this firmware never resends, so the scan is gone rather than late.
+   */
+  private cached = new Map<number, CachedIdentity>();
+
+  /**
+   * @param cache Where to remember identities. Optional so a caller that genuinely has no state
+   * directory — a test, a dry run — still works, rather than being forced to invent one.
+   */
+  constructor(private readonly cache?: RosterCache) {
+    if (!cache) return;
+
+    try {
+      for (const entry of cache.cachedRosterIdentity()) this.cached.set(entry.deviceId, entry);
+      if (this.cached.size > 0) {
+        logger().info(
+          { devices: this.cached.size },
+          'Loaded cached terminal identities, so pushes can be attributed before the first heartbeat',
+        );
+      }
+    } catch (error) {
+      /*
+       * Swallowed. A cache that cannot be read is a worse connector, not a broken one — and
+       * failing to start over it would turn a corrupt file into the outage the cache exists to
+       * prevent.
+       */
+      logger().warn({ err: error }, 'Could not read cached terminal identities');
+    }
+  }
 
   /**
    * Replaces the roster with what the cloud just reported.
@@ -74,6 +129,31 @@ export class Roster {
     }
 
     this.entries = next;
+
+    /*
+     * The identity half is remembered, including for terminals that were not served.
+     *
+     * A unit withheld because its credential would not decrypt, or a callback unit with no serial,
+     * still belongs to this site — and if it is pushing, those events are worth spooling even
+     * while the reason it cannot be dialled is being fixed. Attribution and reachability are
+     * different questions, and this table answers only the first.
+     */
+    const identities: CachedIdentity[] = assignments.map((assignment) => ({
+      deviceId: assignment.deviceId,
+      name: assignment.name,
+      protocol: assignment.protocol,
+      host: assignment.host,
+      serialNumber: assignment.serialNumber,
+    }));
+
+    this.cached = new Map(identities.map((entry) => [entry.deviceId, entry]));
+
+    try {
+      this.cache?.saveRosterIdentity(identities);
+    } catch (error) {
+      // A cache that cannot be written must not fail the heartbeat that supplied it.
+      logger().warn({ err: error }, 'Could not store terminal identities');
+    }
   }
 
   get(deviceId: number): Entry | undefined {
@@ -110,6 +190,77 @@ export class Roster {
       if (entry.assignment.serialNumber === wanted) return entry;
     }
     return undefined;
+  }
+
+  /**
+   * Which device sent this, for the ingest paths only.
+   *
+   * Separate from `findByAddress` and `findBySerial` because it answers a different question and
+   * is allowed a weaker source. Those two return a served entry, which is what the pull, the
+   * snapshot sweep and the executor need — they are going to *use* the driver and the credential.
+   * This one only needs to know whose event it is, so it falls back to the cached identity and
+   * says so in `cached`.
+   *
+   * That distinction is the whole safety property: a cached answer can get an event written to the
+   * spool, and can never get a socket opened to a terminal.
+   */
+  identify(options: {
+    serial?: string | undefined;
+    addresses?: Array<string | undefined>;
+  }): Attribution | undefined {
+    const { serial, addresses = [] } = options;
+
+    if (serial !== undefined && serial.trim() !== '') {
+      const wanted = serial.trim();
+
+      const live = this.findBySerial(wanted);
+      if (live) {
+        return {
+          deviceId: live.assignment.deviceId,
+          serialNumber: live.assignment.serialNumber,
+          cached: false,
+        };
+      }
+
+      for (const entry of this.cached.values()) {
+        if (entry.serialNumber === wanted) {
+          return { deviceId: entry.deviceId, serialNumber: entry.serialNumber, cached: true };
+        }
+      }
+
+      /*
+       * A serial that matched nothing is not retried against the address. On a callback protocol
+       * the serial *is* the identity, and falling back to whichever device happens to share an
+       * address would file one terminal's attendance against another.
+       */
+      return undefined;
+    }
+
+    const live = this.findByAddress(...addresses);
+    if (live) {
+      return {
+        deviceId: live.assignment.deviceId,
+        serialNumber: live.assignment.serialNumber,
+        cached: false,
+      };
+    }
+
+    for (const candidate of addresses) {
+      if (!candidate) continue;
+      const bare = candidate.replace(/^::ffff:/, '');
+      for (const entry of this.cached.values()) {
+        if (entry.host === bare) {
+          return { deviceId: entry.deviceId, serialNumber: entry.serialNumber, cached: true };
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  /** How many identities are remembered, for the health endpoint and the startup log. */
+  cachedCount(): number {
+    return this.cached.size;
   }
 
   async closeAll(): Promise<void> {

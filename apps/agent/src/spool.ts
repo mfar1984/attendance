@@ -41,6 +41,20 @@ export interface SpooledEvent {
   event: TerminalEventPayload;
 }
 
+/**
+ * What is remembered about a terminal between heartbeats.
+ *
+ * Carries no credential, on purpose — see `roster_identity` below. These are the fields that answer
+ * "which device sent this", not "how do I reach that device".
+ */
+export interface CachedIdentity {
+  deviceId: number;
+  name: string;
+  protocol: string;
+  host: string;
+  serialNumber: string | null;
+}
+
 /** A homogeneous run of events, which is the shape the cloud endpoint accepts. */
 export interface SpoolBatch {
   deviceId: number;
@@ -95,6 +109,87 @@ export class Spool {
         since    TEXT
       )
     `);
+
+    /*
+     * Enough of the roster to attribute an incoming push, and deliberately no more.
+     *
+     * ## Why this table exists
+     *
+     * Attribution needs the roster, and the roster only arrives on a successful heartbeat. So a
+     * connector that restarts while the cloud is unreachable comes up serving nothing — and it does
+     * not merely run late, it answers `404` to every push. This firmware keeps no queue and never
+     * retries, so those scans stop existing. On a site whose link drops a quarter of its requests,
+     * any restart has a real chance of landing in that window.
+     *
+     * That made a transient upstream outage into permanent data loss, which is the exact failure
+     * the spool beside this table exists to prevent.
+     *
+     * ## Identity only, and that is the point
+     *
+     * `serialNumber` and `host` are what match a push to a device; the credential is what dials
+     * one. Only the first is kept here, so the cached copy is sufficient to receive and spool and
+     * insufficient to reach a terminal. Pulls, snapshots and queued writes keep waiting for the
+     * cloud — they need the password, and a password on disk is an exposure this table declines to
+     * add. The state directory is already `0700` and already holds the cloud credential, so the
+     * question was whether to widen what a stolen disk yields, and the answer is no.
+     */
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS roster_identity (
+        deviceId     INTEGER PRIMARY KEY,
+        name         TEXT,
+        protocol     TEXT,
+        host         TEXT,
+        serialNumber TEXT,
+        savedAt      INTEGER NOT NULL
+      )
+    `);
+  }
+
+  /**
+   * Replaces the cached identities with what the cloud just reported.
+   *
+   * Wholesale rather than merged, so a terminal moved to another connector stops being claimed
+   * here. Done in one transaction: a half-written roster would attribute some pushes and refuse
+   * others, which is harder to diagnose than refusing all of them.
+   */
+  saveRosterIdentity(entries: readonly CachedIdentity[]): void {
+    this.db.exec('BEGIN');
+    try {
+      this.db.exec('DELETE FROM roster_identity');
+      const insert = this.db.prepare(
+        `INSERT INTO roster_identity (deviceId, name, protocol, host, serialNumber, savedAt)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      const now = Date.now();
+      for (const entry of entries) {
+        insert.run(entry.deviceId, entry.name, entry.protocol, entry.host, entry.serialNumber, now);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  /** The identities from the last roster the cloud reported, for use until a new one arrives. */
+  cachedRosterIdentity(): CachedIdentity[] {
+    const rows = this.db
+      .prepare('SELECT deviceId, name, protocol, host, serialNumber FROM roster_identity')
+      .all() as Array<{
+      deviceId: number;
+      name: string | null;
+      protocol: string | null;
+      host: string | null;
+      serialNumber: string | null;
+    }>;
+
+    return rows.map((row) => ({
+      deviceId: row.deviceId,
+      name: row.name ?? '',
+      protocol: row.protocol ?? '',
+      host: row.host ?? '',
+      serialNumber: row.serialNumber,
+    }));
   }
 
   /** The furthest point this connector has pulled for a terminal, if it has pulled at all. */

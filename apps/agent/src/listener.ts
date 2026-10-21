@@ -17,7 +17,7 @@ import type { AgentConfig } from './config.js';
 import { logger } from './logging.js';
 import { toPayload } from './payload.js';
 import type { Relay } from './relay.js';
-import type { Roster } from './roster.js';
+import type { Attribution, Roster } from './roster.js';
 import type { Spool } from './spool.js';
 import type { SiteState } from './state.js';
 
@@ -101,6 +101,14 @@ export interface ListenerStats {
    */
   unmatched: number;
   lastUnmatchedPath: string | null;
+
+  /**
+   * Events accepted on remembered identity rather than a live roster.
+   *
+   * Counted because it is the measure of how much this connector has carried through an upstream
+   * outage — which before the cache was the measure of how much had been refused and lost.
+   */
+  attributedFromCache: number;
 }
 
 /**
@@ -140,6 +148,7 @@ export function createListener(
     lastContactAt: null,
     unmatched: 0,
     lastUnmatchedPath: null,
+    attributedFromCache: 0,
     callback: {
       handshakes: 0,
       records: 0,
@@ -230,8 +239,18 @@ export function createListener(
 
     const payload = decoded.json;
 
-    const entry = roster.findByAddress(asString(payload['ipAddress']), request.ip);
-    if (!entry) {
+    /*
+     * Attribution, which may come from the cached roster.
+     *
+     * Deliberately not `findByAddress`: that returns a served entry, and a served entry needs a
+     * heartbeat to have succeeded. A connector that restarted while the cloud was unreachable has
+     * no live roster and used to answer 404 here — and this firmware keeps no queue and never
+     * retries, so the scan was gone rather than late. The cached identity is enough to spool it.
+     */
+    const who = roster.identify({
+      addresses: [asString(payload['ipAddress']), request.ip],
+    });
+    if (!who) {
       stats.unknownDevice += 1;
       logger().warn(
         { ip: request.ip, reported: asString(payload['ipAddress']) },
@@ -250,7 +269,7 @@ export function createListener(
       stats.heartbeats += 1;
       // A heartbeat is the most timely proof of life there is, so it counts as contact even
       // though it carries no event.
-      state.notePush(entry.assignment.deviceId);
+      state.notePush(who.deviceId);
       return { ok: true, heartbeat: true };
     }
 
@@ -258,7 +277,7 @@ export function createListener(
     if (!acsEvent) {
       stats.ignored += 1;
       logger().warn(
-        { deviceId: entry.assignment.deviceId, keys: Object.keys(alert) },
+        { deviceId: who.deviceId, keys: Object.keys(alert) },
         'Push decoded but carried no usable event',
       );
       return { ok: true, ignored: true };
@@ -268,7 +287,7 @@ export function createListener(
     if (!event) {
       stats.ignored += 1;
       logger().warn(
-        { deviceId: entry.assignment.deviceId, serialNo: acsEvent.serialNo, time: acsEvent.time },
+        { deviceId: who.deviceId, serialNo: acsEvent.serialNo, time: acsEvent.time },
         'Push carried an unparseable timestamp',
       );
       return { ok: true, ignored: true };
@@ -283,9 +302,23 @@ export function createListener(
      * come back as a string under a type that claimed otherwise — and the first thing to touch
      * it would throw, in a process nobody is watching.
      */
-    spool.add(entry.assignment.deviceId, 'push', toPayload(event));
+    spool.add(who.deviceId, 'push', toPayload(event));
     stats.events += 1;
-    state.notePush(entry.assignment.deviceId);
+    state.notePush(who.deviceId);
+
+    if (who.cached) {
+      stats.attributedFromCache += 1;
+      /*
+       * Logged, because it means this connector is holding events for a terminal the cloud has not
+       * confirmed since the process started. They will be delivered once a heartbeat lands; until
+       * then the site is working on remembered information, and that is worth seeing on the way
+       * past rather than inferring from a spool that is growing.
+       */
+      logger().info(
+        { deviceId: who.deviceId },
+        'Spooled a push using the cached roster; the cloud has not been reached yet',
+      );
+    }
 
     return { ok: true, spooled: true };
   });
@@ -308,7 +341,7 @@ export function createListener(
   function resolveCallback(
     request: FastifyRequest,
     reply: FastifyReply,
-  ): ReturnType<Roster['findBySerial']> {
+  ): Attribution | undefined {
     stats.callback.lastContactAt = new Date();
 
     const serial = queryValue(request.query, 'SN');
@@ -319,8 +352,10 @@ export function createListener(
       return undefined;
     }
 
-    const entry = roster.findBySerial(serial);
-    if (!entry) {
+    // Falls back to the cached roster, like the push path, so a restart during an upstream
+    // outage does not turn into refused attendance.
+    const who = roster.identify({ serial });
+    if (!who) {
       stats.callback.unknownSerial += 1;
       logger().warn(
         { ip: request.ip, serial: serial.trim() },
@@ -330,7 +365,7 @@ export function createListener(
       return undefined;
     }
 
-    return entry;
+    return who;
   }
 
   /**
@@ -341,11 +376,11 @@ export function createListener(
    * is not on the device record yet.
    */
   app.get(`${ICLOCK_PATH}/cdata`, async (request, reply) => {
-    const entry = resolveCallback(request, reply);
-    if (!entry) return reply;
+    const who = resolveCallback(request, reply);
+    if (!who) return reply;
 
     stats.callback.handshakes += 1;
-    state.notePush(entry.assignment.deviceId);
+    state.notePush(who.deviceId);
 
     /*
      * `Stamp` is the transaction cursor the unit keeps on its own side, echoed back so it stays
@@ -357,7 +392,7 @@ export function createListener(
 
     return reply.type('text/plain').send(
       [
-        `GET OPTION FROM: ${entry.assignment.serialNumber ?? ''}`,
+        `GET OPTION FROM: ${who.serialNumber ?? ''}`,
         `Stamp=${stamp}`,
         'OpStamp=0',
         // Seconds the unit waits before retrying a request we did not answer `OK`.
@@ -388,10 +423,10 @@ export function createListener(
    * it, the spool is the only place it exists.
    */
   app.post(`${ICLOCK_PATH}/cdata`, async (request, reply) => {
-    const entry = resolveCallback(request, reply);
-    if (!entry) return reply;
+    const who = resolveCallback(request, reply);
+    if (!who) return reply;
 
-    const deviceId = entry.assignment.deviceId;
+    const deviceId = who.deviceId;
     state.notePush(deviceId);
 
     const table = (queryValue(request.query, 'table') ?? '').toUpperCase();
@@ -441,7 +476,7 @@ export function createListener(
     for (const line of body.split('\n')) {
       if (line.trim() === '') continue;
 
-      const event = decodeAttlogLine(entry.assignment.serialNumber ?? '', line, offsetMinutes);
+      const event = decodeAttlogLine(who.serialNumber ?? '', line, offsetMinutes);
       if (event === null) {
         stats.callback.undecodable += 1;
         // Logged with the line, because the column order in this protocol was assembled from
@@ -462,6 +497,7 @@ export function createListener(
 
       spool.add(deviceId, 'push', toPayload(event));
       accepted += 1;
+      if (who.cached) stats.attributedFromCache += 1;
     }
 
     stats.callback.records += accepted;
@@ -485,10 +521,10 @@ export function createListener(
    * to run itself.
    */
   app.get(`${ICLOCK_PATH}/getrequest`, async (request, reply) => {
-    const entry = resolveCallback(request, reply);
-    if (!entry) return reply;
+    const who = resolveCallback(request, reply);
+    if (!who) return reply;
 
-    const deviceId = entry.assignment.deviceId;
+    const deviceId = who.deviceId;
     state.notePush(deviceId);
 
     const held = relay.peek(deviceId, COMMANDS_PER_POLL);
@@ -524,10 +560,10 @@ export function createListener(
    * nothing left to report it.
    */
   app.post(`${ICLOCK_PATH}/devicecmd`, async (request, reply) => {
-    const entry = resolveCallback(request, reply);
-    if (!entry) return reply;
+    const who = resolveCallback(request, reply);
+    if (!who) return reply;
 
-    const deviceId = entry.assignment.deviceId;
+    const deviceId = who.deviceId;
     state.notePush(deviceId);
 
     for (const line of bodyText(request.body).split('\n')) {
@@ -621,6 +657,12 @@ export function createListener(
   app.get('/healthz', async () => ({
     ok: true,
     devices: roster.all().length,
+    /*
+     * Reported beside the served count, because the two differing is the state worth noticing:
+     * identities remembered but nothing served means the cloud has not been reached since this
+     * process started, and the connector is spooling on remembered information.
+     */
+    known: roster.cachedCount(),
     spooled: spool.count(),
     relayed: relay.count(),
   }));
