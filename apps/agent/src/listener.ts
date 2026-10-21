@@ -91,6 +91,16 @@ export interface ListenerStats {
   lastContactAt: Date | null;
   /** The callback path, counted apart because the two have different failure modes. */
   callback: CallbackStats;
+
+  /**
+   * Requests to a path this build has no route for.
+   *
+   * Its own counter because it is the signature of a protocol mismatch rather than of a fault: the
+   * unit is working and delivering, to a shape nothing here answers. Without it the condition is
+   * invisible — a connector that is running, a terminal that says online, and no attendance.
+   */
+  unmatched: number;
+  lastUnmatchedPath: string | null;
 }
 
 /**
@@ -128,6 +138,8 @@ export function createListener(
     undecodable: 0,
     ignored: 0,
     lastContactAt: null,
+    unmatched: 0,
+    lastUnmatchedPath: null,
     callback: {
       handshakes: 0,
       records: 0,
@@ -561,6 +573,48 @@ export function createListener(
     }
 
     return reply.type('text/plain').send('OK');
+  });
+
+  /**
+   * A request this listener has no route for, logged rather than answered silently.
+   *
+   * Fastify is built here with its own logger off, so an unmatched path produced a bare 404 and
+   * nothing anywhere. That is the worst possible shape for the one question somebody actually has
+   * during bring-up: the terminal says it is online, the connector says it is running, and no
+   * attendance arrives.
+   *
+   * ZKTeco ships several push protocols — ADMS over `/iclock/*` is one, and a unit may be
+   * configured for another with a different path entirely. This line is what turns that from a
+   * silent mismatch into evidence: the method, the path, the query and the user agent are exactly
+   * what identifies which protocol the firmware is speaking, and they can be read off the journal
+   * instead of guessed at from a datasheet.
+   *
+   * The query string is included deliberately. A callback protocol identifies the unit in it —
+   * `SN=` on ADMS — so an unmatched request still says which terminal is asking.
+   */
+  app.setNotFoundHandler(async (request, reply) => {
+    stats.unmatched += 1;
+    stats.lastUnmatchedPath = `${request.method} ${request.url}`;
+
+    logger().warn(
+      {
+        method: request.method,
+        url: request.url,
+        ip: request.ip,
+        userAgent: request.headers['user-agent'] ?? null,
+        contentType: request.headers['content-type'] ?? null,
+        /*
+         * A short preview, not the body. It is enough to recognise a wire format — tab-separated
+         * rows, XML, JSON — and short enough that a unit posting continuously to a path we do not
+         * serve cannot fill the journal.
+         */
+        preview: bodyText(request.body).slice(0, 200),
+      },
+      'A terminal asked for a path this connector does not serve. If attendance is missing, this ' +
+        'is the protocol mismatch: the unit is not speaking a protocol this build answers.',
+    );
+
+    return reply.status(404).type('text/plain').send('');
   });
 
   /** Liveness for whoever is standing in front of the machine. Carries nothing sensitive. */

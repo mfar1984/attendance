@@ -5221,6 +5221,12 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
     'The password is encrypted before storage and is never returned. The terminal is probed immediately so an address or credential mistake shows up now, not as missing attendance tomorrow.',
   'device.dialog.probing': 'Probing…',
   'device.dialog.submit.add': 'Add and probe',
+
+  'device.dialog.blocked.name': 'Enter a terminal name.',
+  'device.dialog.blocked.host': 'Enter the terminal address.',
+  'device.dialog.blocked.serial':
+    'Enter the serial number. This protocol identifies the terminal by it and nothing else, so without one every scan is refused.',
+  'device.dialog.blocked.password': 'Enter the device password.',
   'device.saved.added': '{name} added and probed.',
   'device.saved.added.warnings': '{name} added and probed — {count} warnings.',
   'device.saved.added.unreachable': '{name} added but could not be reached: {error}',
@@ -5390,11 +5396,16 @@ export const EN_LABELS_DEVICE_HEALTH: Partial<Record<LabelKey, string>> = {
   'device.editor.field.host.caption': 'IP / hostname',
   'device.editor.field.host.hint':
     'The terminal accepts either. This address also becomes the target for push notifications.',
+  'device.editor.field.host.hint.callback':
+    'This server never contacts this terminal — the terminal contacts the server. The address is kept for diagnosis, and updates itself to whichever address the terminal connects from.',
   'device.editor.field.port': 'Port',
   'device.editor.field.tls': 'Transport',
   // self-signed is the certificate's own term and stays.
   'device.editor.field.tls.hint':
     'Terminals ship with a self-signed certificate, so certificate verification is off by default and switched on per device.',
+  'device.editor.field.tls.hint.callback':
+    'The terminal decides how it contacts this server, so there is nothing to set here. Its traffic is plain HTTP on the LAN — put the terminal on its own VLAN.',
+  'device.editor.field.tls.callback': 'Set on the terminal',
   'device.editor.field.https': 'Use HTTPS',
   'device.editor.field.verifyTls': 'Verify certificate',
   'device.editor.field.username': 'Username',

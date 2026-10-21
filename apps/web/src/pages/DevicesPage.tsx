@@ -806,6 +806,24 @@ function DeviceDialog({
    */
   const needsCredentials = usesStoredCredentials(protocol);
 
+  /**
+   * Why the submit is off, in words, or null when it is not.
+   *
+   * One value for both the guard and the tooltip, so they cannot disagree — a button disabled by
+   * one condition while its tooltip names another is worse than no tooltip. Ordered the way the
+   * form is read, so the first missing field named is the first one somebody meets.
+   */
+  const blocked =
+    name.trim() === ''
+      ? t('device.dialog.blocked.name')
+      : host.trim() === ''
+        ? t('device.dialog.blocked.host')
+        : !needsCredentials && serialNumber.trim() === ''
+          ? t('device.dialog.blocked.serial')
+          : needsCredentials && password === ''
+            ? t('device.dialog.blocked.password')
+            : null;
+
   /*
    * No protocol gate on the connector choice, and that is a change.
    *
@@ -1071,6 +1089,21 @@ function DeviceDialog({
           </div>
         )}
 
+        {/*
+          The missing serial, where the editor already says it.
+
+          A hint under the field was not enough: it reads as advice next to an optional box, and
+          the only other signal was a submit button that did nothing when pressed. Same strip and
+          same wording as the editor, so the two screens agree about what is wrong.
+        */}
+        {!needsCredentials && serialNumber.trim() === '' && (
+          <div className="pb-2">
+            <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+              <T k="device.editor.field.serialIdentity.missing" />
+            </PanelNote>
+          </div>
+        )}
+
         <DialogFooter
           onClose={onClose}
           onSubmit={() => void submit()}
@@ -1080,13 +1113,16 @@ function DeviceDialog({
             condition unconditionally would leave the submit button permanently disabled on a
             callback terminal, with no field on screen explaining why.
           */
-          disabled={
-            name.trim() === '' ||
-            host.trim() === '' ||
-            (needsCredentials && password === '') ||
-            // The server refuses a callback terminal with no serial, so the button says so first.
-            (!needsCredentials && serialNumber.trim() === '')
-          }
+          disabled={blocked !== null}
+          /*
+            And the reason travels with it.
+
+            The button was disabled with nothing to explain it, which is the trap this project's
+            own rule names: a dead control teaches somebody the screen is broken rather than that
+            a field is missing. `submitTitle` is the same mechanism the connector update dialog
+            uses for the same reason.
+          */
+          {...(blocked === null ? {} : { submitTitle: blocked })}
           submitLabel={<T k={busy ? 'device.dialog.probing' : 'device.dialog.submit.add'} />}
         />
       </div>

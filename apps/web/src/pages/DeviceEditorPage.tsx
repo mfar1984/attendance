@@ -506,6 +506,22 @@ function ConnectionTab({
   const [doorNo, setDoorNo] = useState(String(device.doorNo));
   /** Whether this protocol authenticates with a stored username and password. */
   const needsCredentials = usesStoredCredentials(device.protocol);
+
+  /**
+   * Why Save is off, in words, or null when it is not.
+   *
+   * One value for both the guard and the tooltip. The serial is the case that matters: it is
+   * required on a callback protocol and the card that holds it is far enough up the page that a
+   * dead Save button read as the screen being broken.
+   */
+  const blocked =
+    name.trim() === ''
+      ? t('device.dialog.blocked.name')
+      : host.trim() === ''
+        ? t('device.dialog.blocked.host')
+        : !needsCredentials && serialNumber.trim() === ''
+          ? t('device.dialog.blocked.serial')
+          : null;
   const [active, setActive] = useState(device.active);
   const [locationId, setLocationId] = useState(
     device.locationId === null ? '' : String(device.locationId),
@@ -687,8 +703,22 @@ function ConnectionTab({
 
           <SettingRow
             label={<T k="device.editor.field.host" />}
-            hint={<T k="device.editor.field.host.hint" />}
-            required
+            /*
+              The address means two different things, so it is described two different ways.
+              On ISAPI it is where the server dials. On a callback protocol nothing dials it — the
+              terminal connects outward — so it is a diagnostic note of where the unit was last
+              seen, which is what the add dialog already says.
+            */
+            hint={
+              <T
+                k={
+                  needsCredentials
+                    ? 'device.editor.field.host.hint'
+                    : 'device.editor.field.host.hint.callback'
+                }
+              />
+            }
+            required={needsCredentials}
           >
             <ControlGrid columns={3}>
               <ControlCell caption={<T k="device.editor.field.host.caption" />} className="sm:col-span-2">
@@ -700,44 +730,74 @@ function ConnectionTab({
                   placeholder="192.168.1.250"
                 />
               </ControlCell>
-              <ControlCell caption={<T k="device.editor.field.port" />}>
-                <TextControl
-                  label={t('device.editor.field.port')}
-                  inputMode="numeric"
-                  value={port}
-                  disabled={!editable}
-                  onChange={(event) => setPort(event.target.value.replace(/\D/g, ''))}
-                />
-              </ControlCell>
+              {/*
+                Port only where something dials the port.
+
+                A callback terminal is never connected to, so this field governed nothing — and it
+                showed `443` with HTTPS on, which rendered the row as `https://192.168.0.32:443` on
+                a unit that opens the connection itself. A control that reads as a live setting and
+                decides nothing is worse than its absence, because somebody will change it and
+                then believe the terminal is being reached that way.
+              */}
+              {needsCredentials && (
+                <ControlCell caption={<T k="device.editor.field.port" />}>
+                  <TextControl
+                    label={t('device.editor.field.port')}
+                    inputMode="numeric"
+                    value={port}
+                    disabled={!editable}
+                    onChange={(event) => setPort(event.target.value.replace(/\D/g, ''))}
+                  />
+                </ControlCell>
+              )}
             </ControlGrid>
           </SettingRow>
 
-          <SettingRow
-            label={<T k="device.editor.field.tls" />}
-            hint={<T k="device.editor.field.tls.hint" />}
-          >
-            <ControlGrid columns={2}>
-              <ControlCell>
-                <Switch
-                  checked={useHttps}
-                  disabled={!editable}
-                  onChange={(next) => {
-                    setUseHttps(next);
-                    setPort(next ? '443' : '80');
-                  }}
-                  label={t('device.editor.field.https')}
-                />
-              </ControlCell>
-              <ControlCell>
-                <Switch
-                  checked={verifyTls}
-                  disabled={!editable || !useHttps}
-                  onChange={setVerifyTls}
-                  label={t('device.editor.field.verifyTls')}
-                />
-              </ControlCell>
-            </ControlGrid>
-          </SettingRow>
+          {/*
+            Transport, for a protocol that has one to configure.
+
+            Replaced rather than disabled on a callback terminal, for the same reason the
+            credentials card is: greyed-out switches read as controls somebody lacks permission
+            for, which sends them looking for the permission. What takes their place says the
+            terminal decides, which is the fact.
+          */}
+          {needsCredentials ? (
+            <SettingRow
+              label={<T k="device.editor.field.tls" />}
+              hint={<T k="device.editor.field.tls.hint" />}
+            >
+              <ControlGrid columns={2}>
+                <ControlCell>
+                  <Switch
+                    checked={useHttps}
+                    disabled={!editable}
+                    onChange={(next) => {
+                      setUseHttps(next);
+                      setPort(next ? '443' : '80');
+                    }}
+                    label={t('device.editor.field.https')}
+                  />
+                </ControlCell>
+                <ControlCell>
+                  <Switch
+                    checked={verifyTls}
+                    disabled={!editable || !useHttps}
+                    onChange={setVerifyTls}
+                    label={t('device.editor.field.verifyTls')}
+                  />
+                </ControlCell>
+              </ControlGrid>
+            </SettingRow>
+          ) : (
+            <SettingRow
+              label={<T k="device.editor.field.tls" />}
+              hint={<T k="device.editor.field.tls.hint.callback" />}
+            >
+              <Unsupported>
+                <T k="device.editor.field.tls.callback" />
+              </Unsupported>
+            </SettingRow>
+          )}
 
           {/*
             Who reaches this terminal. Placed in the address card because that is the question it
@@ -918,14 +978,16 @@ function ConnectionTab({
       <PanelActions hint={<T k="device.editor.connection.hint" />}>
         <Button
           onClick={() => void submit()}
-          disabled={
-            busy ||
-            !editable ||
-            name.trim() === '' ||
-            host.trim() === '' ||
-            // The server refuses a callback terminal with no serial, so the button says so first.
-            (!needsCredentials && serialNumber.trim() === '')
-          }
+          disabled={busy || !editable || blocked !== null}
+          /*
+            The reason, on the control somebody reaches for.
+
+            Correcting a wrong address on a callback terminal whose serial has never been filled in
+            used to meet a Save that did nothing, with the amber strip about the serial sitting in a
+            card further up the page and reading as unrelated. Naming it here is what connects the
+            two.
+          */
+          {...(blocked === null ? {} : { title: blocked })}
         >
           <Save className="size-4" aria-hidden />
           <T k="device.editor.save" />

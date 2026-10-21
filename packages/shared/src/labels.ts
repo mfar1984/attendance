@@ -4503,6 +4503,24 @@ export const LABELS = {
   'device.dialog.submit.add': 'Tambah dan periksa',
 
   /**
+   * Why the commit control is off, on the control itself.
+   *
+   * Shared by the add dialog and the editor's Save, because both refuse for the same reasons and
+   * one of them is the same field. The rule they exist to satisfy: a tindakan yang dimatikan
+   * menyatakan sebabnya dalam tooltip, bukan hidup lalu pulangkan 400.
+   *
+   * The serial is the one that was actually costing time. It is required on a callback protocol —
+   * the server refuses the write — but the card holding it sits far enough up the editor that a
+   * dead Save button read as a broken screen rather than as a missing field. Named, it reads as a
+   * field to fill in.
+   */
+  'device.dialog.blocked.name': 'Masukkan nama terminal.',
+  'device.dialog.blocked.host': 'Masukkan alamat terminal.',
+  'device.dialog.blocked.serial':
+    'Masukkan nombor siri. Protokol ini mengenali terminal melaluinya sahaja, jadi tanpa nombor siri setiap scan ditolak.',
+  'device.dialog.blocked.password': 'Masukkan kata laluan peranti.',
+
+  /**
    * Saved, then probed — two outcomes, each a whole sentence.
    *
    * The warning count is a clause of its own for the same reason as everywhere else: on a
@@ -4754,10 +4772,31 @@ export const LABELS = {
   'device.editor.field.host.caption': 'IP / hostname',
   'device.editor.field.host.hint':
     'Terminal menerima kedua-duanya. Alamat ini juga menjadi sasaran notifikasi push.',
+  /**
+   * The same field, meaning something else.
+   *
+   * On a callback protocol nothing dials this address — the terminal connects outward — so it is a
+   * record of where the unit was last seen rather than a target. It is also not required, and the
+   * ingest path overwrites it from whatever address the terminal actually contacts from, which is
+   * the only way a remote site behind NAT is ever discovered.
+   */
+  'device.editor.field.host.hint.callback':
+    'Pelayan tidak pernah menghubungi terminal ini — terminal yang menghubungi pelayan. Alamat ini disimpan untuk diagnosis, dan dikemas kini sendiri kepada alamat yang terminal hubungi dari.',
   'device.editor.field.port': 'Port',
   'device.editor.field.tls': 'Pengangkutan',
   'device.editor.field.tls.hint':
     'Terminal dihantar dengan sijil self-signed, jadi pengesahan sijil dimatikan secara lalai dan dihidupkan per peranti.',
+  /**
+   * Transport on a protocol where this server configures none.
+   *
+   * The switches used to render live here and decided nothing: they showed HTTPS on and port 443
+   * for a terminal that opens the connection itself, so the row read as `https://192.168.0.32:443`
+   * on a unit nothing connects to. Replaced rather than disabled, like the credentials card — a
+   * greyed switch reads as a permission somebody lacks.
+   */
+  'device.editor.field.tls.hint.callback':
+    'Terminal yang memutuskan cara ia menghubungi pelayan ini, jadi tiada apa di sini untuk ditetapkan. Trafiknya HTTP biasa dalam LAN — letakkan terminal pada VLAN sendiri.',
+  'device.editor.field.tls.callback': 'Ditetapkan pada terminal',
   'device.editor.field.https': 'Guna HTTPS',
   'device.editor.field.vendor': 'Jenama dan protokol',
   'device.editor.field.vendor.hint':
