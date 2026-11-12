@@ -4381,6 +4381,38 @@ export const LABELS = {
   'device.warning.remoteCheck':
     'Pengesahan jauh aktif melalui "{channel}". Setiap scan menunggu {timeout}s.',
 
+  /**
+   * Why one operation is unavailable on one unit, as the driver declares it.
+   *
+   * `DriverCapabilities.unavailable` held these as Malay prose written inline in the driver.
+   * They are registered because they are rendered on the device editor, beside the control they
+   * grey out — and a driver is constructed by a probe, a heartbeat and a list request, none of
+   * which has a reader whose language could be consulted. `device.warning.*` above has always
+   * been keyed; these were the exception.
+   *
+   * Not merged with `device.warning.faceAtTerminal`, which says the same thing about the same
+   * firmware. That one is a health warning on the device list — one line in a column of faults —
+   * and these two are the explanation on the control somebody is reaching for, so they name the
+   * version and say where to enrol instead.
+   */
+  'device.capability.faceFirmwareUnknown':
+    'Versi firmware belum diketahui. Muat naik wajah memerlukan V1.5 atau lebih baharu, jadi daftarkan wajah di terminal itu sendiri sehingga terminal melaporkan versinya.',
+  'device.capability.faceFirmwareOld':
+    'Firmware {firmware} tidak menerima muat naik wajah (perlukan V1.5 atau lebih baharu). Wajah mesti didaftarkan di terminal itu sendiri.',
+
+  /**
+   * The three writes a connector relays for but will not perform.
+   *
+   * Each states why queueing it would be worse than refusing it, because that is the question an
+   * operator has when the control is greyed: whether to wait, or to walk to the terminal.
+   */
+  'device.capability.agent.openDoor':
+    'Terminal ini dicapai melalui connector tapak, jadi arahan mengambil beberapa saat untuk sampai. Pintu yang terbuka selepas lengah begitu terbuka ketika tiada siapa menjangkakannya — buka di terminal itu sendiri.',
+  'device.capability.agent.setClock':
+    'Connector menetapkan jam terminal sendiri daripada masa cloud yang ia terima pada setiap heartbeat. Cap masa yang dibariskan dari sini sudah lapuk ketika ia dikutip, dan menulis masa lapuk ke jam mengekalkan hanyutan yang sepatutnya dibetulkan. Tetapkan hos NTP sebaliknya.',
+  'device.capability.agent.configureCallback':
+    'Sasaran push untuk terminal di belakang connector ialah alamat LAN connector itu sendiri, yang ia tahu dan pelayan ini tidak. Connector menetapkannya sendiri.',
+
   'device.list.count': '{count} terminal',
   'device.list.subtitle':
     'Push mempercepatkan kemasukan tetapi bukan sumber kebenaran — tarikan berkala tetap berjalan sebagai jaring keselamatan.',
@@ -4731,6 +4763,30 @@ export const LABELS = {
   'device.editor.readOnly':
     'Tab ini baca-sahaja kerana peranan anda tiada kebenaran {action} pada Senarai Peranti. Mintanya di Tetapan › Pengurusan Peranan.',
 
+  /**
+   * Which tabs this terminal does not have, and that nothing is broken.
+   *
+   * The editor draws its tabs from the driver's own capability list, so a ZKTeco unit shows
+   * three where a Hikvision unit shows seven. Said out loud because the alternative reading is
+   * that the screen failed to load half of itself — and that reading is likelier for whoever
+   * has seen the other terminal. One note, on the tab that is always present.
+   *
+   * `{tabs}` is the list of absent tab names, joined by the caller from the same label keys the
+   * tab strip renders, so the sentence cannot name a tab differently from the strip.
+   */
+  'device.editor.scope.limited':
+    'Tab {tabs} tidak dipaparkan: protokol {protocol} tiada konsep bagi tetapan itu, jadi tiada apa di sana untuk dibaca atau ditulis. Tiada apa rosak — tab kosong akan terbaca seperti terminal yang tidak menjawab.',
+  /**
+   * A terminal nothing in this system can drive.
+   *
+   * Two causes, and the note names both rather than guessing: a protocol with no driver built
+   * (`dahua-cgi` is selectable in the add dialog and has none), or an ISAPI row whose stored
+   * credential is missing. The record itself stays editable, which is why the Connection tab is
+   * never hidden.
+   */
+  'device.editor.scope.none':
+    'Tiada tetapan terminal boleh dibaca atau ditulis untuk protokol {protocol}: tiada pemandu dalam sistem ini memandunya, atau kredensial unit ini belum tersimpan. Rekod di bawah masih boleh disunting. Untuk terminal yang perlu diurus dari sini, tambah rekod baharu pada protokol yang disokong dan nyahaktifkan yang ini — protokol tidak boleh ditukar selepas rekod dicipta kerana kunci event padanya dinamaruangkan olehnya.',
+
   // Tab Sambungan
   'device.editor.connection.title': 'Sambungan',
   'device.editor.connection.subtitle':
@@ -4849,6 +4905,15 @@ export const LABELS = {
   'device.editor.identity.withCard': 'Ada kad',
   'device.editor.identity.noCredentials':
     '{count} orang wujud pada terminal ini tanpa muka, cap jari mahupun kad. Mereka tidak boleh scan sama sekali, dan terminal tidak melaporkan ralat apabila mereka mencuba.',
+  /**
+   * The protocol has no endpoint that enumerates its users.
+   *
+   * Shown in place of the four-cell breakdown rather than printing em dashes in it. A dash reads
+   * as "not measured yet"; this says there is nothing to measure, which is a different
+   * instruction — nobody should wait for it or press reload.
+   */
+  'device.editor.identity.noCounts':
+    'Protokol ini tiada endpoint yang menyenaraikan pengguna terminal, jadi pecahan kredensial tidak boleh dibaca dari unit. Kiraan di Direktori Staf datang daripada pendaftaran yang sistem ini lakukan sendiri.',
   'device.editor.identity.libraries': 'Pustaka',
   'device.editor.identity.libraries.caption': 'FDID:jenis',
   'device.editor.identity.libraries.hint':

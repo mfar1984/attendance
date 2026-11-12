@@ -23,11 +23,13 @@ export type { TerminalEvent } from './events.js';
 export {
   APPLIED,
   DriverOperation,
+  declares,
   queued,
   supports,
   unavailableReason,
   type DriverCapabilities,
   type Reachability,
+  type UnavailableReason,
   type WriteAck,
   type WriteModel,
 } from './capabilities.js';

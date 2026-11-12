@@ -31,6 +31,7 @@ export { driverLogger, setDriverLogger, type DriverLogger } from './logging.js';
 export {
   APPLIED,
   DriverOperation,
+  declares,
   queued,
   supports,
   unavailableReason,
@@ -40,6 +41,7 @@ export {
   type Reachability,
   type TerminalDriver,
   type TerminalEvent,
+  type UnavailableReason,
   type WriteAck,
   type WriteModel,
 } from './contract.js';

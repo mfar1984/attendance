@@ -80,18 +80,37 @@ export async function deviceTerminalRoutes(app: FastifyInstance): Promise<void> 
     async (request) => {
       const device = await requireDevice(idParam(request.params));
       const driver = driverFor(device);
+      const can = (operation: DriverOperation): boolean =>
+        supports(driver.capabilities, operation);
 
+      /*
+        Each read skipped where the driver declares it absent, rather than attempted and caught.
+
+        `counts` is the one that mattered: TA Push has no endpoint that enumerates its users, so
+        `identity.counts()` refuses — and inside a `Promise.all` that refusal took the identity
+        block with it. The whole tab rendered as a red error strip for a terminal that was working
+        perfectly, which is the exact confusion `capabilities` exists to remove. Null now, and the
+        screen says the protocol does not report credential counts.
+
+        `identity.read()` is not gated. Every driver answers it, a callback protocol by serving the
+        values the unit reported on handshake, and the tab is only drawn when at least one of its
+        operations is declared — so a refusal here is a genuine fault worth showing as one.
+      */
       // Concurrent here, serialised in the driver: the transport keeps one request in flight
       // per unit, so this reads as parallel without producing parallel traffic.
       const [info, counts] = await Promise.all([
         driver.identity.read(),
-        driver.identity.counts(),
+        can(DriverOperation.readCounts) ? driver.identity.counts() : Promise.resolve(null),
       ]);
 
       // Advisory, and separately fallible: a firmware that hides the face library must
       // not blank out the identity block beside it.
-      const libraries = await driver.identity.faceStores().catch(() => []);
-      const capacity = await driver.identity.capacity().catch(() => null);
+      const libraries = can(DriverOperation.readFaceStores)
+        ? await driver.identity.faceStores().catch(() => [])
+        : [];
+      const capacity = can(DriverOperation.readCapacity)
+        ? await driver.identity.capacity().catch(() => null)
+        : null;
 
       return jsonSafe({
         info,
@@ -134,7 +153,8 @@ export async function deviceTerminalRoutes(app: FastifyInstance): Promise<void> 
        * to expose. Reading it through a neutral method would mean every driver implementing a
        * concept only one of them has. Allowed to come back empty so the tab still renders.
        */
-      const servers = await clientFor(device).system.ntpServers().catch(() => []);
+      const client = rawIsapiClient(device);
+      const servers = client === null ? [] : await client.system.ntpServers().catch(() => []);
 
       return jsonSafe({
         driftSeconds: clock.driftSeconds,
@@ -295,8 +315,15 @@ export async function deviceTerminalRoutes(app: FastifyInstance): Promise<void> 
         reader,
         options,
         doorNo: device.doorNo,
-        /** So the screen can tell "this vendor has no such control" from "not answering". */
-        capabilities: driver.capabilities,
+        /*
+          The driver's capability list is not repeated here either.
+
+          It was, so the screen could tell "this vendor has no such control" from "not
+          answering" — but nothing read it, and the tab rendered for every protocol regardless.
+          `GET /api/devices` carries it per row now, which is the only place it can usefully live:
+          the tab strip has to decide whether to draw this tab at all, which happens before any
+          read of it.
+        */
       });
     },
   );
@@ -632,7 +659,19 @@ export async function deviceTerminalRoutes(app: FastifyInstance): Promise<void> 
       return jsonSafe({
         ...reported,
         protocol: driver.protocol,
-        capabilities: driver.capabilities,
+        /*
+          The driver's capability list is deliberately NOT repeated here.
+
+          It used to be, under the key `capabilities` — the same key `reported` already carries for
+          the unit's own ISAPI capability documents, and it was spread first. So the neutral list
+          overwrote them, and the diagnostics tab's "capability documents" group rendered
+          `operations`, `writeModel` and `reachability` instead of the documents whose option lists
+          build the door tab. The one group on the screen that exists to explain a missing control
+          was showing something else entirely.
+
+          `GET /api/devices` carries the list per row now, which is where the editor reads it from,
+          so there is one copy on the wire rather than two keys fighting over a name.
+        */
         cursor: {
           /**
            * Null on a protocol with no pull, rather than the stored zero.
@@ -654,6 +693,30 @@ export async function deviceTerminalRoutes(app: FastifyInstance): Promise<void> 
 }
 
 /**
+ * The raw ISAPI client, or null where this server does not hold the socket to the unit.
+ *
+ * Both callers want the same thing: a Hikvision-only extra if it can be had, and nothing if it
+ * cannot. `clientFor` answers that with a **throw** — and because it throws before the promise it
+ * returns exists, the `.catch(() => [])` written beside each call never ran.
+ *
+ * So both of these tabs failed outright for a terminal behind a connector: the protocol is still
+ * ISAPI, so neither call was skipped, but the driver is `AgentProxyDriver` and `clientFor` refuses
+ * anything that is not the real Hikvision driver. The Clock and Door tabs 409'd for every connector
+ * site, which is the opposite of what the snapshot reads were built for, and the comment beside the
+ * NTP read says in as many words that it is "allowed to come back empty so the tab still renders".
+ *
+ * Also covers an ISAPI row with no stored credential, where `clientFor` refuses for a different
+ * reason and the tab should still render what the driver can answer.
+ */
+function rawIsapiClient(device: Device): ReturnType<typeof clientFor> | null {
+  try {
+    return clientFor(device);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Hikvision `AcsCfg`, or null on a terminal that has no such document.
  *
  * Kept off the driver contract deliberately. Every field in here belongs to one vendor —
@@ -667,9 +730,10 @@ export async function deviceTerminalRoutes(app: FastifyInstance): Promise<void> 
 async function readAcsConfig(device: Device): Promise<Record<string, unknown> | null> {
   if (device.protocol !== DeviceProtocol.isapi) return null;
 
-  const acs = await clientFor(device)
-    .system.acsConfig()
-    .catch(() => null);
+  const client = rawIsapiClient(device);
+  if (client === null) return null;
+
+  const acs = await client.system.acsConfig().catch(() => null);
   if (acs === null) return null;
 
   return {

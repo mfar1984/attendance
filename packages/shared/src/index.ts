@@ -3,6 +3,16 @@ export {
   DEFAULT_DEDUP_WINDOW_SECONDS,
   DEVICE_LIMITS,
 } from './limits.js';
+export {
+  DriverOperation,
+  declares,
+  supports,
+  unavailableReason,
+  type DriverCapabilities,
+  type Reachability,
+  type UnavailableReason,
+  type WriteModel,
+} from './capabilities.js';
 
 export {
   LABELS,

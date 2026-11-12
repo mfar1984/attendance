@@ -21,7 +21,7 @@ import { syncDevice } from '../sync/worker.js';
 import { toHikvisionTimeZone, zoneOffsetMinutes } from '../time.js';
 import { checkAllDevices, checkDevice } from './health.js';
 import { CommandKind, enqueueReplacing } from './driver/commands.js';
-import { clientFor, driverFor, releaseClient } from './registry.js';
+import { capabilitiesFor, clientFor, driverFor, releaseClient } from './registry.js';
 
 const deviceInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -229,10 +229,29 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       // The stored password is never returned, not even encrypted: nothing in the
       // UI needs it, and an endpoint that emits it becomes the weak point.
       return jsonSafe(
-        devices.map(({ passwordEncrypted: _omitted, ...device }) => ({
-          ...device,
-          enrolled: device._count.enrolments,
-        })),
+        devices.map((row) => {
+          const { passwordEncrypted: _omitted, ...device } = row;
+          return {
+            ...device,
+            /**
+             * What this unit's driver says it can do, overriding the stored column of the
+             * same name.
+             *
+             * The editor renders its tabs from this: a tab whose every operation is absent on
+             * the protocol is not drawn at all, and a control the firmware cannot perform is
+             * disabled with the driver's own reason beside it. Sent on the list rather than
+             * from a tab's own read, because a tab that learned its capabilities from its own
+             * failed read would have to be drawn first in order to find out it should not be —
+             * and the tab strip would visibly collapse a moment after the page appeared.
+             *
+             * Derived per row, never per protocol: `ZktecoTaPushDriver` decides face upload
+             * from `device.firmware`, so two ZKTeco units on one site can legitimately answer
+             * differently. See `capabilitiesFor` for why the stored column is not the source.
+             */
+            capabilities: capabilitiesFor(row),
+            enrolled: device._count.enrolments,
+          };
+        }),
       );
     },
   );

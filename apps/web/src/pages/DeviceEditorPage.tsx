@@ -1,4 +1,13 @@
-import { usesStoredCredentials, type LabelKey } from '@attendance/shared';
+import {
+  DriverOperation,
+  declares,
+  supports,
+  unavailableReason,
+  usesStoredCredentials,
+  type DriverCapabilities,
+  type LabelKey,
+  type UnavailableReason,
+} from '@attendance/shared';
 import {
   Activity,
   ArrowLeft,
@@ -132,6 +141,31 @@ export function DeviceEditorPage(): ReactNode {
 
   const status = health?.status ?? device.status;
 
+  /**
+   * The live tabs this terminal actually has, and nothing else.
+   *
+   * A tab is drawn when the protocol declares at least one of the operations it is built on.
+   * `declares` rather than `supports`, so a tab whose controls exist but are unavailable on this
+   * firmware still appears and carries the reason — hiding it would hide the explanation, and the
+   * explanation is the actionable half.
+   */
+  const capabilities = device.capabilities;
+  const liveTabs =
+    capabilities === null
+      ? []
+      : LIVE_TABS.filter((entry) =>
+          entry.operations.some((operation) => declares(capabilities, operation)),
+        );
+
+  /*
+    Falls back to Connection when the selected tab is no longer on offer.
+
+    Reachable: saving the Connection tab reloads the record, and assigning a connector changes
+    which driver the row resolves to. Without this the panel below the strip would render nothing
+    with no tab marked active.
+  */
+  const activeTab = liveTabs.some((entry) => entry.id === tab) ? tab : 'connection';
+
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
       <header className="flex flex-wrap items-start justify-between gap-3 px-5 pt-5 pb-4">
@@ -173,63 +207,174 @@ export function DeviceEditorPage(): ReactNode {
 
       <PanelTabs
         label={t('device.editor.tabs.aria')}
-        active={tab}
+        active={activeTab}
         onChange={setTab}
         tabs={[
+          /*
+            Connection is never capability-gated. It is the record rather than the terminal, it is
+            the only thing editable on a unit nothing can drive, and it is where the protocol that
+            decided the rest of this strip is shown.
+          */
           {
             id: 'connection',
             label: <T k="device.editor.tab.connection" />,
             labelText: t('device.editor.tab.connection'),
             icon: <Plug className="size-4" aria-hidden />,
           },
-          {
-            id: 'identity',
-            label: <T k="device.editor.tab.identity" />,
-            labelText: t('device.editor.tab.identity'),
-            icon: <Search className="size-4" aria-hidden />,
-          },
-          {
-            id: 'clock',
-            label: <T k="device.editor.tab.clock" />,
-            labelText: t('device.editor.tab.clock'),
-            icon: <Clock className="size-4" aria-hidden />,
-          },
-          {
-            id: 'attendance',
-            label: <T k="device.editor.tab.attendance" />,
-            labelText: t('device.editor.tab.attendance'),
-            icon: <ClipboardList className="size-4" aria-hidden />,
-          },
-          {
-            id: 'door',
-            label: <T k="device.editor.tab.door" />,
-            labelText: t('device.editor.tab.door'),
-            icon: <DoorOpen className="size-4" aria-hidden />,
-          },
-          {
-            id: 'push',
-            label: <T k="device.editor.tab.push" />,
-            labelText: t('device.editor.tab.push'),
-            icon: <Radio className="size-4" aria-hidden />,
-          },
-          {
-            id: 'diagnostics',
-            label: <T k="device.editor.tab.diagnostics" />,
-            labelText: t('device.editor.tab.diagnostics'),
-            icon: <Stethoscope className="size-4" aria-hidden />,
-          },
+          ...liveTabs.map((entry) => ({
+            id: entry.id,
+            label: <T k={entry.labelKey} />,
+            labelText: t(entry.labelKey),
+            icon: entry.icon,
+          })),
         ]}
       />
 
-      {tab === 'connection' && <ConnectionTab device={device} onSaved={loadRecord} />}
-      {tab === 'identity' && <IdentityTab device={device} />}
-      {tab === 'clock' && <ClockTab device={device} />}
-      {tab === 'attendance' && <AttendanceTab device={device} />}
-      {tab === 'door' && <DoorTab device={device} />}
-      {tab === 'push' && <PushTab device={device} />}
-      {tab === 'diagnostics' && <DiagnosticsTab device={device} />}
+      {activeTab === 'connection' && (
+        <ConnectionTab device={device} hiddenTabs={hiddenTabKeys(liveTabs)} onSaved={loadRecord} />
+      )}
+      {activeTab === 'identity' && <IdentityTab device={device} />}
+      {activeTab === 'clock' && <ClockTab device={device} />}
+      {activeTab === 'attendance' && <AttendanceTab device={device} />}
+      {activeTab === 'door' && <DoorTab device={device} />}
+      {activeTab === 'push' && <PushTab device={device} />}
+      {activeTab === 'diagnostics' && <DiagnosticsTab device={device} />}
     </section>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Which tabs exist, and what each one is built on
+// ---------------------------------------------------------------------------
+
+interface LiveTab {
+  id: string;
+  labelKey: LabelKey;
+  icon: ReactNode;
+  /**
+   * The driver operations this tab's controls call.
+   *
+   * Written out per tab rather than inferred, because the mapping is a fact about this screen and
+   * not about the driver contract: the Door tab holds the remote release as well as the door and
+   * reader settings, and the Diagnostics tab hosts the reboot. Listing them is what lets the tab
+   * be dropped whole when a protocol has none of them.
+   *
+   * `enrolFace`, `upsertPerson` and the rest are deliberately absent from every entry: they belong
+   * to the Biometrics and Staff screens, and claiming them here would keep a tab alive for work it
+   * does not do. The Identity tab still *shows* the reason `enrolFace` is unavailable, beside the
+   * face count somebody reads before concluding they can add one — reading a reason is not the
+   * same as offering the operation, and only the latter decides whether a tab exists.
+   */
+  operations: readonly DriverOperation[];
+}
+
+const LIVE_TABS: readonly LiveTab[] = [
+  {
+    id: 'identity',
+    labelKey: 'device.editor.tab.identity',
+    icon: <Search className="size-4" aria-hidden />,
+    operations: [
+      DriverOperation.readIdentity,
+      DriverOperation.readCounts,
+      DriverOperation.readCapacity,
+      DriverOperation.readFaceStores,
+    ],
+  },
+  {
+    id: 'clock',
+    labelKey: 'device.editor.tab.clock',
+    icon: <Clock className="size-4" aria-hidden />,
+    operations: [
+      DriverOperation.readClock,
+      DriverOperation.setClockManually,
+      DriverOperation.configureNtp,
+    ],
+  },
+  {
+    id: 'attendance',
+    labelKey: 'device.editor.tab.attendance',
+    icon: <ClipboardList className="size-4" aria-hidden />,
+    operations: [DriverOperation.readAttendanceMode, DriverOperation.writeAttendanceMode],
+  },
+  {
+    id: 'door',
+    labelKey: 'device.editor.tab.door',
+    icon: <DoorOpen className="size-4" aria-hidden />,
+    operations: [
+      DriverOperation.readDoorSettings,
+      DriverOperation.writeDoorSettings,
+      DriverOperation.readReaderSettings,
+      DriverOperation.writeReaderSettings,
+      DriverOperation.openDoor,
+    ],
+  },
+  {
+    id: 'push',
+    labelKey: 'device.editor.tab.push',
+    icon: <Radio className="size-4" aria-hidden />,
+    operations: [
+      DriverOperation.readCallbackTargets,
+      DriverOperation.configureCallback,
+      DriverOperation.clearCallback,
+    ],
+  },
+  {
+    id: 'diagnostics',
+    labelKey: 'device.editor.tab.diagnostics',
+    icon: <Stethoscope className="size-4" aria-hidden />,
+    operations: [DriverOperation.readDiagnostics, DriverOperation.reboot],
+  },
+];
+
+/** The tabs this protocol does not have, for the note that says so. */
+function hiddenTabKeys(shown: readonly LiveTab[]): readonly LabelKey[] {
+  const visible = new Set(shown.map((entry) => entry.id));
+  return LIVE_TABS.filter((entry) => !visible.has(entry.id)).map((entry) => entry.labelKey);
+}
+
+// ---------------------------------------------------------------------------
+// Reading a capability at a control
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether this terminal can be asked to do one thing right now.
+ *
+ * Null capabilities mean no driver at all, which is a no for every operation — and the tabs that
+ * would have offered them are not drawn, so this is the belt rather than the braces.
+ *
+ * Named `canDo` because every tab already destructures a `can` from `useAuth()` for the permission
+ * question. Two things called `can` deciding whether one button is enabled is how a grant check
+ * ends up answering a capability question, or the reverse.
+ */
+function canDo(device: DeviceRecord, operation: DriverOperation): boolean {
+  return device.capabilities !== null && supports(device.capabilities, operation);
+}
+
+/**
+ * The driver's own reason this unit cannot perform an operation, or null.
+ *
+ * Rendered in the `hint` of the row holding the control rather than in a tooltip, because a
+ * consequence that only appears on hover is one that gets skipped — and this is the sentence that
+ * decides whether somebody waits or walks to the terminal.
+ */
+function why(device: DeviceRecord, operation: DriverOperation): UnavailableReason | null {
+  return device.capabilities === null ? null : unavailableReason(device.capabilities, operation);
+}
+
+/**
+ * Whether the protocol has no concept of an operation at all.
+ *
+ * The third state, and the one that decides whether anything is drawn. A group whose only
+ * operation is undeclared is omitted the way a tab is: there is nothing to explain, and a greyed
+ * control for a concept the vendor has never heard of reads as a fault or as a missing grant.
+ */
+function undeclared(device: DeviceRecord, operation: DriverOperation): boolean {
+  return device.capabilities === null || !declares(device.capabilities, operation);
+}
+
+/** A capability reason as a node, for a row hint that otherwise carries its usual wording. */
+function Reason({ reason }: { reason: UnavailableReason }): ReactNode {
+  return <T k={reason.key} vars={reason.vars} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -474,9 +619,18 @@ function ReadOnlyNote({ actionKey }: { actionKey: LabelKey }): ReactNode {
 
 function ConnectionTab({
   device,
+  hiddenTabs,
   onSaved,
 }: {
   device: DeviceRecord;
+  /**
+   * Tabs this protocol does not have, named here because this one is always present.
+   *
+   * The reassurance has to live somewhere: an operator who has seen the Hikvision terminal's
+   * seven tabs and finds three on the ZKTeco one will read the difference as the screen having
+   * failed to load. The tab strip cannot say it, so the tab that always exists does.
+   */
+  hiddenTabs: readonly LabelKey[];
   onSaved: () => Promise<void>;
 }): ReactNode {
   const { t } = useLabels();
@@ -657,6 +811,33 @@ function ConnectionTab({
         <Feedback error={error} notice={notice} />
 
         {!editable && <ReadOnlyNote actionKey="action.edit" />}
+
+        {/*
+          What this protocol can be managed with, when it is not all of it.
+
+          Two different facts, so two different tones. A protocol that simply has fewer concepts
+          than Hikvision is information — neutral. A terminal nothing in this system can drive is
+          a record that will never record anything, which is worth amber.
+        */}
+        {device.capabilities === null ? (
+          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+            <T k="device.editor.scope.none" vars={{ protocol: device.protocol }} />
+          </PanelNote>
+        ) : (
+          hiddenTabs.length > 0 && (
+            <PanelNote tone="info" icon={<Satellite className="size-3.5" aria-hidden />}>
+              <T
+                k="device.editor.scope.limited"
+                vars={{
+                  protocol: device.protocol,
+                  // Joined from the same keys the strip renders, so the sentence cannot name a
+                  // tab differently from the tab.
+                  tabs: hiddenTabs.map((key) => t(key)).join(', '),
+                }}
+              />
+            </PanelNote>
+          )
+        )}
 
         <SettingsGroup
           title={<T k="device.editor.group.address" />}
@@ -1022,19 +1203,30 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
     data.record.serialNumber !== null &&
     data.info.serialNumber !== data.record.serialNumber;
 
+  /** Null where the protocol cannot be asked who is on the unit. */
+  const counts = data?.counts ?? null;
+  /** True where the protocol has no such endpoint, as against not having answered yet. */
+  const countsUnreadable = undeclared(device, DriverOperation.readCounts);
+  /** This firmware cannot be sent a face, which is read here beside the face count. */
+  const faceReason = why(device, DriverOperation.enrolFace);
+
   /**
    * People on the unit but nothing to scan with.
    *
-   * Uses `?? 0`, so a protocol that does not break its counts down by credential reads as
-   * zero-of-each and therefore flags. That is the safer direction: the note asks somebody to
+   * Uses `?? 0`, so a protocol that reports a total without breaking it down by credential reads
+   * as zero-of-each and therefore flags. That is the safer direction: the note asks somebody to
    * check, and a missed warning here means people who cannot clock in.
+   *
+   * Requires `counts` to exist at all. A protocol with no user-list endpoint used to make the
+   * whole read fail; now it answers null, and null must not be read as four zeroes — that would
+   * accuse every ZKTeco terminal of holding people who cannot scan.
    */
   const noCredentials =
-    data !== null &&
-    (data.counts.withFace ?? 0) === 0 &&
-    (data.counts.withFingerprint ?? 0) === 0 &&
-    (data.counts.withCard ?? 0) === 0 &&
-    data.counts.people > 0;
+    counts !== null &&
+    (counts.withFace ?? 0) === 0 &&
+    (counts.withFingerprint ?? 0) === 0 &&
+    (counts.withCard ?? 0) === 0 &&
+    counts.people > 0;
 
   return (
     <>
@@ -1129,83 +1321,115 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
               <T
                 k="device.editor.enrolled"
                 vars={{
-                  enrolled: data?.counts.people ?? 0,
+                  enrolled: counts?.people ?? 0,
                   capacity: data?.capacity?.faces ?? device.faceCapacity,
                 }}
               />
             </span>
           }
         >
-          <SettingRow
-            label={<T k="device.editor.identity.users" />}
-            hint={<T k="device.editor.identity.users.hint" />}
-          >
-            <ControlGrid columns={4}>
-              <ControlCell caption={<T k="device.editor.identity.users.caption" />}>
-                <StaticControl value={String(data?.counts.people ?? '—')} mono />
-              </ControlCell>
-              {/*
-                An em dash where a protocol does not break its counts down by credential, which
-                is a different statement from zero. Printing 0 would assert that nobody on the
-                unit has a face enrolled.
-              */}
-              <ControlCell caption={<T k="device.editor.identity.withFace" />}>
-                <StaticControl value={String(data?.counts.withFace ?? '—')} mono />
-              </ControlCell>
-              <ControlCell caption={<T k="device.editor.identity.withFingerprint" />}>
-                <StaticControl value={String(data?.counts.withFingerprint ?? '—')} mono />
-              </ControlCell>
-              <ControlCell caption={<T k="device.editor.identity.withCard" />}>
-                <StaticControl value={String(data?.counts.withCard ?? '—')} mono />
-              </ControlCell>
-            </ControlGrid>
-          </SettingRow>
+          {/*
+            The breakdown, or the statement that there is none.
 
-          {noCredentials && (
-            <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-              <T
-                k="device.editor.identity.noCredentials"
-                vars={{ count: data.counts.people }}
-              />
-            </PanelNote>
-          )}
-        </SettingsGroup>
-
-        <SettingsGroup
-          title={<T k="device.editor.identity.group.library" />}
-          icon={<Search className="size-3.5" aria-hidden />}
-        >
-          {data !== null && data.libraries.length === 0 ? (
+            Four em dashes would read as "not measured yet" and invite a reload that can never
+            produce a number — this protocol has no endpoint that enumerates its users at all.
+          */}
+          {countsUnreadable ? (
             <Unsupported>
-              <T k="device.editor.identity.noLibrary" />
+              <T k="device.editor.identity.noCounts" />
             </Unsupported>
           ) : (
             <SettingRow
-              label={<T k="device.editor.identity.libraries" />}
-              hint={<T k="device.editor.identity.libraries.hint" />}
+              label={<T k="device.editor.identity.users" />}
+              hint={<T k="device.editor.identity.users.hint" />}
             >
-              <ControlGrid columns={2}>
-                <ControlCell caption={<T k="device.editor.identity.libraries.caption" />}>
-                  <StaticControl
-                    value={
-                      data === null
-                        ? '—'
-                        : data.libraries
-                            .map((library) =>
-                              library.name === null ? library.id : `${library.id}:${library.name}`,
-                            )
-                            .join(', ')
-                    }
-                    mono
-                  />
+              <ControlGrid columns={4}>
+                <ControlCell caption={<T k="device.editor.identity.users.caption" />}>
+                  <StaticControl value={String(counts?.people ?? '—')} mono />
                 </ControlCell>
-                <ControlCell caption={<T k="device.editor.identity.capacity" />}>
-                  <StaticControl value={String(data?.capacity?.faces ?? '—')} mono />
+                {/*
+                  An em dash where a protocol reports a total but does not break it down by
+                  credential, which is a different statement from zero. Printing 0 would assert
+                  that nobody on the unit has a face enrolled.
+                */}
+                <ControlCell caption={<T k="device.editor.identity.withFace" />}>
+                  <StaticControl value={String(counts?.withFace ?? '—')} mono />
+                </ControlCell>
+                <ControlCell caption={<T k="device.editor.identity.withFingerprint" />}>
+                  <StaticControl value={String(counts?.withFingerprint ?? '—')} mono />
+                </ControlCell>
+                <ControlCell caption={<T k="device.editor.identity.withCard" />}>
+                  <StaticControl value={String(counts?.withCard ?? '—')} mono />
                 </ControlCell>
               </ControlGrid>
             </SettingRow>
           )}
+
+          {noCredentials && (
+            <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+              <T k="device.editor.identity.noCredentials" vars={{ count: counts?.people ?? 0 }} />
+            </PanelNote>
+          )}
+
+          {/*
+            Read here because this is where somebody looks at face counts and concludes they can
+            add one. The driver declares the operation and this unit cannot perform it, so the
+            reason belongs beside the figure rather than only on the Biometrics screen, where it
+            arrives after the attempt has already failed.
+          */}
+          {faceReason !== null && (
+            <PanelNote tone="warn" icon={<ScanFace className="size-3.5" aria-hidden />}>
+              <Reason reason={faceReason} />
+            </PanelNote>
+          )}
         </SettingsGroup>
+
+        {/*
+          Omitted where the protocol cannot be asked about face libraries at all.
+
+          The note inside says enrolment will fail until the libraries are sorted out, which is
+          true of a Hikvision unit reporting none and false of a protocol that has one implicit
+          store and no endpoint that lists it — on TA Push it would send somebody looking for a
+          fault that does not exist. The reported capacity is still on this tab, in the credentials
+          group's own heading.
+        */}
+        {!undeclared(device, DriverOperation.readFaceStores) && (
+          <SettingsGroup
+            title={<T k="device.editor.identity.group.library" />}
+            icon={<Search className="size-3.5" aria-hidden />}
+          >
+            {data !== null && data.libraries.length === 0 ? (
+              <Unsupported>
+                <T k="device.editor.identity.noLibrary" />
+              </Unsupported>
+            ) : (
+              <SettingRow
+                label={<T k="device.editor.identity.libraries" />}
+                hint={<T k="device.editor.identity.libraries.hint" />}
+              >
+                <ControlGrid columns={2}>
+                  <ControlCell caption={<T k="device.editor.identity.libraries.caption" />}>
+                    <StaticControl
+                      value={
+                        data === null
+                          ? '—'
+                          : data.libraries
+                              .map((library) =>
+                                library.name === null ? library.id : `${library.id}:${library.name}`,
+                              )
+                              .join(', ')
+                      }
+                      mono
+                    />
+                  </ControlCell>
+                  <ControlCell caption={<T k="device.editor.identity.capacity" />}>
+                    <StaticControl value={String(data?.capacity?.faces ?? '—')} mono />
+                  </ControlCell>
+                </ControlGrid>
+              </SettingRow>
+            )}
+          </SettingsGroup>
+        )}
       </SettingsStack>
     </>
   );
@@ -1225,6 +1449,12 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
   const { can } = useAuth();
   const permitted = can('settings.devices', 'clock');
   const allowed = permitted;
+
+  /** Either write may be absent or refused independently, so each is asked about separately. */
+  const ntpUndeclared = undeclared(device, DriverOperation.configureNtp);
+  const ntpReason = why(device, DriverOperation.configureNtp);
+  const manualUndeclared = undeclared(device, DriverOperation.setClockManually);
+  const manualReason = why(device, DriverOperation.setClockManually);
 
   const { data, error, loading, readAt, reload } = useTerminalRead<TerminalClock>(
     `/api/devices/${String(device.id)}/terminal/clock`,
@@ -1406,105 +1636,149 @@ function ClockTab({ device }: { device: DeviceRecord }): ReactNode {
           </SettingRow>
         </SettingsGroup>
 
-        <SettingsGroup
-          title={<T k="device.editor.clock.group.ntp" />}
-          icon={<Radio className="size-3.5" aria-hidden />}
-          subtitle={<T k="device.editor.clock.group.ntp.subtitle" />}
-        >
-          <SettingRow
-            label={<T k="device.editor.clock.ntpHost" />}
-            hint={<T k="device.editor.clock.ntpHost.hint" />}
-            required
+        {/*
+          Omitted where the protocol has no NTP configuration at all, drawn with the driver's
+          reason where it has one this unit will not perform.
+        */}
+        {!ntpUndeclared && (
+          <SettingsGroup
+            title={<T k="device.editor.clock.group.ntp" />}
+            icon={<Radio className="size-3.5" aria-hidden />}
+            subtitle={<T k="device.editor.clock.group.ntp.subtitle" />}
           >
-            <ControlGrid columns={3}>
-              <ControlCell caption={<T k="device.editor.clock.ntpHost.caption" />}>
-                <TextControl
-                  label={t('device.editor.clock.ntpHost')}
-                  value={ntpHost}
-                  disabled={!allowed}
-                  onChange={(event) => setNtpHost(event.target.value)}
-                  placeholder="192.168.1.1"
-                />
-              </ControlCell>
-              <ControlCell caption={<T k="device.editor.clock.ntpPort" />}>
-                <TextControl
-                  label={t('device.editor.clock.ntpPort')}
-                  inputMode="numeric"
-                  value={ntpPort}
-                  disabled={!allowed}
-                  onChange={(event) => setNtpPort(event.target.value.replace(/\D/g, ''))}
-                />
-              </ControlCell>
-              <ControlCell
-                caption={<T k="device.editor.clock.ntpInterval" />}
-                hint={<T k="device.editor.clock.ntpInterval.hint" />}
-              >
-                <TextControl
-                  label={t('device.editor.clock.ntpInterval')}
-                  inputMode="numeric"
-                  value={interval}
-                  disabled={!allowed}
-                  onChange={(event) => setInterval(event.target.value.replace(/\D/g, ''))}
-                />
-              </ControlCell>
-            </ControlGrid>
-          </SettingRow>
+            {ntpReason !== null && (
+              <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+                <Reason reason={ntpReason} />
+              </PanelNote>
+            )}
 
-          <SettingRow
-            label={<T k="device.editor.clock.timeZone" />}
-            hint={<T k="device.editor.clock.timeZone.hint" />}
-            required
-          >
-            <ControlGrid columns={2}>
-              <ControlCell caption={<T k="device.editor.clock.timeZone.caption" />}>
-                <TextControl
-                  label={t('device.editor.clock.timeZone')}
-                  value={timeZone}
-                  disabled={!allowed}
-                  onChange={(event) => setTimeZone(event.target.value)}
-                  placeholder="CST-8:00:00"
-                />
-              </ControlCell>
-              <ControlCell caption={<T k="device.editor.clock.orgTimeZone" />}>
-                <StaticControl value={data?.orgTimeZone ?? '—'} mono />
-              </ControlCell>
-            </ControlGrid>
-          </SettingRow>
-        </SettingsGroup>
-
-        <SettingsGroup
-          title={<T k="device.editor.clock.group.manual" />}
-          icon={<TriangleAlert className="size-3.5" aria-hidden />}
-          subtitle={<T k="device.editor.clock.group.manual.subtitle" />}
-        >
-          <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-            <T k="device.editor.clock.manual.note" />
-          </PanelNote>
-          <SettingRow
-            label={<T k="device.editor.clock.manual.action" />}
-            hint={<T k="device.editor.clock.manual.action.hint" />}
-          >
-            <Button
-              variant="ghost"
-              onClick={() => void applyManual()}
-              disabled={busy || !allowed || timeZone.trim() === ''}
+            <SettingRow
+              label={<T k="device.editor.clock.ntpHost" />}
+              hint={<T k="device.editor.clock.ntpHost.hint" />}
+              required
             >
-              <Clock className="size-4" aria-hidden />
-              <T k="device.editor.clock.manual.apply" />
-            </Button>
-          </SettingRow>
-        </SettingsGroup>
+              <ControlGrid columns={3}>
+                <ControlCell caption={<T k="device.editor.clock.ntpHost.caption" />}>
+                  <TextControl
+                    label={t('device.editor.clock.ntpHost')}
+                    value={ntpHost}
+                    disabled={!allowed}
+                    onChange={(event) => setNtpHost(event.target.value)}
+                    placeholder="192.168.1.1"
+                  />
+                </ControlCell>
+                <ControlCell caption={<T k="device.editor.clock.ntpPort" />}>
+                  <TextControl
+                    label={t('device.editor.clock.ntpPort')}
+                    inputMode="numeric"
+                    value={ntpPort}
+                    disabled={!allowed}
+                    onChange={(event) => setNtpPort(event.target.value.replace(/\D/g, ''))}
+                  />
+                </ControlCell>
+                <ControlCell
+                  caption={<T k="device.editor.clock.ntpInterval" />}
+                  hint={<T k="device.editor.clock.ntpInterval.hint" />}
+                >
+                  <TextControl
+                    label={t('device.editor.clock.ntpInterval')}
+                    inputMode="numeric"
+                    value={interval}
+                    disabled={!allowed}
+                    onChange={(event) => setInterval(event.target.value.replace(/\D/g, ''))}
+                  />
+                </ControlCell>
+              </ControlGrid>
+            </SettingRow>
+
+            <SettingRow
+              label={<T k="device.editor.clock.timeZone" />}
+              hint={<T k="device.editor.clock.timeZone.hint" />}
+              required
+            >
+              <ControlGrid columns={2}>
+                <ControlCell caption={<T k="device.editor.clock.timeZone.caption" />}>
+                  <TextControl
+                    label={t('device.editor.clock.timeZone')}
+                    value={timeZone}
+                    disabled={!allowed}
+                    onChange={(event) => setTimeZone(event.target.value)}
+                    placeholder="CST-8:00:00"
+                  />
+                </ControlCell>
+                <ControlCell caption={<T k="device.editor.clock.orgTimeZone" />}>
+                  <StaticControl value={data?.orgTimeZone ?? '—'} mono />
+                </ControlCell>
+              </ControlGrid>
+            </SettingRow>
+          </SettingsGroup>
+        )}
+
+        {/*
+          Setting the clock by hand, where that is a thing this terminal can be asked.
+
+          Omitted where the protocol has no such write; drawn disabled, with the driver's reason in
+          the row's own hint, where it has one it will not perform — which is the connector case,
+          and the reason there is that a queued timestamp is stale when it lands.
+        */}
+        {!manualUndeclared && (
+          <SettingsGroup
+            title={<T k="device.editor.clock.group.manual" />}
+            icon={<TriangleAlert className="size-3.5" aria-hidden />}
+            subtitle={<T k="device.editor.clock.group.manual.subtitle" />}
+          >
+            <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+              <T k="device.editor.clock.manual.note" />
+            </PanelNote>
+            <SettingRow
+              label={<T k="device.editor.clock.manual.action" />}
+              hint={
+                manualReason === null ? (
+                  <T k="device.editor.clock.manual.action.hint" />
+                ) : (
+                  <Reason reason={manualReason} />
+                )
+              }
+            >
+              <Button
+                variant="ghost"
+                onClick={() => void applyManual()}
+                disabled={
+                  busy ||
+                  !allowed ||
+                  !canDo(device, DriverOperation.setClockManually) ||
+                  timeZone.trim() === ''
+                }
+              >
+                <Clock className="size-4" aria-hidden />
+                <T k="device.editor.clock.manual.apply" />
+              </Button>
+            </SettingRow>
+          </SettingsGroup>
+        )}
       </SettingsStack>
 
-      <PanelActions hint={<T k="device.editor.clock.hint" />}>
-        <Button
-          onClick={() => void applyNtp()}
-          disabled={busy || !allowed || ntpHost.trim() === '' || timeZone.trim() === ''}
-        >
-          <Save className="size-4" aria-hidden />
-          <T k="device.editor.clock.apply" />
-        </Button>
-      </PanelActions>
+      {/*
+        The save strip goes with the NTP group it commits. A protocol with no NTP write has no use
+        for it, and a Save button that is the only thing left on a tab is a button that refuses.
+      */}
+      {!ntpUndeclared && (
+        <PanelActions hint={<T k="device.editor.clock.hint" />}>
+          <Button
+            onClick={() => void applyNtp()}
+            disabled={
+              busy ||
+              !allowed ||
+              !canDo(device, DriverOperation.configureNtp) ||
+              ntpHost.trim() === '' ||
+              timeZone.trim() === ''
+            }
+          >
+            <Save className="size-4" aria-hidden />
+            <T k="device.editor.clock.apply" />
+          </Button>
+        </PanelActions>
+      )}
     </>
   );
 }
@@ -1523,6 +1797,9 @@ function AttendanceTab({ device }: { device: DeviceRecord }): ReactNode {
   const { can } = useAuth();
   const permitted = can('settings.devices', 'terminal');
   const allowed = permitted;
+
+  /** The driver's reason the mode cannot be written on this unit, where it has one. */
+  const modeReason = why(device, DriverOperation.writeAttendanceMode);
 
   const { data, error, loading, readAt, reload } = useTerminalRead<AttendanceModeState>(
     `/api/devices/${String(device.id)}/terminal/attendance`,
@@ -1614,7 +1891,9 @@ function AttendanceTab({ device }: { device: DeviceRecord }): ReactNode {
               name="attendance-mode"
               label={t('device.editor.attendance.mode')}
               value={mode}
-              disabled={!allowed || loading}
+              /* Locked where the mode cannot be written: a radio that moves and never commits
+                 reads as a save that failed silently. */
+              disabled={!allowed || loading || !canDo(device, DriverOperation.writeAttendanceMode)}
               onChange={setMode}
               options={options}
             />
@@ -1657,15 +1936,33 @@ function AttendanceTab({ device }: { device: DeviceRecord }): ReactNode {
         </PanelNote>
       </SettingsStack>
 
-      <PanelActions hint={<T k="device.editor.attendance.hint" />}>
-        <Button
-          onClick={() => void submit()}
-          disabled={busy || !allowed || mode === '' || mode === data?.mode}
+      {/* Omitted where the protocol cannot be told how to label a scan — the radios above are
+          then a read of what the unit chose, which is still worth showing. */}
+      {!undeclared(device, DriverOperation.writeAttendanceMode) && (
+        <PanelActions
+          hint={
+            modeReason === null ? (
+              <T k="device.editor.attendance.hint" />
+            ) : (
+              <Reason reason={modeReason} />
+            )
+          }
         >
-          <Save className="size-4" aria-hidden />
-          <T k="device.editor.attendance.apply" />
-        </Button>
-      </PanelActions>
+          <Button
+            onClick={() => void submit()}
+            disabled={
+              busy ||
+              !allowed ||
+              !canDo(device, DriverOperation.writeAttendanceMode) ||
+              mode === '' ||
+              mode === data?.mode
+            }
+          >
+            <Save className="size-4" aria-hidden />
+            <T k="device.editor.attendance.apply" />
+          </Button>
+        </PanelActions>
+      )}
     </>
   );
 }
@@ -1684,6 +1981,17 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
   const { can } = useAuth();
   const permitted = can('settings.devices', 'terminal');
   const allowed = permitted;
+
+  /**
+   * Whether anything on this tab commits, and why the release is off where it is.
+   *
+   * Two writes behind one Save — the door parameters and the reader — so the strip stays as long
+   * as either is available. The remote release is its own operation and its own row.
+   */
+  const writable =
+    canDo(device, DriverOperation.writeDoorSettings) ||
+    canDo(device, DriverOperation.writeReaderSettings);
+  const openReason = why(device, DriverOperation.openDoor);
 
   const { data, error, loading, readAt, reload } = useTerminalRead<TerminalDoor>(
     `/api/devices/${String(device.id)}/terminal/door`,
@@ -2183,20 +2491,35 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
             </>
           )}
 
-          <SettingRow
-            label={<T k="device.editor.door.remoteOpen" />}
-            hint={<T k="device.editor.door.remoteOpen.hint" />}
-          >
-            <Button
-              variant="ghost"
-              onClick={() => setConfirmOpen(true)}
-              disabled={busy || !allowed}
-              className="border-rose-300 text-rose-700 hover:bg-rose-50"
+          {/*
+            Releasing the lock, where that is a thing this terminal can be asked.
+
+            Omitted on a protocol that has no such command; drawn disabled with the driver's reason
+            where it has one it refuses — a connector would deliver it seconds later, to a door
+            nobody is standing at any more.
+          */}
+          {!undeclared(device, DriverOperation.openDoor) && (
+            <SettingRow
+              label={<T k="device.editor.door.remoteOpen" />}
+              hint={
+                openReason === null ? (
+                  <T k="device.editor.door.remoteOpen.hint" />
+                ) : (
+                  <Reason reason={openReason} />
+                )
+              }
             >
-              <Unlock className="size-4" aria-hidden />
-              <T k="device.editor.door.open" />
-            </Button>
-          </SettingRow>
+              <Button
+                variant="ghost"
+                onClick={() => setConfirmOpen(true)}
+                disabled={busy || !allowed || !canDo(device, DriverOperation.openDoor)}
+                className="border-rose-300 text-rose-700 hover:bg-rose-50"
+              >
+                <Unlock className="size-4" aria-hidden />
+                <T k="device.editor.door.open" />
+              </Button>
+            </SettingRow>
+          )}
         </SettingsGroup>
 
         <SettingsGroup
@@ -2277,12 +2600,16 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
         </SettingsGroup>
       </SettingsStack>
 
-      <PanelActions hint={<T k="device.editor.door.hint" />}>
-        <Button onClick={() => void submit()} disabled={busy || !allowed || loading}>
-          <Save className="size-4" aria-hidden />
-          <T k="device.editor.door.apply" />
-        </Button>
-      </PanelActions>
+      {/* Omitted where neither the door nor the reader can be written — the tab is then a read of
+          how this unit decides to open, which is still worth having. */}
+      {writable && (
+        <PanelActions hint={<T k="device.editor.door.hint" />}>
+          <Button onClick={() => void submit()} disabled={busy || !allowed || loading}>
+            <Save className="size-4" aria-hidden />
+            <T k="device.editor.door.apply" />
+          </Button>
+        </PanelActions>
+      )}
 
       {confirmOpen && (
         <Dialog
@@ -2331,6 +2658,15 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
   const { can } = useAuth();
   const permitted = can('settings.devices', 'sync');
   const allowed = permitted;
+
+  /**
+   * Setting a target and releasing one are separate operations here, and that is not pedantry.
+   *
+   * A connector refuses the first and carries the second: the address is its own LAN address,
+   * which it knows and this server does not, while clearing a slot needs only the slot number.
+   */
+  const configureReason = why(device, DriverOperation.configureCallback);
+  const clearReason = why(device, DriverOperation.clearCallback);
 
   const { data, error, loading, readAt, reload } = useTerminalRead<PushHost[]>(
     `/api/devices/${String(device.id)}/push`,
@@ -2539,18 +2875,28 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
                   </PanelNote>
                 )}
 
-                <SettingRow
-                  label={<T k="device.editor.push.release" />}
-                  hint={<T k="device.editor.push.release.hint" />}
-                >
-                  <Button
-                    variant="ghost"
-                    onClick={() => void clear(entry.id)}
-                    disabled={busy || !allowed}
+                {/* Releasing a slot needs only the slot number, which is why a connector carries
+                    it while it refuses to set one. Omitted on a protocol that has neither. */}
+                {!undeclared(device, DriverOperation.clearCallback) && (
+                  <SettingRow
+                    label={<T k="device.editor.push.release" />}
+                    hint={
+                      clearReason === null ? (
+                        <T k="device.editor.push.release.hint" />
+                      ) : (
+                        <Reason reason={clearReason} />
+                      )
+                    }
                   >
-                    <T k="device.editor.push.clear" />
-                  </Button>
-                </SettingRow>
+                    <Button
+                      variant="ghost"
+                      onClick={() => void clear(entry.id)}
+                      disabled={busy || !allowed || !canDo(device, DriverOperation.clearCallback)}
+                    >
+                      <T k="device.editor.push.clear" />
+                    </Button>
+                  </SettingRow>
+                )}
               </>
             )}
           </SettingsGroup>
@@ -2658,10 +3004,24 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
           </Button>
         </PanelActions>
       ) : (
-        <PanelActions hint={<T k="device.editor.push.hint" />}>
+        <PanelActions
+          hint={
+            configureReason === null ? (
+              <T k="device.editor.push.hint" />
+            ) : (
+              <Reason reason={configureReason} />
+            )
+          }
+        >
           <Button
             onClick={() => void configure()}
-            disabled={busy || !allowed || host.trim() === '' || path.trim() === ''}
+            disabled={
+              busy ||
+              !allowed ||
+              !canDo(device, DriverOperation.configureCallback) ||
+              host.trim() === '' ||
+              path.trim() === ''
+            }
           >
             <Save className="size-4" aria-hidden />
             <T k="device.editor.push.configure" />
@@ -2687,6 +3047,8 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
   const permitted = can('settings.devices', 'terminal');
   // Reboot is the one terminal write a connector does carry, so this tab keeps its control.
   const allowed = permitted;
+  /** Null for both drivers today; read so a future one can refuse it with its own words. */
+  const rebootReason = why(device, DriverOperation.reboot);
   const { data, error, loading, readAt, reload } = useTerminalRead<TerminalDiagnostics>(
     `/api/devices/${String(device.id)}/terminal/diagnostics`,
   );
@@ -2833,34 +3195,44 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
           that takes the door out of service, so it sits where somebody arrives after
           reading everything else rather than beside a field they came to change.
         */}
-        <SettingsGroup
-          title={<T k="device.editor.reboot.group" />}
-          icon={<Power className="size-3.5" aria-hidden />}
-          subtitle={<T k="device.editor.reboot.group.subtitle" />}
-          className="border-rose-200"
-          action={
-            <span className="text-[11px] font-semibold tracking-wide text-rose-700 uppercase">
-              <T k="device.editor.reboot.disruptive" />
-            </span>
-          }
-        >
-          {!permitted && <ReadOnlyNote actionKey="perm.action.terminalConfig" />}
-
-          <SettingRow
-            label={<T k="device.editor.reboot.action" />}
-            hint={<T k="device.editor.reboot.action.hint" />}
+        {/* Omitted on a protocol with no restart command. Both drivers have one — a connector
+            queues it, a callback terminal collects it — so this is the guard, not the case. */}
+        {!undeclared(device, DriverOperation.reboot) && (
+          <SettingsGroup
+            title={<T k="device.editor.reboot.group" />}
+            icon={<Power className="size-3.5" aria-hidden />}
+            subtitle={<T k="device.editor.reboot.group.subtitle" />}
+            className="border-rose-200"
+            action={
+              <span className="text-[11px] font-semibold tracking-wide text-rose-700 uppercase">
+                <T k="device.editor.reboot.disruptive" />
+              </span>
+            }
           >
-            <Button
-              variant="ghost"
-              onClick={() => setConfirmReboot(true)}
-              disabled={busy || !allowed}
-              className="border-rose-300 text-rose-700 hover:bg-rose-50"
+            {!permitted && <ReadOnlyNote actionKey="perm.action.terminalConfig" />}
+
+            <SettingRow
+              label={<T k="device.editor.reboot.action" />}
+              hint={
+                rebootReason === null ? (
+                  <T k="device.editor.reboot.action.hint" />
+                ) : (
+                  <Reason reason={rebootReason} />
+                )
+              }
             >
-              <Power className="size-4" aria-hidden />
-              <T k="device.editor.reboot" />
-            </Button>
-          </SettingRow>
-        </SettingsGroup>
+              <Button
+                variant="ghost"
+                onClick={() => setConfirmReboot(true)}
+                disabled={busy || !allowed || !canDo(device, DriverOperation.reboot)}
+                className="border-rose-300 text-rose-700 hover:bg-rose-50"
+              >
+                <Power className="size-4" aria-hidden />
+                <T k="device.editor.reboot" />
+              </Button>
+            </SettingRow>
+          </SettingsGroup>
+        )}
       </SettingsStack>
 
       {confirmReboot && (
@@ -3077,6 +3449,20 @@ interface DeviceRecord {
     lanHost: string | null;
     lanPort: number | null;
   } | null;
+  /**
+   * What this unit's driver says it can be asked to do. Null when nothing here can drive it.
+   *
+   * Derived per device on the server, from the driver this row resolves to — not per protocol,
+   * because `ZktecoTaPushDriver` decides face upload from `device.firmware`, so two ZKTeco units
+   * on one site legitimately answer differently.
+   *
+   * This is the whole input to which tabs exist. The alternative — a `protocol === 'ta-push'`
+   * switch here — is a second capability list in the layer furthest from the drivers, free to
+   * drift from the one it describes. The connector selector's protocol gate was removed for
+   * exactly that reason, and this screen already had a dead copy of the capability *shape*
+   * sitting unread at the bottom of the file while all seven tabs rendered regardless.
+   */
+  capabilities: DriverCapabilities | null;
 }
 
 interface DeviceHealth {
@@ -3113,12 +3499,19 @@ interface TerminalIdentity {
     macAddress: string | null;
     firmware: string | null;
   };
+  /**
+   * Null where the protocol has no endpoint that enumerates its users.
+   *
+   * Not zeroes. TA Push cannot be asked who is on the unit, and four zeroes would assert that
+   * nobody on it has a face enrolled — which is what the "people who cannot scan" warning below
+   * reads to decide whether to fire.
+   */
   counts: {
     people: number;
     withFace: number | null;
     withFingerprint: number | null;
     withCard: number | null;
-  };
+  } | null;
   libraries: Array<{ id: string; name: string | null }>;
   capacity: { people: number | null; faces: number | null; fingerprints: number | null } | null;
   record: { serialNumber: string | null; faceCapacity: number; doorNo: number };
@@ -3154,21 +3547,6 @@ interface AttendanceModeState {
 interface DoorFailure {
   group: string;
   error: string;
-}
-
-/**
- * What the driver says its unit can do.
- *
- * Read so the screen can distinguish "this vendor has no such control" from "the unit is not
- * answering". Before this existed both produced a null and rendered amber like a fault, which
- * sent operators looking for hardware problems that did not exist.
- */
-interface DriverCapabilities {
-  operations: string[];
-  writeModel: 'inline' | 'queued';
-  reachability: 'serverInitiated' | 'deviceInitiated';
-  /** Operations the protocol has but this model or firmware lacks, with the reason. */
-  unavailable?: Record<string, string>;
 }
 
 interface TerminalDoor {
@@ -3217,7 +3595,14 @@ interface TerminalDoor {
   /** Option lists the terminal published, keyed by its own field name. */
   options: Record<string, string[]>;
   doorNo: number;
-  capabilities: DriverCapabilities;
+  /*
+    No `capabilities` here, and that is deliberate.
+
+    This response used to carry a copy. Nothing read it — the tabs rendered unconditionally — and
+    a second copy on the wire is a second thing a future reader could choose, with nothing saying
+    which wins. The capability list arrives once, on the device record, because the tab strip
+    needs it before any tab has read anything.
+  */
 }
 
 /**
@@ -3237,7 +3622,15 @@ interface PushHost {
 
 interface TerminalDiagnostics {
   acsConfig?: Record<string, unknown> | null;
-  capabilities: DriverCapabilities;
+  /**
+   * The unit's **own** capability documents, keyed by ISAPI path, as the driver read them.
+   *
+   * Not the driver's `DriverCapabilities`. This was typed as that and the route sent that, under
+   * the same key, spread over the documents — so the group that exists to explain a missing
+   * control rendered `operations` and `writeModel` instead of the option lists the door tab is
+   * built from. Empty on a protocol that publishes no such documents.
+   */
+  capabilities: Record<string, unknown>;
   protocol: string;
   cursor: {
     /** Null on a protocol with no pull, which is different from a cursor still at zero. */

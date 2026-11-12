@@ -146,20 +146,22 @@ export async function checkDevice(device: Device): Promise<DeviceHealth> {
               serialNumber: identity.serialNumber,
             }),
         ...(faceCapacity !== null ? { faceCapacity } : {}),
-        /**
-         * The capability list, recorded so the editor can render honestly while the unit is
-         * offline. A callback terminal is frequently unreachable at the moment somebody opens
-         * its settings, and a screen that cannot tell "this vendor has no door control" from
-         * "not answering right now" tones both amber like a fault.
+        /*
+         * `capabilities` is no longer written here, and the reason is worth keeping.
+         *
+         * It was stored so the editor could render honestly while a unit was offline. The editor
+         * now derives the list per row instead — `capabilitiesFor` in `registry.ts` — because a
+         * stored copy could never have served that purpose: this function returns early for a
+         * terminal behind a connector, so the column stayed null for exactly the sites that are
+         * hardest to reach. And nothing read it. A second copy of a capability list is one free to
+         * disagree with the driver it describes, which is the whole reason the screen is not
+         * allowed its own.
+         *
+         * The column stays in the schema. Dropping it needs a migration, and this change needs
+         * none. Rows written before this still hold their last probe's answer, in the older shape
+         * where `unavailable` carried prose rather than a label key — harmless while nothing reads
+         * it, and the reason not to start.
          */
-        capabilities: {
-          operations: driver.capabilities.operations,
-          writeModel: driver.capabilities.writeModel,
-          reachability: driver.capabilities.reachability,
-          ...(driver.capabilities.unavailable === undefined
-            ? {}
-            : { unavailable: driver.capabilities.unavailable }),
-        },
         lastError: null,
       },
     });

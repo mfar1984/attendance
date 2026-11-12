@@ -127,25 +127,19 @@ export class AgentProxyDriver implements TerminalDriver {
       ],
       writeModel: 'queued',
       reachability: 'deviceInitiated',
+      /*
+       * Stated rather than silently absent, because the screen shows these reasons on the
+       * control itself. A greyed button with no explanation reads as a permission somebody
+       * lacks, which sends them to ask for one they already have.
+       *
+       * Label keys rather than the sentences. This driver is built wherever a device row is
+       * read — a probe, a heartbeat, a list request — none of which has a reader whose language
+       * can be consulted, and all three of these end up on the device editor.
+       */
       unavailable: {
-        [DriverOperation.openDoor]:
-          'Terminal ini dicapai melalui connector tapak, jadi arahan mengambil beberapa saat ' +
-          'untuk sampai. Membuka pintu dengan lengah begitu tidak selamat - buka di terminal itu ' +
-          'sendiri.',
-
-        /*
-         * Stated rather than silently absent, because the screen shows these reasons on the
-         * control itself. A greyed button with no explanation reads as a permission somebody
-         * lacks, which sends them to ask for one they already have.
-         */
-        [DriverOperation.setClockManually]:
-          'Connector menetapkan jam terminal sendiri daripada masa cloud yang ia terima pada ' +
-          'setiap heartbeat. Cap masa yang dibariskan dari sini sudah lapuk ketika ia dikutip, ' +
-          'dan menulis masa lapuk ke jam mengekalkan hanyutan yang sepatutnya dibetulkan. ' +
-          'Tetapkan hos NTP sebaliknya.',
-        [DriverOperation.configureCallback]:
-          'Sasaran push untuk terminal di belakang connector ialah alamat LAN connector itu ' +
-          'sendiri, yang ia tahu dan pelayan ini tidak. Connector menetapkannya sendiri.',
+        [DriverOperation.openDoor]: { key: 'device.capability.agent.openDoor' },
+        [DriverOperation.setClockManually]: { key: 'device.capability.agent.setClock' },
+        [DriverOperation.configureCallback]: { key: 'device.capability.agent.configureCallback' },
       },
     };
   }

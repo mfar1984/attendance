@@ -4,7 +4,7 @@ import type { Device } from '@prisma/client';
 
 import { decryptSecret } from '../crypto.js';
 import { conflict } from '../http.js';
-import type { TerminalDriver } from '@attendance/terminal-drivers';
+import type { DriverCapabilities, TerminalDriver } from '@attendance/terminal-drivers';
 import { HikvisionDriver } from '@attendance/terminal-drivers';
 import { AgentProxyDriver } from './drivers/agent-proxy.js';
 import { ZktecoTaPushDriver } from './drivers/zkteco/driver.js';
@@ -44,6 +44,41 @@ export function driverFor(device: Device): TerminalDriver {
   const driver = build(device);
   drivers.set(device.id, { driver, fingerprint });
   return driver;
+}
+
+/**
+ * What this exact terminal can be asked to do, or null when nothing here can drive it.
+ *
+ * The screen's single source of truth. The device editor used to render all seven of its tabs for
+ * every protocol, so a ZKTeco unit got four tabs of Hikvision door and clock controls that its
+ * protocol has no concept of — and the two reads behind them failed, which rendered amber like a
+ * fault. The fix cannot be a protocol switch in the browser: a second capability list is one free
+ * to drift from the driver it describes, exactly as the connector selector's protocol gate did.
+ *
+ * ## Derived, not read from `devices.capabilities`
+ *
+ * That column is written by the health probe and is deliberately **not** written for a terminal
+ * behind a connector, so reading it would answer "unknown" for every connector site. It is also a
+ * record of the last probe rather than of this row: a ZKTeco unit that reported firmware V1.5 on
+ * its last handshake has face upload available *now*, and the stored copy would keep saying
+ * otherwise until the next sweep.
+ *
+ * Deriving costs nothing. Every capability list is built in a driver constructor from the row's own
+ * fields — no socket is opened, and `driverFor` caches the driver it just built for the next call.
+ *
+ * ## Null is an answer, not a missing value
+ *
+ * `build()` refuses a protocol with no driver (`dahua-cgi` today) and an ISAPI row with no stored
+ * credential. Both mean the same thing to a screen: nothing here can read or write this unit, so
+ * every live tab should be absent rather than drawn and then failing. The editor says so and keeps
+ * the Connection tab, which is the only thing left that can be edited.
+ */
+export function capabilitiesFor(device: Device): DriverCapabilities | null {
+  try {
+    return driverFor(device).capabilities;
+  } catch {
+    return null;
+  }
 }
 
 function build(device: Device): TerminalDriver {

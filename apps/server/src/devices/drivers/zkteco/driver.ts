@@ -115,16 +115,22 @@ export class ZktecoTaPushDriver implements TerminalDriver {
          * never applies means they cannot clock in tomorrow — and nothing on any screen would
          * say why. The alternative is the screen saying plainly that the face must be enrolled
          * at the terminal itself, which is a thing an operator can act on.
+         *
+         * A label key, not the sentence. This driver is constructed by a probe and by a list
+         * request, neither of which has a reader whose language can be consulted — and the
+         * sentence is rendered on the device editor beside the control it greys out.
+         * `vendorWarnings()` below has always done it this way; this was the odd one out.
          */
         ...(supportsPushedFace(device.firmware)
           ? {}
           : {
               [DriverOperation.enrolFace]:
                 device.firmware === null
-                  ? 'Versi firmware belum diketahui. Muat naik wajah memerlukan V1.5 atau lebih baharu, ' +
-                    'jadi daftarkan wajah di terminal itu sendiri sehingga terminal melaporkan versinya.'
-                  : `Firmware ${device.firmware} tidak menerima muat naik wajah (perlukan V1.5 atau lebih baharu). ` +
-                    'Wajah mesti didaftarkan di terminal itu sendiri.',
+                  ? { key: 'device.capability.faceFirmwareUnknown' }
+                  : {
+                      key: 'device.capability.faceFirmwareOld',
+                      vars: { firmware: device.firmware },
+                    },
             }),
       },
     };

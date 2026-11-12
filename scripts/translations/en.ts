@@ -5140,6 +5140,18 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
   'device.warning.remoteCheck':
     'Remote verification is active through "{channel}". Every scan waits {timeout}s.',
 
+  'device.capability.faceFirmwareUnknown':
+    'The firmware version is not known yet. Uploading a face needs V1.5 or newer, so enrol faces at the terminal itself until it reports its version.',
+  'device.capability.faceFirmwareOld':
+    'Firmware {firmware} does not accept uploaded faces (V1.5 or newer is required). Faces must be enrolled at the terminal itself.',
+
+  'device.capability.agent.openDoor':
+    'This terminal is reached through the on-site connector, so a command takes several seconds to arrive. A door that opens after a delay like that opens when nobody is expecting it — open it at the terminal itself.',
+  'device.capability.agent.setClock':
+    'The connector sets its terminals’ clocks itself, from the cloud time it receives on every heartbeat. A timestamp queued from here is already stale when it is collected, and writing a stale time to a clock bakes in the drift this was meant to correct. Set an NTP host instead.',
+  'device.capability.agent.configureCallback':
+    'The push target for a terminal behind a connector is the connector’s own LAN address, which it knows and this server does not. The connector sets it itself.',
+
   'device.list.count': '{count} terminals',
   /*
    * The reason the periodic pull is kept even with push working: push is faster but it is not the source
@@ -5478,6 +5490,8 @@ export const EN_LABELS_DEVICE_CLOCK: Partial<Record<LabelKey, string>> = {
   'device.editor.identity.withCard': 'Has a card',
   'device.editor.identity.noCredentials':
     '{count} people exist on this terminal with no face, fingerprint or card. They cannot scan at all, and the terminal reports no error when they try.',
+  'device.editor.identity.noCounts':
+    'This protocol has no endpoint that lists the terminal’s users, so the credential breakdown cannot be read from the unit. The counts in the Staff Directory come from enrolments this system performed itself.',
   'device.editor.identity.libraries': 'Libraries',
   // The ISAPI field name stays; only the word after the colon is translated.
   'device.editor.identity.libraries.caption': 'FDID:type',
@@ -5847,6 +5861,11 @@ export const EN_LABELS_DEVICE_DIAG: Partial<Record<LabelKey, string>> = {
   // Names the screen and the permission page, matching `device.title` and the nav.
   'device.editor.readOnly':
     'This tab is read-only because your role does not hold the {action} permission on the Device List. Ask for it under Settings › Role Management.',
+
+  'device.editor.scope.limited':
+    'The {tabs} tabs are not shown: the {protocol} protocol has no concept of those settings, so there is nothing there to read or write. Nothing is broken — empty tabs would read as a terminal that is not answering.',
+  'device.editor.scope.none':
+    'No terminal setting can be read or written for the {protocol} protocol: no driver in this system drives it, or this unit’s credentials are not stored. The record below is still editable. For a terminal that has to be managed from here, add a new record on a supported protocol and deactivate this one — the protocol cannot be changed after a record is created, because the event keys on it are namespaced by it.',
 
   // ---------------------------------------------------------------------------
   // Remote restart

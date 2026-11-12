@@ -1,5 +1,6 @@
 import { assertUsableJpeg, readJpegDimensions } from '@attendance/hik-isapi';
-import { DEVICE_LIMITS } from '@attendance/shared';
+import { DEVICE_LIMITS, LABELS } from '@attendance/shared';
+import type { UnavailableReason } from '@attendance/shared';
 import type { Staff } from '@prisma/client';
 
 import { db } from '../db.js';
@@ -80,11 +81,13 @@ export async function enrolFace(staff: Staff, jpeg: Buffer): Promise<FaceEnrolOu
        * anywhere explaining why.
        */
       if (!supports(driver.capabilities, DriverOperation.enrolFace)) {
+        const reason = unavailableReason(driver.capabilities, DriverOperation.enrolFace);
         outcome.mustEnrolAtTerminal = true;
         outcome.error =
-          unavailableReason(driver.capabilities, DriverOperation.enrolFace) ??
-          `Terminal "${enrolment.device.name}" tidak menerima muka yang dihantar dari sistem. ` +
-            'Muka mesti didaftarkan di terminal itu sendiri.';
+          reason === null
+            ? `Terminal "${enrolment.device.name}" tidak menerima muka yang dihantar dari sistem. ` +
+              'Muka mesti didaftarkan di terminal itu sendiri.'
+            : sourceText(reason);
         outcomes.push(outcome);
         continue;
       }
@@ -132,6 +135,21 @@ export async function enrolFace(staff: Staff, jpeg: Buffer): Promise<FaceEnrolOu
   }
 
   return outcomes;
+}
+
+/**
+ * A driver's refusal, resolved to the source wording.
+ *
+ * The documented exception: a prose error message needs words, and this one is assembled on a
+ * route that answers an enrolment attempt rather than rendering a screen. The key is still the
+ * single place the sentence is written, so the device editor and this message cannot disagree
+ * about why a terminal will not take a pushed face.
+ */
+function sourceText(reason: UnavailableReason): string {
+  const vars = reason.vars ?? {};
+  return LABELS[reason.key].replace(/\{(\w+)\}/g, (whole, name: string) =>
+    name in vars ? String(vars[name]) : whole,
+  );
 }
 
 /** Removes the enrolled face from every terminal. */
