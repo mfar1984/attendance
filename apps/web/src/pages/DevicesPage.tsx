@@ -146,6 +146,16 @@ interface DeviceRow {
   firmware: string | null;
   macAddress: string | null;
   status: string;
+  /**
+   * Whether this terminal is still in service.
+   *
+   * Declared because `status` cannot be read without it. Every writer of `status` — the health
+   * probe, the reconcile pull, a connector's heartbeat — stops the moment a terminal is
+   * deactivated, so the stored value freezes at that instant and goes on describing a unit
+   * nobody is watching. The server has always sent this field; the type simply never named it,
+   * which is why a switched-off terminal kept badging its last fault as a current one.
+   */
+  active: boolean;
   clockDriftS: number | null;
   clockMode: string | null;
   faceCapacity: number;
@@ -224,6 +234,15 @@ const STATUS_LABELS: Record<string, LabelKey> = {
   degraded: 'device.status.degraded',
   offline: 'device.status.offline',
   unknown: 'device.status.unknown',
+  /**
+   * Not a reachability state, which is why it is not in `DeviceStatus`.
+   *
+   * A deactivated terminal has a `status` column frozen at whatever it held when somebody
+   * switched it off, and nothing ever updates it again — it is off the roster, off the probe and
+   * off the connector's reports. So the stored value is a fact about the past being rendered as a
+   * fact about now.
+   */
+  inactive: 'app.status.inactive',
 };
 
 const STATUS_TONES: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = {
@@ -231,6 +250,8 @@ const STATUS_TONES: Record<string, 'success' | 'warning' | 'danger' | 'neutral'>
   degraded: 'warning',
   offline: 'danger',
   unknown: 'neutral',
+  // Neutral on purpose. Switched off is a decision somebody made, not a fault to chase.
+  inactive: 'neutral',
 };
 
 const STATUS_DOT: Record<string, string> = {
@@ -238,7 +259,31 @@ const STATUS_DOT: Record<string, string> = {
   degraded: 'bg-amber-500',
   offline: 'bg-rose-500',
   unknown: 'bg-slate-400',
+  inactive: 'bg-slate-300',
 };
+
+/**
+ * The state to show, which is not always the state stored.
+ *
+ * `Device.status` is only written by things that are watching the unit: the health probe, the
+ * reconcile pull, and a connector's heartbeat. All three stop the moment a terminal is
+ * deactivated, so the column keeps whatever it held at that instant — forever.
+ *
+ * Found on a live installation. A duplicate ZKTeco row was switched off, and the list went on
+ * badging it `DEGRADED` with its old "no serial number" warning, counting it in the chip totals,
+ * and tinting its row amber. One of two terminals needing attention was a terminal somebody had
+ * already dealt with.
+ *
+ * Derived here rather than written to the database, because the stored value is still the right
+ * record of how the unit was last seen — it is what the editor shows and what a reactivated
+ * terminal starts from. Only the reading is wrong, so only the reading is corrected.
+ */
+function effectiveStatus(device: { status: string; active: boolean }): string {
+  return device.active ? device.status : 'inactive';
+}
+
+/** The chips, in the order a reader scans them: working, then not, then switched off. */
+const STATUS_CHIPS = ['online', 'degraded', 'offline', 'unknown', 'inactive'] as const;
 
 export function DevicesPage(): ReactNode {
   const { t } = useLabels();
@@ -402,13 +447,15 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
       row.host.toLowerCase().includes(needle),
   );
   const filtered =
-    statusFilter === undefined ? searched : searched.filter((row) => row.status === statusFilter);
+    statusFilter === undefined
+      ? searched
+      : searched.filter((row) => effectiveStatus(row) === statusFilter);
 
   // Counted over the search but not over the chip, so choosing one does not zero the others.
   const counts = Object.fromEntries(
-    ['online', 'degraded', 'offline', 'unknown'].map((status) => [
+    STATUS_CHIPS.map((status) => [
       status,
-      searched.filter((row) => row.status === status).length,
+      searched.filter((row) => effectiveStatus(row) === status).length,
     ]),
   );
 
@@ -430,7 +477,7 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
       <ChipBar
         active={statusFilter}
         onChange={setStatusFilter}
-        chips={['online', 'degraded', 'offline', 'unknown'].map((status) => ({
+        chips={STATUS_CHIPS.map((status) => ({
           id: status,
           label: <TEnum k={STATUS_LABELS[status]} fallback={status} />,
           count: counts[status] ?? 0,
@@ -475,6 +522,7 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
           const expanded = open === row.id;
           const drift = row.clockDriftS;
           const drifting = drift !== null && Math.abs(drift) > 30;
+          const state = effectiveStatus(row);
 
           return (
             <Fragment key={row.id}>
@@ -483,8 +531,14 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                   'border-b border-slate-100',
                   expanded ? 'bg-slate-50' : 'hover:bg-slate-50/70',
                   // Rose for a unit that is down, amber for one that answers but needs a look.
-                  !expanded && row.status === 'offline' && 'bg-rose-50/40',
-                  !expanded && row.status === 'degraded' && 'bg-amber-50/40',
+                  !expanded && state === 'offline' && 'bg-rose-50/40',
+                  !expanded && state === 'degraded' && 'bg-amber-50/40',
+                  /*
+                    A deactivated row is dimmed rather than tinted. Tint means "look at this";
+                    this one has already been dealt with, and it is only still listed so it can
+                    be found and switched back on.
+                  */
+                  !expanded && state === 'inactive' && 'opacity-60',
                 )}
               >
                 <td className="px-5 py-2.5">
@@ -519,11 +573,18 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                   ) : (
                     <>
                       {row.host}
-                      {row.serialNumber === null ? (
+                      {/*
+                        The missing serial is only a problem for a terminal that is supposed to be
+                        recording. On a deactivated one it is a warning about a consequence that
+                        cannot happen, which is noise competing with the warnings that matter.
+                      */}
+                      {row.serialNumber === null && row.active ? (
                         <span className="mt-0.5 flex items-center gap-1 font-sans text-[11px] font-medium text-amber-700">
                           <TriangleAlert className="size-3 shrink-0" aria-hidden />
                           <T k="device.row.noSerial" />
                         </span>
+                      ) : row.serialNumber === null ? (
+                        <span className="mt-0.5 block text-[11px] text-slate-300">—</span>
                       ) : (
                         <span className="mt-0.5 block text-[11px] text-slate-400">
                           {row.serialNumber}
@@ -590,8 +651,8 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                     : formatDateTime(row.lastSeenAt)}
                 </td>
                 <td className="px-2 py-2.5">
-                  <Badge tone={STATUS_TONES[row.status] ?? 'neutral'} className="uppercase">
-                    <TEnum k={STATUS_LABELS[row.status]} fallback={row.status} />
+                  <Badge tone={STATUS_TONES[state] ?? 'neutral'} className="uppercase">
+                    <TEnum k={STATUS_LABELS[state]} fallback={state} />
                   </Badge>
                 </td>
                 <td className="px-2 py-2.5 pr-4">
