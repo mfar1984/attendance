@@ -2598,7 +2598,9 @@ export const LABELS = {
     'Export ini menjadi gaji. Ia menyatakan pengecualian yang belum diselesaikan.',
   'perm.note.settings.backup':
     'Restore tiada di sini dengan sengaja — ia arahan yang dijalankan pada pelayan.',
-  'perm.note.settings.devices': 'Terminal tidak boleh dibuang — sejarah scan merujuk kepadanya.',
+  // Buang berasingan daripada Ubah, dan ia tetap ditolak selagi ada apa-apa merujuk terminal itu.
+  'perm.note.settings.devices':
+    'Buang berasingan daripada Ubah, dan ia hanya berjaya selagi tiada scan, punch, pengecualian atau pemetaan staf merujuk kepada terminal itu.',
   'perm.note.settings.integration.email':
     'Menghantar ujian menghantar emel sebenar melalui relay yang dikonfigurasikan.',
   'perm.note.settings.integration.api':
@@ -4350,8 +4352,14 @@ export const LABELS = {
   // them. Everything below is this screen's own.
   // -------------------------------------------------------------------------
   'device.title': 'Senarai Peranti',
+  /*
+   * The last sentence used to read that a terminal cannot be removed at all. That stopped being
+   * true when the delete action arrived, and a subtitle that contradicts the control below it is
+   * worse than no subtitle. It still says what an operator needs to know first: a unit that has
+   * recorded anything stays on this screen for good.
+   */
   'device.subtitle':
-    'Terminal kehadiran, cara ia dihubungi, dan keadaan jamnya. Terminal tidak boleh dibuang kerana sejarah scan merujuk kepadanya.',
+    'Terminal kehadiran, cara ia dihubungi, dan keadaan jamnya. Terminal hanya boleh dibuang selagi tiada scan, punch, pengecualian atau pemetaan staf merujuk kepadanya — sebaik satu scan direkod, rekodnya kekal.',
   'device.tabs.aria': 'Tetapan peranti',
   'device.tab.list': 'Senarai',
   'device.tab.connection': 'Mod Sambungan',
@@ -4463,6 +4471,45 @@ export const LABELS = {
   'device.row.sync': 'Sync sekarang',
   'device.row.importUsers': 'Baca senarai pengguna dari terminal',
   'device.row.expand': 'butiran terminal',
+
+  /**
+   * Buang terminal, dan sebab ia hampir selalu kelabu.
+   *
+   * The blocked wording is on the control itself, because that is where somebody reaches for it.
+   * Only the first blocker is shown, so each of these has to stand alone as a complete reason —
+   * none of them is a clause assembled with another.
+   *
+   * A terminal that has ever recorded a scan is never deletable, and that is the intended
+   * outcome. So these name what refuses it, rather than reading as a feature that is broken for
+   * every row on the screen.
+   *
+   * Only `active` carries an instruction, because it is the only blocker with a control behind
+   * it — the switch on the Sambungan tab of the device editor, which is where it says to go. The
+   * rest state the fact and stop. Nothing in this application deletes a raw event, a punch or an
+   * exception, and nothing clears a staff mapping either, so naming a screen to go and fix it
+   * would be the broken-feature reading arriving by another route: the operator follows the
+   * sentence, finds no such control, and concludes the delete is what is broken.
+   */
+  'device.row.remove': 'Buang terminal',
+  'device.remove.blocked.rawEvents':
+    'Log scan mentah terminal ini masih ada, jadi rekodnya tidak boleh dibuang. Log itu adalah bukti bagi setiap kehadiran yang dikira daripadanya, dan tiada laluan memadamnya di mana-mana dalam sistem ini.',
+  'device.remove.blocked.punches':
+    'Punch yang direkod oleh terminal ini masih ada, jadi rekodnya tidak boleh dibuang. Membuangnya akan meninggalkan punch itu tanpa terminal yang merekodnya.',
+  'device.remove.blocked.exceptions':
+    '{count} pengecualian kehadiran merujuk kepada terminal ini, termasuk sebab bertulis yang menutupnya. Rekodnya tidak boleh dibuang.',
+  'device.remove.blocked.enrolments':
+    '{count} staf dipetakan kepada terminal ini, dan pemetaan itu satu-satunya rekod siapa yang didaftarkan pada unit itu. Rekodnya tidak boleh dibuang selagi pemetaan itu ada.',
+  'device.remove.blocked.active':
+    'Nyahaktifkan terminal ini dahulu, dalam tab Sambungan editornya. Buang hanya ditawarkan selepas ia tidak lagi merekod.',
+
+  'device.remove.title': 'Buang {name}?',
+  'device.remove.description':
+    'Tiada scan, punch, pengecualian atau pemetaan staf merujuk kepada terminal ini. Itu sebab ia boleh dibuang — dan sebab terminal yang pernah merekod tidak boleh.',
+  'device.remove.note':
+    'Yang dibuang bersamanya ialah bookkeeping terminal ini sahaja: kursor pull dan keadaan sync, arahan yang belum dikutip, snapshot connector, dan ID terminal yang belum dipetakan. Kesemuanya merujuk kepada unit yang tidak akan wujud lagi.',
+  'device.remove.submit': 'Buang terminal',
+  'device.removed':
+    '{name} dibuang, bersama {rows} baris bookkeeping yang merujuk kepadanya.',
 
   'device.detail.model': 'Model',
   'device.detail.firmware': 'Firmware',

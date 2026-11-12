@@ -178,6 +178,18 @@ interface DeviceRow {
     lastPushAt: string | null;
     recoveredByPull: number;
   } | null;
+  /**
+   * Whether this record may be deleted, decided by the server.
+   *
+   * Sent with the list because the trash icon has to be greyed out with its reason already on it,
+   * rather than enabled and then refused — and the reason is four tables the browser cannot see.
+   * `blockers` is ordered: evidence first, the deactivation step last, so the tooltip names the
+   * permanent reason where there is one.
+   */
+  removal: {
+    removable: boolean;
+    blockers: Array<{ key: LabelKey; vars?: Record<string, number> }>;
+  };
 }
 
 /**
@@ -365,11 +377,21 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState<DeviceRow | null>(null);
 
   // Each row action is its own grant on the server, so each is offered only where it would pass.
   const maySync = can('settings.devices', 'sync');
   // Reading a terminal's users feeds the ID mapping screen, and that screen owns the grant.
   const mayImport = can('staff.mapping', 'import');
+  /**
+   * Removing a record is `delete`, not `edit`.
+   *
+   * Hidden rather than greyed when the grant is absent, like the export buttons: a control that
+   * answers 403 teaches the operator the screen is broken rather than that they lack the
+   * permission. Nobody holds this action until it is granted, so the icon is absent everywhere
+   * until somebody ticks it in the role editor.
+   */
+  const mayRemove = can('settings.devices', 'delete');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -523,6 +545,12 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
           const drift = row.clockDriftS;
           const drifting = drift !== null && Math.abs(drift) > 30;
           const state = effectiveStatus(row);
+          /*
+            The first reason removal is refused, which is both the tooltip and the disabled test.
+            Reading the absence of a blocker rather than the `removable` flag beside it keeps one
+            rule on this side too — two tests for one question are two that can disagree.
+          */
+          const removeBlocker = row.removal.blockers[0];
 
           return (
             <Fragment key={row.id}>
@@ -686,6 +714,19 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                         onClick={() => void importUsers(row)}
                       />
                     )}
+                    {mayRemove && (
+                      <RowAction
+                        icon={<Trash2 className="size-4" aria-hidden />}
+                        label={
+                          removeBlocker === undefined
+                            ? t('device.row.remove')
+                            : t(removeBlocker.key, removeBlocker.vars)
+                        }
+                        tone="danger"
+                        disabled={busy || removeBlocker !== undefined}
+                        onClick={() => setRemoving(row)}
+                      />
+                    )}
                     <ExpandButton
                       expanded={expanded}
                       onClick={() => setOpen(expanded ? null : row.id)}
@@ -814,6 +855,45 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
             await load();
             onChanged();
           }}
+        />
+      )}
+
+      {/*
+        The second of the two steps. The first is deactivating the terminal, in its editor — the
+        action above is greyed until that has happened, so by the time this opens the decision has
+        already been made once, visibly and reversibly.
+
+        The description says what else goes, because the row is not the only thing deleted: the
+        pull cursor, uncollected commands, connector snapshots and unmapped identifiers go with it.
+      */}
+      {removing !== null && (
+        <RemoveDialog
+          title={<T k="device.remove.title" vars={{ name: removing.name }} />}
+          titleText={t('device.remove.title', { name: removing.name })}
+          description={
+            <>
+              <T k="device.remove.description" /> <T k="device.remove.note" />
+            </>
+          }
+          submitLabel={<T k="device.remove.submit" />}
+          onConfirm={async () => {
+            const target = removing;
+            const outcome = await api.delete<{
+              swept: { syncState: number; commands: number; snapshots: number; unmapped: number };
+            }>(`/api/devices/${String(target.id)}`);
+            const swept = outcome.swept;
+            setRemoving(null);
+            setError(null);
+            setNotice(
+              t('device.removed', {
+                name: target.name,
+                rows: swept.syncState + swept.commands + swept.snapshots + swept.unmapped,
+              }),
+            );
+            await load();
+            onChanged();
+          }}
+          onClose={() => setRemoving(null)}
         />
       )}
     </>

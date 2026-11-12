@@ -17,11 +17,13 @@ import { encryptSecret } from '../crypto.js';
 import { db, jsonSafe } from '../db.js';
 import { loadEnv } from '../env.js';
 import { badRequest, conflict, forUpdate, notFound, parseBody } from '../http.js';
+import { logger } from '../logger.js';
 import { syncDevice } from '../sync/worker.js';
 import { toHikvisionTimeZone, zoneOffsetMinutes } from '../time.js';
 import { checkAllDevices, checkDevice } from './health.js';
 import { CommandKind, enqueueReplacing } from './driver/commands.js';
 import { capabilitiesFor, clientFor, driverFor, releaseClient } from './registry.js';
+import { assertRemovable, removalForAll, removeDevice } from './removal.js';
 
 const deviceInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -226,6 +228,22 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         },
       });
 
+      /**
+       * Whether each row may be deleted, and what refuses it.
+       *
+       * Sent with the list because the control has to be greyed out with its reason already on
+       * it. Offering a trash icon and answering 409 teaches the operator that the screen guesses;
+       * and the reason is not something the browser can work out — it is four tables it cannot
+       * see. Asked for the whole list in a fixed number of queries; see `removalForAll`.
+       */
+      const removal = await removalForAll(
+        devices.map((row) => ({
+          id: row.id,
+          active: row.active,
+          enrolled: row._count.enrolments,
+        })),
+      );
+
       // The stored password is never returned, not even encrypted: nothing in the
       // UI needs it, and an endpoint that emits it becomes the weak point.
       return jsonSafe(
@@ -250,6 +268,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
              */
             capabilities: capabilitiesFor(row),
             enrolled: device._count.enrolments,
+            removal: removal.get(row.id) ?? { removable: false, blockers: [] },
           };
         }),
       );
@@ -433,6 +452,71 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
        */
       const health = device.active ? await checkDevice(device) : null;
       return jsonSafe({ id: device.id, health });
+    },
+  );
+
+  /**
+   * Removes a terminal record.
+   *
+   * There was no delete path for a device anywhere in the application, which meant the one stale
+   * duplicate row that needed removing was removed by hand, over SSH, with raw SQL against the
+   * production database. This is that operation with the checks written down.
+   *
+   * ## Its own grant, not `edit`
+   *
+   * `settings.devices:delete`. Renaming a terminal and removing its record are different jobs:
+   * `edit` is handed to whoever maintains the list, and `edit` must not quietly include the one
+   * action that has no undo. No existing role holds the new action until somebody grants it —
+   * `can()` reads the permissions stored on the role, and nothing is a wildcard, including Super
+   * Admin.
+   *
+   * ## Two steps
+   *
+   * The terminal must already be deactivated. Deactivating is reversible and visible, it takes the
+   * unit out of the health sweep and the roster push, and it is the decision that actually matters;
+   * this is the cleanup afterwards. Same shape as a leave type with history, and as the connector
+   * delete beside it.
+   *
+   * The refusal is in `removal.ts`, with the per-table reasoning. Nothing here relies on the
+   * cascade: that is the hazard, not the guard.
+   */
+  app.delete(
+    '/api/devices/:id',
+    { preHandler: requirePermission('settings.devices', 'delete') },
+    async (request) => {
+      const device = await requireDevice(idParam(request.params));
+
+      await assertRemovable(device);
+      const swept = await removeDevice(device.id);
+
+      /*
+       * The cached driver outlives the row it was built from. Autoincrement does not reuse ids, so
+       * a stale entry cannot answer for a later terminal — but it holds an open connection to an
+       * address nobody maintains any more.
+       */
+      await releaseClient(device.id);
+
+      /**
+       * Logged at `warn`, like a password change.
+       *
+       * This is the only operation in the application that removes a device record, and the row is
+       * gone afterwards — so this line is the only place that says it existed, what it was, and
+       * what went with it.
+       */
+      logger().warn(
+        {
+          deviceId: device.id,
+          // `deviceName`, not `name`: pino treats `name` as the logger's own binding, so the
+          // terminal would be printed as the logger label and vanish from the fields.
+          deviceName: device.name,
+          host: device.host,
+          serialNumber: device.serialNumber,
+          swept,
+        },
+        'Removed a terminal',
+      );
+
+      return { ok: true, swept };
     },
   );
 

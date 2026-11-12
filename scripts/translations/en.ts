@@ -2086,7 +2086,8 @@ export const EN_LABELS_PERMISSIONS: Partial<Record<LabelKey, string>> = {
     'This export becomes pay. It states the exceptions that are still unresolved.',
   'perm.note.settings.backup':
     'Restore is deliberately not here — it is a command run on the server.',
-  'perm.note.settings.devices': 'A terminal cannot be removed — the scan history references it.',
+  'perm.note.settings.devices':
+    'Delete is separate from Edit, and it only succeeds while no scan, punch, exception or staff mapping refers to that terminal.',
   'perm.note.settings.integration.email':
     'Sending a test sends a real email through the configured relay.',
   'perm.note.settings.integration.api':
@@ -5124,7 +5125,7 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
   // Matches `nav.settings.devices`.
   'device.title': 'Device List',
   'device.subtitle':
-    'The attendance terminals, how each one is reached, and the state of its clock. A terminal cannot be removed because the scan history refers to it.',
+    'The attendance terminals, how each one is reached, and the state of its clock. A terminal can only be removed while nothing refers to it — no scan, no punch, no exception, no staff mapping — so once one scan is recorded the record stays.',
   'device.tabs.aria': 'Device settings',
   'device.tab.list': 'List',
   'device.tab.connection': 'Connection Mode',
@@ -5184,6 +5185,31 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
   'device.row.sync': 'Sync now',
   'device.row.importUsers': 'Read the user list from the terminal',
   'device.row.expand': 'terminal details',
+
+  /*
+   * Only the first blocker reaches the tooltip, so each of these stands alone as a whole reason.
+   * A terminal that has recorded anything is never deletable, and the wording has to read as that
+   * rather than as a feature that is broken on every row.
+   */
+  'device.row.remove': 'Remove terminal',
+  'device.remove.blocked.rawEvents':
+    'The raw scan log for this terminal is still here, so its record cannot be removed. That log is the evidence behind every attendance figure derived from it, and nothing anywhere in this system deletes it.',
+  'device.remove.blocked.punches':
+    'Punches recorded by this terminal are still here, so its record cannot be removed. Removing it would leave those punches with no terminal that recorded them.',
+  'device.remove.blocked.exceptions':
+    '{count} attendance exceptions refer to this terminal, including the written reason that closed them. Its record cannot be removed.',
+  'device.remove.blocked.enrolments':
+    '{count} staff are mapped to this terminal, and those mappings are the only record of who was enrolled on that unit. Its record cannot be removed while they are there.',
+  'device.remove.blocked.active':
+    'Deactivate this terminal first, under the Connection tab of its editor. Removal is only offered once it has stopped recording.',
+
+  'device.remove.title': 'Remove {name}?',
+  'device.remove.description':
+    'No scan, punch, exception or staff mapping refers to this terminal. That is why it can be removed — and why one that has recorded anything cannot.',
+  'device.remove.note':
+    'What goes with it is this terminal’s bookkeeping and nothing else: the pull cursor and sync state, commands never collected, connector snapshots, and terminal IDs still waiting to be mapped. All of it refers to a unit that will no longer exist.',
+  'device.remove.submit': 'Remove terminal',
+  'device.removed': '{name} removed, along with {rows} bookkeeping rows that referred to it.',
 
   'device.detail.model': 'Model',
   'device.detail.firmware': 'Firmware',

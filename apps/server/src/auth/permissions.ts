@@ -612,7 +612,20 @@ export const PERMISSION_SECTIONS: PermissionSection[] = [
         key: 'settings.devices',
         labelKey: 'nav.settings.devices',
         path: '/tetapan/peranti',
-        actions: ['create', 'view', 'edit'],
+        /**
+         * `delete` is separate from `edit`, and it is the newest grant here.
+         *
+         * `edit` renames a terminal and corrects its address, which is the job of whoever
+         * maintains the list. Removing the record is the one action on this screen with no
+         * undo, and it must not arrive attached to the permission to fix a typo.
+         *
+         * It is granted to nobody until somebody ticks it. `can()` reads the array stored on
+         * the role and there is no wildcard, so an existing Super Admin row does not acquire a
+         * new action by the registry gaining one. `fullPermissions()` is derived from this
+         * file, so a fresh seed — or a re-run of it, which rewrites the three system roles —
+         * includes it.
+         */
+        actions: ['create', 'view', 'edit', 'delete'],
         custom: [
           { id: 'test', labelKey: 'perm.action.test.connection' },
           { id: 'sync', labelKey: 'perm.action.sync.push' },
