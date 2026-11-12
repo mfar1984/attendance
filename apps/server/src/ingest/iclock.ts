@@ -446,20 +446,80 @@ async function sourceAllowed(request: FastifyRequest): Promise<boolean> {
 }
 
 /**
+ * Devices already warned about, so a misconfiguration is said once per process and not per poll.
+ *
+ * A callback terminal contacts us every thirty seconds. Logging on each one would bury the thing
+ * it is trying to report under its own repetition.
+ */
+const warnedAgentAssigned = new Set<number>();
+
+/**
+ * Whether an address could belong to a terminal.
+ *
+ * Loopback cannot. A request arriving from `127.0.0.1` is this server's own reverse proxy, or
+ * something running on the box — never a unit on a wall. Storing it replaced a real LAN address
+ * with one that is useless for diagnosis and actively misleading, since the device list presents
+ * it as where the terminal is.
+ *
+ * Found the hard way: a handshake run with `curl` on the server to check a serial number rewrote
+ * the terminal's address to `127.0.0.1` and marked it online. A read that mutates state is bad
+ * enough; one that does so with a value that cannot be true is worse.
+ */
+function plausibleTerminalAddress(address: string): boolean {
+  if (address === '') return false;
+  if (address === '::1') return false;
+  return !/^127\./.test(address);
+}
+
+/**
  * Records that the terminal is alive, and what it says about itself.
  *
  * A request arriving is the only liveness signal this protocol gives, and it is a good one: the
  * unit polls on a timer whether or not anybody scans. `degraded` is preserved because it means
  * the unit answers but its data is suspect — usually clock drift, which contact does not address.
+ *
+ * Two things it refuses to write, both learned from the same incident. See the branches below.
  */
 async function noteContact(device: Device, request: FastifyRequest): Promise<void> {
+  /**
+   * A terminal behind a connector has its state written by that connector, and only by it.
+   *
+   * The same rule the health probe already follows — `devices/health.ts` writes nothing for an
+   * agent terminal because `status`, `lastSeenAt` and `lastError` belong to the heartbeat, and a
+   * second writer would fight it. This route was the one place still breaking it: a terminal
+   * assigned to a connector but posting here directly had its row written by whichever side
+   * contacted most recently, so the screen alternated between the two.
+   *
+   * The events themselves are still stored. The caller has already decoded them, and losing
+   * attendance because a unit is pointed at the wrong address would be a worse answer to a
+   * configuration mistake than recording it and saying so.
+   */
+  if (device.agentId !== null) {
+    if (!warnedAgentAssigned.has(device.id)) {
+      warnedAgentAssigned.add(device.id);
+      logger().warn(
+        {
+          deviceId: device.id,
+          device: device.name,
+          agentId: device.agentId,
+          ip: resolveClientAddress(request).address,
+        },
+        'A terminal assigned to a connector is posting to the cloud directly. Its records are ' +
+          'kept, but its status is left to the connector — point the unit at its connector.',
+      );
+    }
+    return;
+  }
+
   /**
    * The address is recorded, not trusted.
    *
    * Identity came from the serial number. This is stored so the device list can show where the
-   * unit actually is, which for a remote site behind NAT is the only way anybody finds out.
+   * unit actually is, which for a remote site behind NAT is the only way anybody finds out —
+   * but only when the value could be a terminal at all. See `plausibleTerminalAddress`.
    */
-  const seenFrom = request.ip.replace(/^::ffff:/, '');
+  const seenFrom = resolveClientAddress(request).address;
+  const storeAddress = plausibleTerminalAddress(seenFrom) && seenFrom !== device.host;
 
   await db().device.update({
     where: { id: device.id },
@@ -467,7 +527,7 @@ async function noteContact(device: Device, request: FastifyRequest): Promise<voi
       lastSeenAt: new Date(),
       lastError: null,
       ...(device.status === 'degraded' ? {} : { status: 'online' }),
-      ...(seenFrom !== '' && seenFrom !== device.host ? { host: seenFrom } : {}),
+      ...(storeAddress ? { host: seenFrom } : {}),
     },
   });
 }
