@@ -2,6 +2,7 @@ import { DeviceLockedError } from '@attendance/hik-isapi';
 import type { Device } from '@prisma/client';
 
 import { db } from '../db.js';
+import { strandSilentAgentDevices } from '../devices/agent-liveness.js';
 import { requeueStale } from '../devices/driver/commands.js';
 import { DriverOperation, supports } from '@attendance/terminal-drivers';
 import { driverFor } from '../devices/registry.js';
@@ -304,6 +305,28 @@ export function startSyncWorker(): void {
        * right values follow from the poll cadence, not from operator preference.
        */
       await requeueStale(STALE_COMMAND_MS, MAX_COMMAND_ATTEMPTS);
+
+      /**
+       * Notice connectors that have stopped reporting.
+       *
+       * Belongs on this timer because absence cannot be detected by the thing that is absent. A
+       * connector-served terminal's status is written only by its agent's heartbeat — the health
+       * probe skips those devices and `syncDevice` no-ops them, both correctly — so a connector
+       * going quiet meant nothing wrote anything and the status froze at whatever was last
+       * reported.
+       *
+       * Hospital Sibu's connector went silent on 21 October and was found on 12 November with its
+       * terminal still reading ONLINE and the alert bell quiet, because the bell counts terminals
+       * whose status is offline. Twenty-two days of attendance that never existed, and nothing on
+       * any screen said so.
+       */
+      const stranded = await strandSilentAgentDevices();
+      if (stranded.devices > 0) {
+        logger().warn(
+          stranded,
+          'Terminals marked offline because their connector is not reporting',
+        );
+      }
 
       const devices = await db().device.findMany({ where: { active: true } });
       let stored = 0;
