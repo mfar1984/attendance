@@ -417,7 +417,7 @@ try {
 
   const { driverFor, releaseAllClients } = await import('../apps/server/src/devices/registry.js');
   const { AgentProxyDriver } = await import('../apps/server/src/devices/drivers/agent-proxy.js');
-  const { DriverOperation, supports, unavailableReason } = await import(
+  const { DriverOperation, declares, supports, unavailableReason } = await import(
     '@attendance/terminal-drivers'
   );
 
@@ -434,9 +434,26 @@ try {
     'the reconcile worker is told not to pull it',
     !supports(proxy.capabilities, DriverOperation.pullEvents),
   );
+  /*
+   * Asserted on the key, not on the words.
+   *
+   * `unavailableReason` returns `{ key, vars? }` now rather than Malay prose — a driver is built
+   * by a probe or a heartbeat with no reader whose language can be consulted, so the sentence is
+   * resolved on the screen. The old `.includes('connector')` was a `.includes` call on an object,
+   * which threw a TypeError and took every later check in this file with it.
+   */
   check(
     'opening a door is refused with a reason a screen can show',
-    (unavailableReason(proxy.capabilities, DriverOperation.openDoor) ?? '').includes('connector'),
+    unavailableReason(proxy.capabilities, DriverOperation.openDoor)?.key ===
+      'device.capability.agent.openDoor',
+  );
+  /*
+   * Declared as well as refused. `declares()` is what decides whether the editor draws the control
+   * at all, so an operation left out of `operations` takes its own explanation off the screen.
+   */
+  check(
+    'and the door control is still drawn, so the reason has somewhere to appear',
+    declares(proxy.capabilities, DriverOperation.openDoor),
   );
 
   let readRefused = false;

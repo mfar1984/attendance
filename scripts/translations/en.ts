@@ -5149,8 +5149,6 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
     'This terminal is reached through the on-site connector, so a command takes several seconds to arrive. A door that opens after a delay like that opens when nobody is expecting it — open it at the terminal itself.',
   'device.capability.agent.setClock':
     'The connector sets its terminals’ clocks itself, from the cloud time it receives on every heartbeat. A timestamp queued from here is already stale when it is collected, and writing a stale time to a clock bakes in the drift this was meant to correct. Set an NTP host instead.',
-  'device.capability.agent.configureCallback':
-    'The push target for a terminal behind a connector is the connector’s own LAN address, which it knows and this server does not. The connector sets it itself.',
 
   'device.list.count': '{count} terminals',
   /*
@@ -5377,6 +5375,8 @@ export const EN_LABELS_DEVICE_HEALTH: Partial<Record<LabelKey, string>> = {
   'device.editor.unknownModel': 'Model not read yet',
   'device.editor.save': 'Save',
   'device.editor.enrolled': '{enrolled}/{capacity} enrolled',
+  // Where the enrolled count cannot be read from the unit, so there is no ratio to state.
+  'device.editor.capacityOnly': 'capacity {capacity}',
   'device.editor.passwordStored': 'Password stored',
   'device.editor.tabs.aria': 'Terminal settings sections',
   'device.editor.tab.connection': 'Connection',
@@ -5620,6 +5620,12 @@ export const EN_LABELS_DEVICE_DOOR: Partial<Record<LabelKey, string>> = {
     'The terminal matches locally. A mode that requires two factors refuses a scan that only offers one.',
   'device.editor.door.reader.unsupported':
     'This firmware does not expose the reader configuration, so the verification mode has to be set on the terminal itself.',
+  /*
+   * Not the same as the two "this firmware does not have it" lines: the terminal has these
+   * settings and nothing read them, because this server holds no socket to the unit.
+   */
+  'device.editor.door.acs.unread':
+    'These settings were not read from this server for this terminal, so their real values are not known. The card is shown empty rather than as switches that read as off, because a setting that was never read but is presented as current is worse than an empty field. Check at the terminal itself.',
   'device.editor.door.fingerprintLevel': 'Fingerprint level',
   'device.editor.door.fingerprintLevel.hint': 'The values this terminal accepts',
   'device.editor.door.unchanged': 'Keep as is',

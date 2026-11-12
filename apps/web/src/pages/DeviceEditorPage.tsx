@@ -1318,13 +1318,27 @@ function IdentityTab({ device }: { device: DeviceRecord }): ReactNode {
           icon={<ShieldCheck className="size-3.5" aria-hidden />}
           action={
             <span className="text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
-              <T
-                k="device.editor.enrolled"
-                vars={{
-                  enrolled: counts?.people ?? 0,
-                  capacity: data?.capacity?.faces ?? device.faceCapacity,
-                }}
-              />
+              {/*
+                Capacity alone where the enrolled count cannot be read.
+
+                `counts?.people ?? 0` put "0/3000 didaftar" directly above the statement that this
+                protocol has no endpoint which enumerates its users — a number nobody read,
+                asserted in the one place somebody checks before concluding the unit is empty.
+              */}
+              {countsUnreadable ? (
+                <T
+                  k="device.editor.capacityOnly"
+                  vars={{ capacity: data?.capacity?.faces ?? device.faceCapacity }}
+                />
+              ) : (
+                <T
+                  k="device.editor.enrolled"
+                  vars={{
+                    enrolled: counts?.people ?? 0,
+                    capacity: data?.capacity?.faces ?? device.faceCapacity,
+                  }}
+                />
+              )}
             </span>
           }
         >
@@ -2351,48 +2365,74 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
           </SettingsGroup>
         )}
 
+        {/*
+          Both of the groups below are built on `AcsCfg`, and both are guarded on it being null —
+          the way the reader and door groups guard on theirs.
+
+          `acs` null means this server did not read the document: a connector terminal, where it
+          holds no socket to the unit, or an ISAPI row with no stored credential. Rendered
+          unguarded, these switches reported every value as off, in green, without anything having
+          been read — while the health probe could be raising `device.warning.remoteCheck` on the
+          same terminal saying remote verification is on. `submit()` also omits `acs` entirely when
+          it is null, so the switches wrote nothing and said nothing. An invented setting presented
+          as current is worse than an empty card.
+        */}
         <SettingsGroup
           title={<T k="device.editor.door.group.remote" />}
           icon={<Radio className="size-3.5" aria-hidden />}
           action={
-            <span
-              className={
-                remoteCheck
-                  ? 'text-[11px] font-semibold tracking-wide text-amber-700 uppercase'
-                  : 'text-[11px] font-semibold tracking-wide text-emerald-700 uppercase'
-              }
-            >
-              <T k={remoteCheck ? 'device.editor.door.remote.on' : 'device.editor.door.remote.off'} />
-            </span>
+            data !== null && data.acs === null ? (
+              <span className="font-mono text-[11px] text-slate-500">—</span>
+            ) : (
+              <span
+                className={
+                  remoteCheck
+                    ? 'text-[11px] font-semibold tracking-wide text-amber-700 uppercase'
+                    : 'text-[11px] font-semibold tracking-wide text-emerald-700 uppercase'
+                }
+              >
+                <T
+                  k={remoteCheck ? 'device.editor.door.remote.on' : 'device.editor.door.remote.off'}
+                />
+              </span>
+            )
           }
         >
-          <SettingRow
-            label={<T k="device.editor.door.remoteCheck" />}
-            hint={<T k="device.editor.door.remoteCheck.hint" />}
-          >
-            <Switch
-              checked={remoteCheck}
-              disabled={!allowed}
-              onChange={setRemoteCheck}
-              label={t('device.editor.door.remoteCheck')}
-            />
-          </SettingRow>
+          {data !== null && data.acs === null ? (
+            <Unsupported>
+              <T k="device.editor.door.acs.unread" />
+            </Unsupported>
+          ) : (
+            <>
+              <SettingRow
+                label={<T k="device.editor.door.remoteCheck" />}
+                hint={<T k="device.editor.door.remoteCheck.hint" />}
+              >
+                <Switch
+                  checked={remoteCheck}
+                  disabled={!allowed}
+                  onChange={setRemoteCheck}
+                  label={t('device.editor.door.remoteCheck')}
+                />
+              </SettingRow>
 
-          <SettingRow label={<T k="device.editor.door.remoteDetail" />}>
-            <ControlGrid columns={2}>
-              <ControlCell caption={<T k="device.editor.door.channel" />}>
-                <StaticControl value={String(data?.acs?.checkChannelType ?? '—')} mono />
-              </ControlCell>
-              <ControlCell caption={<T k="device.editor.door.timeout" />}>
-                <StaticControl value={String(data?.acs?.remoteCheckTimeout ?? '—')} mono />
-              </ControlCell>
-            </ControlGrid>
-          </SettingRow>
+              <SettingRow label={<T k="device.editor.door.remoteDetail" />}>
+                <ControlGrid columns={2}>
+                  <ControlCell caption={<T k="device.editor.door.channel" />}>
+                    <StaticControl value={String(data?.acs?.checkChannelType ?? '—')} mono />
+                  </ControlCell>
+                  <ControlCell caption={<T k="device.editor.door.timeout" />}>
+                    <StaticControl value={String(data?.acs?.remoteCheckTimeout ?? '—')} mono />
+                  </ControlCell>
+                </ControlGrid>
+              </SettingRow>
 
-          {remoteCheck && (
-            <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
-              <T k="device.editor.door.remoteWarning" />
-            </PanelNote>
+              {remoteCheck && (
+                <PanelNote tone="warn" icon={<TriangleAlert className="size-3.5" aria-hidden />}>
+                  <T k="device.editor.door.remoteWarning" />
+                </PanelNote>
+              )}
+            </>
           )}
         </SettingsGroup>
 
@@ -2526,77 +2566,85 @@ function DoorTab({ device }: { device: DeviceRecord }): ReactNode {
           title={<T k="device.editor.door.group.display" />}
           icon={<Settings2 className="size-3.5" aria-hidden />}
         >
-          <SettingRow
-            label={<T k="device.editor.door.onScreen" />}
-            hint={<T k="device.editor.door.onScreen.hint" />}
-          >
-            <ControlGrid columns={3}>
-              <ControlCell caption={<T k="device.editor.door.showName" />}>
-                <Switch
-                  checked={showName}
-                  disabled={!allowed || data?.acs?.showName === null}
-                  onChange={setShowName}
-                  label={t('device.editor.door.showName')}
-                  showLabel={false}
-                />
-              </ControlCell>
-              <ControlCell caption={<T k="device.editor.door.showEmployeeNo" />}>
-                <Switch
-                  checked={showEmployeeNo}
-                  disabled={!allowed || data?.acs?.showEmployeeNo === null}
-                  onChange={setShowEmployeeNo}
-                  label={t('device.editor.door.showEmployeeNo')}
-                  showLabel={false}
-                />
-              </ControlCell>
-              <ControlCell caption={<T k="device.editor.door.showPicture" />}>
-                <Switch
-                  checked={showPicture}
-                  disabled={!allowed || data?.acs?.showPicture === null}
-                  onChange={setShowPicture}
-                  label={t('device.editor.door.showPicture')}
-                  showLabel={false}
-                />
-              </ControlCell>
-            </ControlGrid>
-          </SettingRow>
+          {data !== null && data.acs === null ? (
+            <Unsupported>
+              <T k="device.editor.door.acs.unread" />
+            </Unsupported>
+          ) : (
+            <>
+              <SettingRow
+                label={<T k="device.editor.door.onScreen" />}
+                hint={<T k="device.editor.door.onScreen.hint" />}
+              >
+                <ControlGrid columns={3}>
+                  <ControlCell caption={<T k="device.editor.door.showName" />}>
+                    <Switch
+                      checked={showName}
+                      disabled={!allowed || data?.acs?.showName === null}
+                      onChange={setShowName}
+                      label={t('device.editor.door.showName')}
+                      showLabel={false}
+                    />
+                  </ControlCell>
+                  <ControlCell caption={<T k="device.editor.door.showEmployeeNo" />}>
+                    <Switch
+                      checked={showEmployeeNo}
+                      disabled={!allowed || data?.acs?.showEmployeeNo === null}
+                      onChange={setShowEmployeeNo}
+                      label={t('device.editor.door.showEmployeeNo')}
+                      showLabel={false}
+                    />
+                  </ControlCell>
+                  <ControlCell caption={<T k="device.editor.door.showPicture" />}>
+                    <Switch
+                      checked={showPicture}
+                      disabled={!allowed || data?.acs?.showPicture === null}
+                      onChange={setShowPicture}
+                      label={t('device.editor.door.showPicture')}
+                      showLabel={false}
+                    />
+                  </ControlCell>
+                </ControlGrid>
+              </SettingRow>
 
-          {/*
-            Masking, read only. Both were on for the test unit. Turning them off puts
-            names and staff numbers on a screen in a public corridor, so it belongs behind
-            a decision somebody records rather than a switch on a settings tab.
-          */}
-          <SettingRow
-            label={<T k="device.editor.door.masking" />}
-            hint={<T k="device.editor.door.masking.hint" />}
-          >
-            <ControlGrid columns={2}>
-              <ControlCell caption={<T k="device.editor.door.showName" />}>
-                <StaticControl
-                  value={<T k={maskLabel(data?.acs?.desensitiseName)} />}
-                  tone={data?.acs?.desensitiseName === false ? 'warn' : 'neutral'}
-                />
-              </ControlCell>
-              <ControlCell caption={<T k="device.editor.door.showEmployeeNo" />}>
-                <StaticControl
-                  value={<T k={maskLabel(data?.acs?.desensitiseEmployeeNo)} />}
-                  tone={data?.acs?.desensitiseEmployeeNo === false ? 'warn' : 'neutral'}
-                />
-              </ControlCell>
-            </ControlGrid>
-          </SettingRow>
+              {/*
+                Masking, read only. Both were on for the test unit. Turning them off puts
+                names and staff numbers on a screen in a public corridor, so it belongs behind
+                a decision somebody records rather than a switch on a settings tab.
+              */}
+              <SettingRow
+                label={<T k="device.editor.door.masking" />}
+                hint={<T k="device.editor.door.masking.hint" />}
+              >
+                <ControlGrid columns={2}>
+                  <ControlCell caption={<T k="device.editor.door.showName" />}>
+                    <StaticControl
+                      value={<T k={maskLabel(data?.acs?.desensitiseName)} />}
+                      tone={data?.acs?.desensitiseName === false ? 'warn' : 'neutral'}
+                    />
+                  </ControlCell>
+                  <ControlCell caption={<T k="device.editor.door.showEmployeeNo" />}>
+                    <StaticControl
+                      value={<T k={maskLabel(data?.acs?.desensitiseEmployeeNo)} />}
+                      tone={data?.acs?.desensitiseEmployeeNo === false ? 'warn' : 'neutral'}
+                    />
+                  </ControlCell>
+                </ControlGrid>
+              </SettingRow>
 
-          <SettingRow
-            label={<T k="device.editor.door.voicePrompt" />}
-            hint={<T k="device.editor.door.voicePrompt.hint" />}
-          >
-            <Switch
-              checked={voicePrompt}
-              disabled={!allowed || data?.acs?.voicePrompt === null}
-              onChange={setVoicePrompt}
-              label={t('device.editor.door.voicePrompt')}
-            />
-          </SettingRow>
+              <SettingRow
+                label={<T k="device.editor.door.voicePrompt" />}
+                hint={<T k="device.editor.door.voicePrompt.hint" />}
+              >
+                <Switch
+                  checked={voicePrompt}
+                  disabled={!allowed || data?.acs?.voicePrompt === null}
+                  onChange={setVoicePrompt}
+                  label={t('device.editor.door.voicePrompt')}
+                />
+              </SettingRow>
+            </>
+          )}
         </SettingsGroup>
       </SettingsStack>
 
@@ -2664,6 +2712,12 @@ function PushTab({ device }: { device: DeviceRecord }): ReactNode {
    *
    * A connector refuses the first and carries the second: the address is its own LAN address,
    * which it knows and this server does not, while clearing a slot needs only the slot number.
+   *
+   * `configureReason` is null for every driver today — the connector does not declare the
+   * operation at all, because the form below is replaced rather than greyed, and the group that
+   * replaces it says whose address goes in. Read anyway, so a future protocol that *has* a
+   * callback target and refuses to set it renders that refusal on the strip instead of a button
+   * that answers 409.
    */
   const configureReason = why(device, DriverOperation.configureCallback);
   const clearReason = why(device, DriverOperation.clearCallback);
@@ -3183,7 +3237,9 @@ function DiagnosticsTab({ device }: { device: DeviceRecord }): ReactNode {
               />
             </SettingRow>
           ))}
-          {data !== null && Object.keys(data.capabilities).length === 0 && (
+          {/* `?? {}` for the same reason as the read two lines above: most drivers report no
+              capability documents at all, so the key is absent rather than empty. */}
+          {data !== null && Object.keys(data.capabilities ?? {}).length === 0 && (
             <Unsupported>
               <T k="device.editor.diag.noCapabilities" />
             </Unsupported>
@@ -3628,9 +3684,15 @@ interface TerminalDiagnostics {
    * Not the driver's `DriverCapabilities`. This was typed as that and the route sent that, under
    * the same key, spread over the documents — so the group that exists to explain a missing
    * control rendered `operations` and `writeModel` instead of the option lists the door tab is
-   * built from. Empty on a protocol that publishes no such documents.
+   * built from.
+   *
+   * Optional, because only one driver reports any: the route spreads whatever `diagnostics()`
+   * returned, and the ZKTeco and connector drivers return other keys entirely. Declaring it
+   * required made `tsc` certify a field that is absent at runtime, and the one unguarded read of
+   * it threw `Object.keys(undefined)` during render — which, with no error boundary in this app,
+   * unmounted the root and blanked the editor on every ta-push and connector terminal.
    */
-  capabilities: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
   protocol: string;
   cursor: {
     /** Null on a protocol with no pull, which is different from a cursor still at zero. */

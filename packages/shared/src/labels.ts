@@ -4401,17 +4401,21 @@ export const LABELS = {
     'Firmware {firmware} tidak menerima muat naik wajah (perlukan V1.5 atau lebih baharu). Wajah mesti didaftarkan di terminal itu sendiri.',
 
   /**
-   * The three writes a connector relays for but will not perform.
+   * The two writes a connector relays for but will not perform.
    *
    * Each states why queueing it would be worse than refusing it, because that is the question an
    * operator has when the control is greyed: whether to wait, or to walk to the terminal.
+   *
+   * There is no third key for `configureCallback`, which the connector also refuses. Its control
+   * is not greyed out — the push tab replaces this server's host/port form with the connector's
+   * own, which works, and `device.editor.push.agent.group.subtitle` names the connector while
+   * saying there is nothing to type. A second sentence saying the same thing without the name
+   * would be a label nothing renders.
    */
   'device.capability.agent.openDoor':
     'Terminal ini dicapai melalui connector tapak, jadi arahan mengambil beberapa saat untuk sampai. Pintu yang terbuka selepas lengah begitu terbuka ketika tiada siapa menjangkakannya — buka di terminal itu sendiri.',
   'device.capability.agent.setClock':
     'Connector menetapkan jam terminal sendiri daripada masa cloud yang ia terima pada setiap heartbeat. Cap masa yang dibariskan dari sini sudah lapuk ketika ia dikutip, dan menulis masa lapuk ke jam mengekalkan hanyutan yang sepatutnya dibetulkan. Tetapkan hos NTP sebaliknya.',
-  'device.capability.agent.configureCallback':
-    'Sasaran push untuk terminal di belakang connector ialah alamat LAN connector itu sendiri, yang ia tahu dan pelayan ini tidak. Connector menetapkannya sendiri.',
 
   'device.list.count': '{count} terminal',
   'device.list.subtitle':
@@ -4719,6 +4723,15 @@ export const LABELS = {
   'device.editor.unknownModel': 'Model belum dibaca',
   'device.editor.save': 'Simpan',
   'device.editor.enrolled': '{enrolled}/{capacity} didaftar',
+  /**
+   * The same heading where the enrolled count cannot be read from the unit.
+   *
+   * `device.editor.enrolled` above was rendered with `counts?.people ?? 0`, so a ta-push terminal
+   * read "0/3000 didaftar" directly above the statement that this protocol has no endpoint which
+   * enumerates its users. The zero was not a reading, and a capacity on its own is the honest
+   * version of the same header.
+   */
+  'device.editor.capacityOnly': 'kapasiti {capacity}',
   'device.editor.passwordStored': 'Kata laluan tersimpan',
 
   'device.editor.tabs.aria': 'Bahagian tetapan terminal',
@@ -5054,6 +5067,19 @@ export const LABELS = {
   'device.editor.door.masking.unknown': 'Tidak dilaporkan',
   'device.editor.door.reader.unsupported':
     'Firmware ini tidak mendedahkan konfigurasi pembaca, jadi mod pengesahan mesti ditetapkan pada terminal itu sendiri.',
+  /**
+   * The two groups built on `AcsCfg`, where this server did not read the document.
+   *
+   * Different from the two above, which say the firmware has no such setting. Here the terminal
+   * has it and nothing read it: a connector terminal, where this server holds no socket to the
+   * unit, or an ISAPI row with no stored credential.
+   *
+   * It states that the switches would have read as off, because that is what they did before this
+   * card was guarded — every value green and off, on a terminal whose health warning on the device
+   * list could be saying remote verification is on.
+   */
+  'device.editor.door.acs.unread':
+    'Tetapan ini tidak dibaca dari pelayan ini untuk terminal ini, jadi nilai sebenarnya tidak diketahui. Ia dipaparkan sebagai kad kosong dan bukan sebagai suis yang terbaca mati, kerana tetapan yang tidak pernah dibaca tetapi dipaparkan sebagai semasa lebih buruk daripada medan kosong. Semak pada terminal itu sendiri.',
   'device.editor.door.fingerprintLevel': 'Aras cap jari',
   /**
    * Not a 1-5 scale, and the hint says so.

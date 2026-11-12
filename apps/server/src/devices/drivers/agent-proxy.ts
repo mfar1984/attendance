@@ -82,6 +82,12 @@ import { snapshotOf } from '../snapshots.js';
  * LAN address, which it knows and this server does not. Queueing an address from here would point
  * the unit at a host it cannot reach. Clearing a slot *is* allowed, because that needs only the
  * slot number.
+ *
+ * The first two are declared with a reason; the third is left undeclared. The difference is
+ * whether the screen still has a control to explain itself on: the remote release and the manual
+ * clock are drawn greyed with the reason beside them, while the push form is *replaced* by
+ * `POST /api/devices/:id/push/via-agent`, which asks the connector to fill in its own address.
+ * Nothing is missing there, so there is nothing to grey out.
  */
 export class AgentProxyDriver implements TerminalDriver {
   readonly protocol: string;
@@ -124,6 +130,24 @@ export class AgentProxyDriver implements TerminalDriver {
         DriverOperation.writeReaderSettings,
         DriverOperation.writeAttendanceMode,
         DriverOperation.clearCallback,
+
+        /*
+         * Refused, and declared anyway so the refusal has somewhere to be read.
+         *
+         * `declares()` is what decides whether the screen draws a control at all, and
+         * `supports()` is what decides whether it is enabled — the `unavailable` entries below
+         * keep both of these false for every write path. Leaving them out of this list instead
+         * removed the controls, which took their reasons with them: the Door tab rendered with
+         * no remote release and no explanation, and the Clock tab with no manual-set group and
+         * no explanation. A control that is simply missing reads as a permission somebody lacks.
+         *
+         * `configureCallback` is deliberately *not* here. Its control is not greyed out on a
+         * connector terminal, it is replaced: the push tab swaps this server's host/port form for
+         * the connector's own, which works. There is no gap to explain, and `declares()` says
+         * that is exactly when nothing should be drawn.
+         */
+        DriverOperation.openDoor,
+        DriverOperation.setClockManually,
       ],
       writeModel: 'queued',
       reachability: 'deviceInitiated',
@@ -134,12 +158,11 @@ export class AgentProxyDriver implements TerminalDriver {
        *
        * Label keys rather than the sentences. This driver is built wherever a device row is
        * read — a probe, a heartbeat, a list request — none of which has a reader whose language
-       * can be consulted, and all three of these end up on the device editor.
+       * can be consulted, and both of these end up on the device editor.
        */
       unavailable: {
         [DriverOperation.openDoor]: { key: 'device.capability.agent.openDoor' },
         [DriverOperation.setClockManually]: { key: 'device.capability.agent.setClock' },
-        [DriverOperation.configureCallback]: { key: 'device.capability.agent.configureCallback' },
       },
     };
   }
