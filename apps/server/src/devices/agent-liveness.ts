@@ -1,4 +1,10 @@
-import { AgentStatus, DeviceStatus } from '@attendance/shared';
+import {
+  AgentStatus,
+  DeviceStatus,
+  isCallbackProtocol,
+  type AgentDeviceReport,
+} from '@attendance/shared';
+import { TA_PUSH_POLL_SECONDS } from '@attendance/terminal-drivers';
 
 import { db } from '../db.js';
 import { logger } from '../logger.js';
@@ -164,4 +170,150 @@ export async function strandSilentAgentDevices(now: Date = new Date()): Promise<
   }
 
   return sweep;
+}
+
+// ---------------------------------------------------------------------------
+// One terminal, behind a connector that is still reporting
+// ---------------------------------------------------------------------------
+
+/**
+ * The same failure as above, one layer deeper: the connector is alive and one terminal is mute.
+ *
+ * ## The hole this closes
+ *
+ * `SiteState.report()` on the connector has no staleness bound. Once a terminal has been observed
+ * even once, every subsequent heartbeat claims `online` however long ago that observation was. For
+ * a request-response protocol that is partly masked — the connector dials the unit, so a failed
+ * pull raises its error counter and the report flips to `offline`. For a callback protocol nothing
+ * dials anything, by design, so the only evidence is the terminal dialling in and the absence of
+ * it is invisible.
+ *
+ * Device 6 `Pejabat Faeez` sat green for eighteen hours on the strength of one hand-run handshake.
+ * One curl bought an eighteen-hour green badge, which is the Sibu failure in miniature: a unit
+ * reading healthy while recording nothing.
+ *
+ * ## Why the cloud, and why on arrival rather than on a timer
+ *
+ * The heartbeat carries both the claim (`status`) and the evidence for it (`lastSeenAt`), so the
+ * cloud can refuse a claim its own evidence does not support — no connector change, no version
+ * bump, no coordinated deploy at two sites.
+ *
+ * It has to be applied where the report is written, not in a second sweep beside
+ * `strandSilentAgentDevices`. A sweep would write `offline` and the next heartbeat, at most sixty
+ * seconds later, would write the connector's unbounded `online` straight back over it. The badge
+ * would flap every minute, which is worse than no rule at all. The heartbeat route is the only
+ * writer of these columns for an agent terminal — the health probe returns early for them and
+ * `syncDevice` no-ops them, both deliberately — so the bound belongs inside that one writer.
+ *
+ * The two layers then divide cleanly: a connector that goes silent is the sweep's job, a connector
+ * that is talking while one of its terminals is not is this one's.
+ */
+
+/**
+ * Polls a callback terminal may miss before its silence counts as evidence.
+ *
+ * Justified the way `AGENT_SILENCE_MS` justifies thirty minutes. The report is judged the moment
+ * it arrives, against a timestamp the connector composed seconds earlier — it makes one `fetch`
+ * and retries by recomposing on the next tick, so no stale body is ever replayed. The heartbeat
+ * interval therefore does **not** have to fit inside this bound, which is why it can be narrower
+ * than `AGENT_SILENCE_MS` instead of wider.
+ *
+ * Thirty polls then buys three things that are each real rather than hypothetical: a dropped poll
+ * on the terminal-to-connector hop, a unit polling late because it is busy applying an enrolment
+ * (`Delay` is a floor, not a guarantee), and clock skew between the connector and the cloud — the
+ * Pi has no battery-backed clock and `lastSeenAt` is stamped on its side. It also survives
+ * somebody raising `Delay` to two minutes without crying wolf.
+ *
+ * Being late costs a delayed alert; being early costs an operator who learns to ignore the badge.
+ * Device 6 was green for eighteen hours, so the asymmetry here is not close.
+ */
+export const TERMINAL_SILENCE_POLLS = 30;
+
+/** Fifteen minutes, derived from the interval the terminal was actually told to use. */
+export const TERMINAL_SILENCE_MS = TA_PUSH_POLL_SECONDS * TERMINAL_SILENCE_POLLS * 1000;
+
+/**
+ * Whether a terminal's last contact is too old to support a claim that it is online.
+ *
+ * Pure, and null is **not** silent: a connector that has just started has observed nothing, so a
+ * null timestamp is indistinguishable from a restart and calling it dead would put a false alarm
+ * on the dashboard on every service restart. The caller handles that case by never reaching here
+ * for a report that is not claiming `online`.
+ *
+ * A timestamp in the future is not silent either. A connector whose clock runs ahead of the
+ * cloud's would otherwise produce a negative age, and arithmetic that treats that as stale would
+ * mark a perfectly healthy site offline for being early.
+ */
+export function terminalIsSilent(
+  report: { lastSeenAt: Date | null },
+  now: Date = new Date(),
+  windowMs: number = TERMINAL_SILENCE_MS,
+): boolean {
+  if (report.lastSeenAt === null) return false;
+
+  return now.getTime() - report.lastSeenAt.getTime() > windowMs;
+}
+
+/**
+ * What the operator reads on a terminal whose connector is fine and which has stopped reporting.
+ *
+ * Quotes the absolute instant and never an elapsed duration. A message that said "47 minutes ago"
+ * would differ on every beat, and the route only rewrites `lastErrorAt` when the message changes —
+ * so a ticking message would move the timestamp every sixty seconds and destroy the record of when
+ * the silence began.
+ */
+export function terminalSilenceReason(lastSeenAt: Date, windowMs: number): string {
+  const minutes = Math.round(windowMs / 60_000);
+
+  return (
+    `Terminal ini tidak melaporkan apa-apa sejak ${lastSeenAt
+      .toISOString()
+      .slice(0, 16)
+      .replace('T', ' ')} UTC, melebihi had ${String(minutes)} minit. Connectornya masih ` +
+    'melaporkan, jadi ini terminal itu sendiri — periksa kuasa, rangkaian LAN, dan tetapan ' +
+    'pelayan awan pada unit itu.'
+  ).slice(0, 500);
+}
+
+/**
+ * The status and message to store for one reported terminal.
+ *
+ * Returns both fields the heartbeat route writes, so the pass-through branches hand the connector's
+ * own values straight back and only the stale branch substitutes anything. That keeps the route
+ * byte-identical to its previous behaviour everywhere this rule does not fire.
+ *
+ * The five branches, in order:
+ *
+ *  - a request-response protocol is **exempt**. The connector dials those units, so a failure is
+ *    observable and already flips the report to `offline`; and its pull interval is configurable
+ *    up to an hour, so silence there is not evidence of anything. A fifteen-minute bound would
+ *    mark a terminal being successfully pulled every half hour as dead.
+ *  - a report that is not claiming `online` passes through. `offline` with the connector's own
+ *    message is better information than a timestamp, and `unknown` is the fresh-start case below.
+ *  - `online` with no timestamp becomes `unknown`. There is no evidence for the claim, and from
+ *    the report alone this is indistinguishable from a connector that restarted a second ago —
+ *    which must never be called dead. Grey, not green.
+ *  - `online` inside the window stays `online`.
+ *  - `online` outside it becomes `offline`, with prose naming the instant. On a callback protocol
+ *    silence past the advertised interval is positive evidence, not absent evidence.
+ */
+export function reportedDeviceStatus(
+  report: Pick<AgentDeviceReport, 'status' | 'lastSeenAt' | 'lastError'>,
+  protocol: string,
+  now: Date = new Date(),
+  windowMs: number = TERMINAL_SILENCE_MS,
+): { status: DeviceStatus; lastError: string | null } {
+  const claimed = { status: report.status, lastError: report.lastError };
+
+  if (!isCallbackProtocol(protocol)) return claimed;
+  if (report.status !== DeviceStatus.online) return claimed;
+  if (report.lastSeenAt === null) {
+    return { status: DeviceStatus.unknown, lastError: claimed.lastError };
+  }
+  if (!terminalIsSilent(report, now, windowMs)) return claimed;
+
+  return {
+    status: DeviceStatus.offline,
+    lastError: terminalSilenceReason(report.lastSeenAt, windowMs),
+  };
 }

@@ -89,6 +89,7 @@ export {
   parseLocalTimestamp,
   QUERY_USERINFO_COMMAND,
   REBOOT_COMMAND,
+  TA_PUSH_POLL_SECONDS,
   taPushEventKey,
   userInfoCommand,
 } from './zkteco/protocol.js';

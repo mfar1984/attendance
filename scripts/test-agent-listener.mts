@@ -20,6 +20,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { TA_PUSH_POLL_SECONDS } from '@attendance/terminal-drivers';
+
 process.env['CLOUD_URL'] ??= 'http://127.0.0.1:9/';
 process.env['NODE_ENV'] ??= 'development';
 process.env['INGEST_PASSWORD'] ??= 'ujianpass123';
@@ -315,6 +317,37 @@ try {
       handshake.body.includes('GET OPTION FROM: VGU6262300102'),
       'naming the serial it remembered',
       handshake.body.split('\n')[0] ?? '',
+    );
+
+    /*
+     * The interval the cloud's staleness bound is derived from, pinned at the end that advertises
+     * it. On this protocol nothing dials the unit, so its polls *are* its liveness signal — and
+     * `TERMINAL_SILENCE_MS` is a multiple of this number. The listener keeps a literal, so this
+     * assertion is what makes changing one end fail a test that names the other.
+     */
+    check(
+      handshake.body.includes(`Delay=${String(TA_PUSH_POLL_SECONDS)}`),
+      'and advertises the poll interval the cloud derives its staleness bound from',
+      handshake.body.split('\n').find((line) => line.startsWith('Delay=')) ?? '',
+    );
+
+    /*
+     * The connector's own claim is unconditional, and deliberately left that way.
+     *
+     * One observation is enough for it to report `online`, with no staleness term anywhere in
+     * `SiteState.report()`. That is why the bound lives in the cloud — which is what makes this fix
+     * need no `AGENT_VERSION` bump and no update at either site — and why the cloud must never take
+     * a reported status on trust. Aged observations are covered by the pure rule in
+     * `test-agent-liveness.mts`; `notePush` stamps `new Date()` and there is no clock to inject
+     * here.
+     */
+    const fresh = new SiteState();
+    fresh.notePush(1);
+    const claim = fresh.report(1);
+    check(
+      claim.status === 'online' && claim.lastSeenAt !== null,
+      'one contact is all the connector needs to claim online, forever — hence the cloud-side bound',
+      JSON.stringify(claim),
     );
 
     const before = spool.count();

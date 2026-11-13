@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import { db } from '../db.js';
 import { recordOutcome, takePending } from '../devices/driver/commands.js';
-import { decodeAttlogLine } from '@attendance/terminal-drivers';
+import { decodeAttlogLine, TA_PUSH_POLL_SECONDS } from '@attendance/terminal-drivers';
 import { orgOffsetMinutes } from '../devices/drivers/zkteco/driver.js';
 import { logger } from '../logger.js';
 import { addressAllowedByList } from '../maintenance/mode.js';
@@ -149,8 +149,9 @@ export async function iclockRoutes(app: FastifyInstance): Promise<void> {
         'OpStamp=0',
         'ErrorDelay=30',
         // Seconds between polls for queued work. Thirty seconds is the delay an operator waits
-        // to see a face enrolment land, so it is deliberately short.
-        'Delay=30',
+        // to see a face enrolment land, so it is deliberately short. Named in the protocol module
+        // because the cloud's staleness bound for a callback terminal is derived from it.
+        `Delay=${String(TA_PUSH_POLL_SECONDS)}`,
         'TransTimes=00:00;14:05',
         'TransInterval=1',
         'TransFlag=1111000000',

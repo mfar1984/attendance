@@ -26,6 +26,27 @@ import type { TerminalEvent } from '../events.js';
 export const ICLOCK_PATH = '/iclock';
 
 /**
+ * Seconds between a terminal's polls for queued work, as the handshake advertises it.
+ *
+ * This is the `Delay=` line in the `GET OPTION FROM:` reply, and the unit applies it to itself.
+ * Both listeners send it — `apps/agent/src/listener.ts` for a connector site and
+ * `apps/server/src/ingest/iclock.ts` for a direct one — so whoever changes the number has to
+ * change it in both, and this constant is where they find out.
+ *
+ * It is also the interval the cloud's per-terminal staleness bound is derived from
+ * (`TERMINAL_SILENCE_MS` in `apps/server/src/devices/agent-liveness.ts`). On this protocol every
+ * poll is the liveness signal — nothing dials the unit, so its silence is the only evidence there
+ * is — which makes the advertised cadence the honest basis for deciding when silence has gone on
+ * too long. A bound invented independently of it would cry wolf at one site and hide a dead
+ * terminal at another.
+ *
+ * Thirty seconds is how long an operator waits to see a face enrolment land, so it is deliberately
+ * short. It is a floor rather than a guarantee: a unit busy applying an enrolment polls later than
+ * this, which is why the staleness bound is a large multiple and not one interval.
+ */
+export const TA_PUSH_POLL_SECONDS = 30;
+
+/**
  * Tab-separated `ATTLOG` columns, in the order the terminal sends them.
  *
  * `status` and `verify` are the two that matter and the two most likely to be wrong: different

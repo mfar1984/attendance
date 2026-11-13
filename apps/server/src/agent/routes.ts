@@ -16,6 +16,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '../db.js';
 import { decryptSecret } from '../crypto.js';
 import { noteAgentProtocols } from '../devices/agent-capabilities.js';
+import { reportedDeviceStatus } from '../devices/agent-liveness.js';
 import {
   agentDevice,
   agentDevices,
@@ -211,14 +212,44 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
           continue;
         }
 
+        /**
+         * The connector's claim, bounded by the evidence in the same report.
+         *
+         * `SiteState.report()` has no staleness term in it: a terminal observed once is reported
+         * `online` forever after, and for a callback protocol nothing probes the unit, so nobody
+         * notices. The report carries `lastSeenAt` alongside the claim, so the bound is applied
+         * here — see `agent-liveness.ts` for why this is the cloud's job and not the connector's,
+         * and why it happens on arrival instead of in a sweep.
+         */
+        const verdict = reportedDeviceStatus(report, owned.protocol);
+
         await prisma.device.update({
           where: { id: owned.id },
           data: {
-            status: report.status,
+            status: verdict.status,
             clockDriftS: report.clockDriftS,
-            lastSeenAt: report.lastSeenAt,
-            lastError: report.lastError,
-            lastErrorAt: report.lastError === null ? null : new Date(),
+            /**
+             * Never overwritten with null, matching the three identity fields below.
+             *
+             * This is when the terminal last really reported, and it is the number somebody uses
+             * to work out how long attendance has been missing. A connector keeps its
+             * observations in memory, so a restart leaves it with none — which does not un-happen
+             * the contact. Erasing the column on a restart is the same mistake
+             * `strandSilentAgentDevices` documents avoiding.
+             */
+            ...(report.lastSeenAt === null ? {} : { lastSeenAt: report.lastSeenAt }),
+            lastError: verdict.lastError,
+            /**
+             * Moved only when the message itself changed.
+             *
+             * This beat repeats every sixty seconds. Rewriting the timestamp each time would keep
+             * pushing it forward and bury when the condition began — the same guard
+             * `withholdUnreadable` applies below, and the one the sweep gets from its status
+             * filter.
+             */
+            ...(verdict.lastError === owned.lastError
+              ? {}
+              : { lastErrorAt: verdict.lastError === null ? null : new Date() }),
             ...(report.serialNumber === null ? {} : { serialNumber: report.serialNumber }),
             ...(report.firmware === null ? {} : { firmware: report.firmware }),
             ...(report.model === null ? {} : { model: report.model }),
