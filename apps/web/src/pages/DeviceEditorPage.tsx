@@ -1103,8 +1103,17 @@ function ConnectionTab({
           icon={<DoorOpen className="size-3.5" aria-hidden />}
           action={
             <span className="text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
+              {/*
+                `assigned`, not `enrolled`, because these are not the Identity tab's numbers.
+
+                `device.enrolled` counts `device_enrolments` rows and `device.faceCapacity` is a
+                model figure; the Identity tab's heading of the same name carries
+                `driver.identity.counts()`, which is what the unit says about itself. One label
+                over two different facts meant that whichever one a translator had in mind, the
+                wording was wrong on the other tab.
+              */}
               <T
-                k="device.editor.enrolled"
+                k="device.editor.assigned"
                 vars={{ enrolled: device.enrolled, capacity: device.faceCapacity }}
               />
             </span>

@@ -641,13 +641,33 @@ function TerminalTab({
     try {
       const result = await staffApi.resync(staff.id);
       const failed = result.sync.filter((row) => !row.ok);
+      /*
+        The terminals that took the push and have not confirmed it.
+
+        A re-push exists to correct a name or a door PIN a unit is holding wrongly, so reporting
+        "pushed again" as the whole story is the failure: on a queued protocol the unit still has
+        the old values until it polls. Its own sentence, joined to whichever of the two above
+        applies.
+      */
+      const waiting = result.sync.filter((row) => row.ok && row.pending === true);
+
       setNotice(
-        failed.length === 0
-          ? t('staff.view.terminal.resynced', { count: result.sync.length })
-          : t('staff.view.terminal.resynced.partial', {
-              count: result.sync.length,
-              failed: failed.map((row) => `${row.deviceName}: ${row.error ?? ''}`).join('; '),
-            }),
+        [
+          failed.length === 0
+            ? t('staff.view.terminal.resynced', { count: result.sync.length })
+            : t('staff.view.terminal.resynced.partial', {
+                count: result.sync.length,
+                failed: failed.map((row) => `${row.deviceName}: ${row.error ?? ''}`).join('; '),
+              }),
+          ...(waiting.length > 0
+            ? [
+                t('staff.view.terminal.resynced.pending', {
+                  count: waiting.length,
+                  devices: waiting.map((row) => row.deviceName).join(', '),
+                }),
+              ]
+            : []),
+        ].join(' '),
       );
       await Promise.all([load(), onChanged()]);
     } catch (cause) {

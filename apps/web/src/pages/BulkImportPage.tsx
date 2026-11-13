@@ -595,7 +595,20 @@ export function BulkImportPage(): ReactNode {
                 tone="success"
               />
               <StatTile label={<T k="import.stat.skipped" />} value={String(job.skipped)} />
-              <StatTile label={<T k="import.stat.pushed" />} value={String(job.pushed)} />
+              {/*
+                The hint is the whole fix available here.
+
+                `run()` in `staff/import.ts` increments `pushed` for every outcome whose `ok` is
+                true, and on a queued protocol `ok` means the command was recorded rather than
+                collected. The job reply carries no per-row outcomes, so this screen cannot name
+                which terminals are waiting — only stop the figure asserting that all of them hold
+                the people it counts.
+              */}
+              <StatTile
+                label={<T k="import.stat.pushed" />}
+                value={String(job.pushed)}
+                hint={<T k="import.stat.pushed.hint" />}
+              />
               <StatTile
                 label={<T k="import.stat.pushFailed" />}
                 value={String(job.pushFailed)}

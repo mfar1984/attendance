@@ -63,13 +63,30 @@ interface ListedDevice {
   agentId: number | null;
   agent: { id: number; name: string; status: string } | null;
   capabilities?: DriverCapabilities | null;
+  /**
+   * The pair the `Didaftar / had` column draws, declared optional so an absent field fails here
+   * rather than rendering as `undefined/undefined` on the screen.
+   */
+  enrolled?: unknown;
+  faceCapacity?: unknown;
+}
+
+/** The health row the `Dibaca dari unit` column draws, where a null is a real answer. */
+interface HealthRow {
+  deviceId: number;
+  status: string;
+  enrolled: number | null;
+  faceCapacity: number | null;
+  viaAgent?: boolean;
 }
 
 async function session(): Promise<string> {
   const role = await db().role.create({
     data: {
       name: `ujian-keupayaan-${String(stamp)}`,
-      permissions: { 'settings.devices': ['view', 'edit', 'clock', 'sync'] },
+      // `test` for the per-device health probe, which is how the enrolled reading is checked
+      // without sweeping every terminal on the installation.
+      permissions: { 'settings.devices': ['view', 'edit', 'clock', 'sync', 'test'] },
     },
   });
   roles.push(role.id);
@@ -229,6 +246,10 @@ try {
     'declares the callback write, so it keeps its push button',
     has(row(hikDirect), DriverOperation.configureCallback),
   );
+  check(
+    'declares a user count, so the health column shows a reading rather than a marker',
+    has(row(hikDirect), DriverOperation.readCounts),
+  );
 
   // -------------------------------------------------------------------------
   section('ZKTeco TA Push, reached directly');
@@ -244,6 +265,21 @@ try {
   check(
     'declares no callback write, so it is not offered a push target',
     !has(row(zkDirect), DriverOperation.configureCallback),
+  );
+  /*
+    The declaration the enrolled column now reads.
+
+    There is no TA Push call that enumerates a terminal's users, so a count is not a low number
+    here — it is no number. The health column used to fill the gap from the list's enrolment count
+    and render `0/3000` under a heading that reads as a measurement.
+  */
+  check(
+    'declares no user count, so the health column says so instead of borrowing one',
+    !has(row(zkDirect), DriverOperation.readCounts),
+  );
+  check(
+    'declares a capacity read, which answers from the datasheet and not from the unit',
+    has(row(zkDirect), DriverOperation.readCapacity),
   );
 
   // -------------------------------------------------------------------------
@@ -285,6 +321,14 @@ try {
     'declares no callback write, so the fleet push list leaves it out',
     !has(row(hikViaAgent), DriverOperation.configureCallback),
   );
+  check(
+    'declares a user count, answered from the connector snapshot',
+    has(row(hikViaAgent), DriverOperation.readCounts),
+  );
+  check(
+    'a connector ZKTeco still declares no user count',
+    !has(row(zkViaAgent), DriverOperation.readCounts),
+  );
 
   // -------------------------------------------------------------------------
   section('a protocol with no driver');
@@ -292,6 +336,94 @@ try {
   check(
     'answers null rather than an empty capability list',
     row(noDriver)?.capabilities === null,
+  );
+
+  // -------------------------------------------------------------------------
+  section('the two figures the Didaftar / had column draws');
+
+  /*
+    Proved present, not assumed.
+
+    The header names the second number as a limit and the cell dims it, so an absent field would
+    render as `3/undefined` rather than throwing — exactly the class of failure `tsc` certifies,
+    because the web type declares both as non-optional against a route it never checks.
+  */
+  check(
+    'every row carries `enrolled` as a number',
+    rows.length > 0 && rows.every((entry) => typeof entry.enrolled === 'number'),
+  );
+  check(
+    'every row carries `faceCapacity` as a number',
+    rows.length > 0 && rows.every((entry) => typeof entry.faceCapacity === 'number'),
+  );
+  /*
+    And that neither is a reading. A terminal nothing has ever contacted holds the schema default
+    for Hikvision and no enrolments at all, which is what `0/1500` on a fresh row means — this
+    system's own record against a model figure, which is what the expanded row now states.
+  */
+  check(
+    'a never-probed Hikvision row reports the model default, not a measurement',
+    row(hikDirect)?.faceCapacity === 1500 && row(hikDirect)?.enrolled === 0,
+  );
+
+  // -------------------------------------------------------------------------
+  section('the health reading the `Dibaca dari unit` column draws');
+
+  /*
+    Probed one row at a time rather than through `GET /api/devices/health`.
+
+    That endpoint sweeps every active terminal, which on this machine includes the real ones — it
+    would write `offline` and a fresh `lastError` onto rows nothing in this test owns, and wait out
+    a connection timeout per unit to do it.
+  */
+  const probe = async (id: number): Promise<HealthRow> => {
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/devices/${String(id)}/check`,
+      headers: { cookie },
+    });
+    check(`the health probe answers 200 for device ${String(id)}`, response.statusCode === 200);
+    return response.json() as HealthRow;
+  };
+
+  /*
+    Null, and null for two different reasons the column has to keep apart.
+
+    None of these terminals exists, so the ISAPI row is a failed probe — `readCounts` is declared
+    and no reading was obtained, which is the dash. The TA Push row has no such call at all, which
+    is the marker. Both arrive as `enrolled: null`; the capability answers above are the only thing
+    that tells them apart, which is why the cell must not fall back to `device.enrolled`.
+  */
+  const hikHealth = await probe(hikDirect);
+  check('the `enrolled` key is present, never merely absent', 'enrolled' in hikHealth);
+  check('an unreachable ISAPI terminal reports no count — the dash case', hikHealth.enrolled === null);
+  check(
+    'and reports it as offline, so the dash is a failed probe and not a quiet zero',
+    hikHealth.status === 'offline',
+  );
+
+  const zkHealth = await probe(zkDirect);
+  check('a TA Push terminal reports no count either — the marker case', zkHealth.enrolled === null);
+  /*
+    The denominator, measured and found to be a datasheet constant.
+
+    This unit does not exist and was never contacted, and `readCapacity` still answered 3000 —
+    `SENSEFACE_3A.faces` in the driver. So the pair the old cell drew was an unreadable numerator
+    over a number the protocol cannot ask for, rendered as `0/3000`.
+  */
+  check(
+    'but does report a capacity, which is the datasheet figure and not a reading',
+    zkHealth.faceCapacity === 3000,
+  );
+  check(
+    'and is not reported offline, so the marker is a fact about the protocol',
+    zkHealth.status !== 'offline',
+  );
+
+  const agentHealth = await probe(zkViaAgent);
+  check(
+    'a connector terminal is flagged as unprobed rather than reported on',
+    agentHealth.viaAgent === true && agentHealth.enrolled === null,
   );
 
   // -------------------------------------------------------------------------

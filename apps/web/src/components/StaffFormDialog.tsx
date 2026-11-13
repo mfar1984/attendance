@@ -2,6 +2,7 @@ import { DEVICE_LIMITS, type LabelKey } from '@attendance/shared';
 import {
   CircleAlert,
   CircleCheck,
+  Clock,
   Loader2,
   ScanFace,
   TriangleAlert,
@@ -22,6 +23,7 @@ import type { Lookups } from '../lib/operations-api';
 import { T, useLabels, type LabelVars } from '../lib/translation';
 import { Dialog, DialogFooter, Feedback } from './Dialog';
 import { PanelNote } from './RecordPanel';
+import { reportRemoval } from './StaffDeactivateDialog';
 import { Badge, CheckCard, Field, SelectField } from './ui';
 
 /**
@@ -260,9 +262,7 @@ export function StaffFormDialog({
         const result = await staffApi.update(staffId, payload);
         // Switched off here: the server took the person off every terminal, as deactivating does.
         if (wasActive && !payload.active) {
-          await onSaved(
-            t('staff.deactivate.done', { name: payload.fullName, count: result.removal.length }),
-          );
+          await onSaved(reportRemoval(t, payload.fullName, result.removal));
           return;
         }
         if (await reportSync(result.sync)) return;
@@ -281,11 +281,37 @@ export function StaffFormDialog({
       // Kept open on partial success. The record exists but the person cannot use those doors
       // yet, and closing the dialog would hide that.
       if (outcomes.some((row) => !row.ok)) return false;
-      await onSaved(
-        outcomes.length > 0
-          ? t('staffForm.saved.enrolled', { name: payload.fullName, count: outcomes.length })
+
+      /*
+        Queued writes do not keep the dialog open, and that is deliberate.
+
+        Nothing failed: the record exists and the command is durably recorded, so on a site whose
+        terminals all dial out this is the normal path rather than an exception. Holding the dialog
+        there would leave the directory behind it without the row that was just created, which
+        reads as the save having failed — one misleading presentation traded for another.
+
+        So the hand-off message carries it instead, as its own sentence naming the terminals that
+        have not confirmed. The per-row badge below says the same thing wherever the block is
+        still on screen.
+      */
+      const waiting = outcomes.filter((row) => row.pending === true);
+      const confirmed = outcomes.length - waiting.length;
+
+      const lines = [
+        confirmed > 0
+          ? t('staffForm.saved.enrolled', { name: payload.fullName, count: confirmed })
           : t('staffForm.saved', { name: payload.fullName }),
-      );
+        ...(waiting.length > 0
+          ? [
+              t('staffForm.saved.pending', {
+                count: waiting.length,
+                devices: waiting.map((row) => row.deviceName).join(', '),
+              }),
+            ]
+          : []),
+      ];
+
+      await onSaved(lines.join(' '));
       return true;
     }
   }
@@ -522,30 +548,53 @@ export function StaffFormDialog({
                 <p className="mb-2 text-xs font-medium text-slate-700">
                   <T k="staffForm.sync.heading" />
                 </p>
+                {/*
+                  Three states, not two.
+
+                  `row.ok` alone badged a queued write `berjaya` — the command is recorded here and
+                  the terminal has not collected it, so the person cannot scan at that door yet.
+                  Amber rather than emerald, and the strip below says what will change it.
+                */}
                 <ul className="space-y-1.5">
                   {sync.map((row) => (
                     <li key={row.deviceId} className="flex items-start gap-2 text-xs">
-                      {row.ok ? (
+                      {!row.ok ? (
+                        <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-rose-500" aria-hidden />
+                      ) : row.pending === true ? (
+                        <Clock className="mt-0.5 size-3.5 shrink-0 text-amber-600" aria-hidden />
+                      ) : (
                         <CircleCheck
                           className="mt-0.5 size-3.5 shrink-0 text-emerald-600"
                           aria-hidden
                         />
-                      ) : (
-                        <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-rose-500" aria-hidden />
                       )}
                       <span className="min-w-0">
                         <span className="font-medium text-slate-700">{row.deviceName}</span>{' '}
-                        {row.ok ? (
+                        {!row.ok ? (
+                          <span className="ml-1.5 text-rose-700">{row.error}</span>
+                        ) : row.pending === true ? (
+                          <Badge tone="warning" className="uppercase">
+                            <T k="app.status.pendingTerminal" />
+                          </Badge>
+                        ) : (
                           <Badge tone="success" className="uppercase">
                             <T k="staffForm.sync.ok" />
                           </Badge>
-                        ) : (
-                          <span className="ml-1.5 text-rose-700">{row.error}</span>
                         )}
                       </span>
                     </li>
                   ))}
                 </ul>
+
+                {sync.some((row) => row.ok && row.pending === true) && (
+                  <PanelNote
+                    tone="warn"
+                    className="mt-2"
+                    icon={<Clock className="size-3.5" aria-hidden />}
+                  >
+                    <T k="staffForm.sync.pending.note" />
+                  </PanelNote>
+                )}
               </div>
             </div>
           )}

@@ -167,6 +167,22 @@ export const LABELS = {
   'app.status.active': 'Aktif',
   'app.status.inactive': 'Tidak aktif',
 
+  /**
+   * A write the driver accepted that the terminal has not confirmed.
+   *
+   * `DeviceSyncOutcome.pending` and `FaceEnrolOutcome.pending`, which both carry the same third
+   * state: on a callback protocol the command is durably queued and the unit collects it when it
+   * next polls, so `ok` means "recorded" and not "the terminal has it".
+   *
+   * One label because one badge renders it, in the register `app.status.*` already uses — the
+   * staff form and the biometrics dialog show the same chip against a row, and two copies of two
+   * words would need translating twice and could disagree about what the state is called. The
+   * *consequence* is not shared and is not here: somebody who cannot scan yet, a leaver who can
+   * still open a door, and a face that is not on the unit are three different sentences, and each
+   * screen states its own.
+   */
+  'app.status.pendingTerminal': 'Menunggu terminal',
+
   // -------------------------------------------------------------------------
   // Log masuk
   // -------------------------------------------------------------------------
@@ -662,19 +678,39 @@ export const LABELS = {
 
   'dashboard.devices.title': 'Terminal',
   'dashboard.devices.count': '{count} terminal',
+  /**
+   * What the bar beside each terminal is a ratio of, which is not how full the unit is.
+   *
+   * It said "kapasiti muka", and the number it drew was `_count.enrolments` over
+   * `Device.faceCapacity` — this system's own enrolment rows against a model figure. Neither
+   * comes from the terminal: the ZKTeco driver answers `readCapacity` from its datasheet
+   * constant, and a Hikvision row nothing has probed still holds the schema default. Drawing that
+   * as a fill level told an operator how full a box was out of a number nobody read.
+   *
+   * The pair is still worth drawing, because it is exactly what `assertCapacity` in
+   * `staff/sync.ts` compares to refuse the next enrolment. So it is named as the limit it is.
+   */
   'dashboard.devices.subtitle':
-    'Kapasiti muka dan sasaran jam. Terminal penuh hanya disedari apabila pendaftaran gagal, jadi ia dilukis di sini.',
+    'Pendaftaran yang sistem ini rekodkan terhadap had setiap model, dan sasaran jam. Had itulah yang menolak pendaftaran seterusnya apabila dicapai, jadi ia dilukis di sini dan bukan ditemui ketika pendaftaran gagal.',
   'dashboard.devices.manage': 'Urus terminal',
   'dashboard.devices.empty': 'Belum ada terminal berdaftar.',
   'dashboard.devices.column.name': 'Nama',
   'dashboard.devices.column.host': 'Alamat',
   'dashboard.devices.column.status': 'Status',
-  'dashboard.devices.column.capacity': 'Kapasiti',
+  'dashboard.devices.column.capacity': 'Didaftar / had',
   'dashboard.devices.column.clock': 'Jam',
   'dashboard.devices.column.serial': 'Serial',
   'dashboard.devices.clock.exact': 'Tepat',
   'dashboard.devices.clock.exactManual': 'Tepat (manual)',
-  'dashboard.devices.capacity.aria': '{percent}% penuh',
+  /**
+   * The bar's accessible name, which was `'{percent}% penuh'`.
+   *
+   * "Full" is the claim that cannot be made: nothing here read the unit. The reader gets both
+   * numbers and what the percentage is of, because a bar is an image and this sentence is the
+   * only thing a screen reader has.
+   */
+  'dashboard.devices.capacity.aria':
+    '{enrolled} didaftar daripada had {capacity} — {percent}% daripada had yang sistem ini kuatkuasakan',
 
   // -------------------------------------------------------------------------
   // Kehadiran › Pengecualian
@@ -1108,6 +1144,15 @@ export const LABELS = {
     'Menghantar semula nama, tempoh sah dan PIN pintu ke terminal yang sudah diagihkan. Ia tidak boleh menambah terminal baharu, dan ia tidak menghantar muka.',
   'staff.view.terminal.resynced': 'Ditolak semula ke {count} terminal.',
   'staff.view.terminal.resynced.partial': 'Ditolak ke {count} terminal, sebahagian gagal: {failed}',
+  /**
+   * The terminals that took the push but have not confirmed it.
+   *
+   * Its own sentence, joined to whichever of the two above applies. A re-push exists to correct a
+   * name or a door PIN the unit is holding wrongly, so "pushed again" reading as "corrected" is
+   * the whole failure: on a queued protocol the unit still has the old values until it polls.
+   */
+  'staff.view.terminal.resynced.pending':
+    '{count} terminal belum mengesahkan: {devices}. Ia mengutip arahannya pada tinjauan berikutnya, dan sehingga itu unit itu masih memegang nilai lama.',
   'staff.view.terminal.resync.error': 'Gagal menolak semula',
 
   // Tab Kehadiran
@@ -1188,6 +1233,17 @@ export const LABELS = {
   'staff.view.audit.empty': 'Tiada perubahan direkodkan untuk staf ini.',
   'staff.deactivate.partial':
     '{name} dinyahaktifkan, tetapi {count} terminal tidak dapat dihubungi: {devices}. Pemetaan sudah dibuang, jadi scan dari ID itu akan masuk ke barisan semakan.',
+  /**
+   * A removal the terminal has not collected, which is the one pending state with a security
+   * consequence.
+   *
+   * `staff.deactivate.done` reads "dibuang dari {count} terminal" — and on a queued protocol the
+   * person is still on the unit when that sentence appears. Somebody who has left can still open
+   * the door, and the screen that was meant to report exactly that said the opposite. Stated as
+   * its own sentence because the clause is only sometimes true.
+   */
+  'staff.deactivate.pending':
+    '{count} terminal belum mengesahkan pembuangan: {devices}. Ia mengutip arahannya pada tinjauan berikutnya, jadi orang ini mungkin masih boleh membuka pintu di situ sebelum itu.',
 
   // -------------------------------------------------------------------------
   // Borang staf (dialog)
@@ -1242,8 +1298,31 @@ export const LABELS = {
 
   'staffForm.sync.heading': 'Keputusan pendaftaran',
   'staffForm.sync.ok': 'berjaya',
+
+  /**
+   * What makes a queued write confirm, read beside the rows that are waiting.
+   *
+   * The list used to badge every row that had not failed as `berjaya`, because the browser's
+   * `DeviceSyncOutcome` never named `pending` — so a ZKTeco write, which is recorded here and
+   * collected by the terminal later, was reported as done. That is how an operator is told
+   * somebody can clock in tomorrow morning when they cannot.
+   *
+   * Says what will change it rather than only that it has not happened: the unit fetches its own
+   * work, so there is nothing to retry from this screen and nobody should wait on it.
+   */
+  'staffForm.sync.pending.note':
+    'Terminal yang menunggu sudah ada arahannya, tersimpan di sini. Pada protokol dail-keluar unit itu yang mengutip kerjanya sendiri, jadi ia hanya memegang orang ini selepas tinjauan berikutnya — tiada apa untuk dicuba semula dari skrin ini. Sebelum itu mereka tidak boleh scan di situ.',
+
   'staffForm.saved': '{name} disimpan.',
   'staffForm.saved.enrolled': '{name} disimpan dan didaftar pada {count} terminal.',
+  /**
+   * A full sentence joined to the one above, not a slot inside it.
+   *
+   * It is only sometimes true, and a slot would leave its punctuation stranded on the saves where
+   * every terminal confirmed. Same shape, and the same reason, as `backup.run.pruned`.
+   */
+  'staffForm.saved.pending':
+    '{count} terminal belum mengesahkan: {devices}. Setiap satu mengutip arahannya pada tinjauan berikutnya, dan orang ini tidak boleh scan di situ sebelum itu.',
   'staffForm.submit.create': 'Tambah',
 
   /**
@@ -1337,6 +1416,27 @@ export const LABELS = {
   'biometrics.error.status': 'Gagal ({status})',
   'biometrics.done.enrolled': 'Muka {name} didaftar pada {count} terminal.',
   'biometrics.done.removed': 'Muka {name} dibuang dari {count} terminal.',
+  /**
+   * Faces the terminal has accepted the command for but has not collected.
+   *
+   * The highest-stakes pending state in the application, and `faces.ts` says so where it sets the
+   * flag: a face is what somebody scans with, so a queued enrolment reported as done means nobody
+   * finds out until the person is standing at the door. `numOfFace` is deliberately only mirrored
+   * for a **confirmed** enrolment, so the directory already tells the truth — this is the sentence
+   * that makes the dialog agree with it.
+   */
+  'biometrics.done.pending':
+    '{count} terminal belum mengesahkan: {devices}. Ia mengutip gambar itu pada tinjauan berikutnya, dan orang ini tidak boleh scan dengan muka di situ sebelum itu.',
+  /**
+   * The same wait, the opposite consequence, so not the same sentence.
+   *
+   * Removing a face queues a delete. Until the unit collects it, the template is still there and
+   * still matches — so the person can still scan, which is the reverse of what the enrolment
+   * clause says. One label with a swappable verb would have put the wrong consequence on one of
+   * the two.
+   */
+  'biometrics.done.removed.pending':
+    '{count} terminal belum mengesahkan pembuangan: {devices}. Ia mengutip arahannya pada tinjauan berikutnya, jadi muka itu masih dipadankan di situ sebelum itu.',
 
   // -------------------------------------------------------------------------
   // Staf › Import Pukal
@@ -1411,6 +1511,17 @@ export const LABELS = {
   'import.stat.created': 'Dicipta',
   'import.stat.skipped': 'Dilangkau',
   'import.stat.pushed': 'Ke terminal',
+  /**
+   * What the counter beside it counts, which is not what its label implies.
+   *
+   * `run()` in `staff/import.ts` increments `pushed` for every outcome whose `ok` is true, and
+   * `ok` on a queued protocol means the command was recorded rather than collected. The job
+   * reply carries no per-row outcomes, so the browser cannot name which terminals are waiting —
+   * it can only stop the figure asserting that all of them have the people. In the tile's own
+   * hint rather than a strip, because it is a rule about this one number.
+   */
+  'import.stat.pushed.hint':
+    'Penghantaran yang direkod. Terminal yang mengutip arahannya sendiri hanya memegang orang itu selepas tinjauan berikutnya, jadi angka ini bukan kiraan terminal yang sudah mengesahkan.',
   'import.stat.pushFailed': 'Gagal ke terminal',
 
   'import.failures.count': '{count} penghantaran ke terminal gagal',
@@ -4443,7 +4554,20 @@ export const LABELS = {
   'device.column.name': 'Nama',
   'device.column.address': 'Alamat',
   'device.column.clock': 'Jam',
-  'device.column.enrolled': 'Didaftar',
+  /**
+   * The column header for a pair of numbers that are different in kind.
+   *
+   * It read `Didaftar`, which made `0/3000` and `3/1500` look like one measurement of a terminal:
+   * N of M slots used. Neither number is read from the unit on this tab. The numerator counts
+   * rows in `device_enrolments` — people this system has on record for that terminal, whether it
+   * pushed them or learned the identifier from a scan — and the denominator is
+   * `Device.faceCapacity`, a model figure.
+   *
+   * Naming the second one `had` is what stops the slash claiming a reading. The figures stay,
+   * because the pair is exactly what `assertCapacity` in `staff/sync.ts` compares to refuse the
+   * next enrolment; the row's own detail grid says where each comes from.
+   */
+  'device.column.enrolled': 'Didaftar / had',
   'device.column.serial': 'Serial',
   'device.column.seen': 'Dilihat',
 
@@ -4519,6 +4643,18 @@ export const LABELS = {
   'device.detail.clockMode': 'Mod jam',
   'device.detail.lastSync': 'Sync terakhir',
   'device.detail.lastPush': 'Push terakhir',
+  /**
+   * Where the two figures in the Didaftar / had column come from, in the one place a reader opens
+   * to ask about one terminal.
+   *
+   * In the expanded row rather than a tooltip on the cell: this is the caveat that decides whether
+   * somebody reads `0/3000` as an empty terminal, and a caveat that only appears on hover is one
+   * that gets changed without being read. Both numbers are substituted so the sentence is about
+   * this unit and not about the feature.
+   */
+  'device.detail.enrolled': 'Didaftar / had',
+  'device.detail.enrolled.source':
+    '{enrolled} daripada rekod sistem ini, bukan kiraan yang dibaca dari unit. Had {capacity} ialah angka model, dan ia yang menolak pendaftaran seterusnya apabila dicapai — bukan laporan dari terminal.',
   'device.detail.recovered': 'Dipulihkan oleh pull',
   'device.detail.recoveredNote':
     '{count} event ditemui oleh tarikan berkala yang push tidak pernah hantar. Angka yang terus menaik bermaksud push tidak boleh diharap pada terminal ini — kehadiran masih betul, cuma lambat sampai.',
@@ -4779,7 +4915,15 @@ export const LABELS = {
     'Tidak dipakai pada {names} — protokol terminal itu tiada konfigurasi NTP, jadi barisnya tiada butang jam.',
   'device.health.empty': 'Tiada terminal untuk diperiksa.',
   'device.health.column.terminal': 'Terminal',
-  'device.health.column.capacity': 'Kapasiti',
+  /**
+   * Renamed because this column is a reading and the list tab's is not.
+   *
+   * `/api/devices/health` fills it from `driver.identity.counts()`, wrapped in `supports()`, so it
+   * is what the unit says about itself. The cell used to fall back to the list's enrolment count
+   * with `??` when the reading was absent — substituting our own record for a measurement, which
+   * is how a terminal that cannot count its users reported `0/3000`.
+   */
+  'device.health.column.capacity': 'Dibaca dari unit',
   'device.health.column.warnings': 'Amaran',
   'device.health.noWarnings': 'Tiada amaran',
   'device.health.warningCount': '{count} amaran — buka untuk melihat',
@@ -4813,6 +4957,23 @@ export const LABELS = {
     'Mod jam: protokol terminal ini tidak melaporkan cara jamnya ditetapkan.',
   'device.health.clock.undeclared.note':
     'Protokol terminal ini tiada bacaan jam atas permintaan — tiada apa untuk dihubungi, jadi sasaran jam diukur ketika terminal menghubungi pelayan dan bukan dari skrin ini. Sel kosong di sini bukan terminal yang gagal diperiksa.',
+
+  /**
+   * A user count the protocol has no endpoint for.
+   *
+   * The same three states as the clock cell beside it, decided the same way. `readCounts` is
+   * declared by the ISAPI driver and by the connector proxy and absent from TA Push, which has no
+   * call that enumerates a terminal's users — so there is nothing to read, ever, and a zero there
+   * said the unit was empty. The cell used to hide that with `?? device.enrolled`, filling a
+   * measurement's place with this system's own enrolment record.
+   *
+   * Short token with the sentence as its `title` and accessible name, because the column is narrow
+   * and a cell reporting an absence alone does not say what is absent.
+   */
+  'device.health.counts.undeclared':
+    'Dibaca dari unit: protokol terminal ini tiada endpoint yang menyenaraikan penggunanya, jadi tiada kiraan boleh dibaca daripadanya.',
+  'device.health.counts.undeclared.note':
+    'Protokol terminal ini tiada endpoint yang menyenaraikan penggunanya, jadi tiada apa untuk dihubungi dan tiada kiraan untuk dibaca. Angka dalam lajur Didaftar / had pada tab Senarai ialah rekod sistem ini terhadap had model, bukan bacaan dari unit — jadi sifar di situ bermakna tiada siapa diagihkan ke terminal ini, bukan terminal ini kosong.',
   'device.health.pastRecords':
     'Membetulkan jam tidak mengubah cap masa yang sudah direkod. Rekod lampau kekal dengan kesilapannya, dan sasaran yang diukur ketika itu disimpan bersama setiap baris supaya ia masih boleh dinilai kemudian.',
   'device.health.ntp.done':
@@ -4850,6 +5011,16 @@ export const LABELS = {
    * version of the same header.
    */
   'device.editor.capacityOnly': 'kapasiti {capacity}',
+  /**
+   * The Placement group's heading on the Connection tab, which is not a reading either.
+   *
+   * It rendered `device.editor.enrolled` over `device.enrolled` and `device.faceCapacity` — the
+   * list row's enrolment-record count against the model limit — in the same words the Identity
+   * tab uses for `driver.identity.counts()`. One label for two different facts, so whichever one
+   * a translator had in mind, it was wrong on the other tab. Its own word here, and the same word
+   * the staff form already uses for assigning somebody to a terminal.
+   */
+  'device.editor.assigned': '{enrolled}/{capacity} diagihkan',
   'device.editor.passwordStored': 'Kata laluan tersimpan',
 
   'device.editor.tabs.aria': 'Bahagian tetapan terminal',

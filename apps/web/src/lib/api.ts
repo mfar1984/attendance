@@ -272,6 +272,18 @@ export interface DeviceSyncOutcome {
   deviceName: string;
   deviceEmployeeNo: string;
   ok: boolean;
+  /**
+   * Accepted by the driver, not yet confirmed by the terminal.
+   *
+   * The third state, and the one this type never named — so every screen read `ok` alone and
+   * reported a queued write as done. `staff/sync.ts` has always sent it, with a docblock saying
+   * exactly what the omission costs: on a callback protocol the command is durably queued and the
+   * unit collects it when it next polls, so `ok` means "recorded", not "the terminal has it".
+   *
+   * Same class of bug as `DeviceRow.active`: the server sent the field, the browser type did not
+   * declare it, and `tsc` has nothing to say about a field nobody asked for.
+   */
+  pending?: boolean;
   error?: string;
 }
 

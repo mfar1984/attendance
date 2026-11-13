@@ -341,11 +341,23 @@ function DeviceRow({
 }
 
 /**
- * Capacity is drawn, not just counted.
+ * How close a terminal is to the enrolment limit, drawn rather than only counted.
  *
- * Each terminal stores a fixed number of faces, so with thousands of staff across a
- * handful of units the ceiling is reached during normal use. Without this, a full
- * terminal is discovered only when an enrolment fails.
+ * ## What the two numbers are, and what they are not
+ *
+ * Neither is read from the terminal. `enrolled` is `_count.enrolments` — rows in
+ * `device_enrolments`, people this system has on record for that unit — and `capacity` is
+ * `Device.faceCapacity`, a model figure: the ZKTeco driver answers `readCapacity` from its
+ * datasheet constant, and a Hikvision row nothing has probed still holds the schema default.
+ *
+ * So this is not a fill level, and it used to say it was: the column read "Kapasiti" and the bar's
+ * accessible name read "{percent}% penuh". A terminal that cannot count its own users rendered
+ * `0/3000` with an empty green bar, which reads as a unit with 3000 free slots when the truth is
+ * that nobody has been assigned to it and nothing here can ask the unit anything.
+ *
+ * The pair is still worth drawing, because it is exactly what `assertCapacity` in `staff/sync.ts`
+ * compares to refuse the next enrolment — and a refused enrolment is otherwise discovered by
+ * somebody standing at a terminal. So the bar stays and is named as the limit it measures against.
  */
 function CapacityBar({ enrolled, capacity }: { enrolled: number; capacity: number }): ReactNode {
   const { t } = useLabels();
@@ -359,12 +371,15 @@ function CapacityBar({ enrolled, capacity }: { enrolled: number; capacity: numbe
       <div
         className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200"
         role="img"
-        aria-label={t('dashboard.devices.capacity.aria', { percent })}
+        // Both figures and what the percentage is of: the bar is an image, so this sentence is
+        // all a screen reader gets, and "% full" was the one claim nothing here measured.
+        aria-label={t('dashboard.devices.capacity.aria', { enrolled, capacity, percent })}
       >
         <div className={cn('h-full', tone)} style={{ width: `${String(percent)}%` }} />
       </div>
       <span className="font-mono text-xs tabular-nums text-slate-600">
-        {enrolled}/{capacity}
+        {enrolled}
+        <span className="text-slate-400">/{capacity}</span>
       </span>
     </div>
   );

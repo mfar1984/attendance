@@ -1,4 +1,13 @@
-﻿import { CircleAlert, CircleCheck, Loader2, ScanFace, Trash2, TriangleAlert, Upload } from 'lucide-react';
+﻿import {
+  CircleAlert,
+  CircleCheck,
+  Clock,
+  Loader2,
+  ScanFace,
+  Trash2,
+  TriangleAlert,
+  Upload,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Dialog, DialogFooter, Feedback } from '../components/Dialog';
@@ -40,6 +49,18 @@ interface FaceResult {
   deviceId: number;
   deviceName: string;
   ok: boolean;
+  /**
+   * Queued for the terminal, not yet collected by it.
+   *
+   * `FaceEnrolOutcome.pending` on the server, where the docblock calls it the field that matters
+   * most on this screen — and this type did not declare it, so a queued enrolment was drawn with
+   * the same green tick as a confirmed one. A face is what somebody scans with, so nobody finds
+   * out until the person is standing at the door.
+   *
+   * `faces.ts` only mirrors `numOfFace` for a confirmed enrolment, so the directory has always
+   * told the truth about this. This is what makes the dialog agree with it.
+   */
+  pending?: boolean;
   error?: string;
 }
 
@@ -487,7 +508,24 @@ function FaceDialog({
 
       const failed = rows.filter((row) => !row.ok);
       if (failed.length === 0) {
-        await onDone(t('biometrics.done.enrolled', { name: staff.fullName, count: rows.length }));
+        // Terminals that accepted the picture and have not collected it get their own sentence:
+        // the person cannot scan by face there yet, and the count above must not imply they can.
+        const waiting = rows.filter((row) => row.pending === true);
+        const confirmed = rows.length - waiting.length;
+
+        await onDone(
+          [
+            t('biometrics.done.enrolled', { name: staff.fullName, count: confirmed }),
+            ...(waiting.length > 0
+              ? [
+                  t('biometrics.done.pending', {
+                    count: waiting.length,
+                    devices: waiting.map((row) => row.deviceName).join(', '),
+                  }),
+                ]
+              : []),
+          ].join(' '),
+        );
       } else {
         // Kept open: the person can scan at some doors and not others, and closing would
         // hide which.
@@ -604,16 +642,31 @@ function FaceDialog({
           <div className="space-y-3 pb-2">
             {results !== null && (
               <ul className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                {/*
+                  Three states. A green tick on a queued enrolment says the terminal holds the
+                  face; it holds a command to fetch it, and only after its next poll does the
+                  person become able to scan.
+                */}
                 {results.map((row) => (
                   <li key={row.deviceId} className="flex items-start gap-2 text-xs">
-                    {row.ok ? (
-                      <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-600" aria-hidden />
-                    ) : (
+                    {!row.ok ? (
                       <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-rose-500" aria-hidden />
+                    ) : row.pending === true ? (
+                      <Clock className="mt-0.5 size-3.5 shrink-0 text-amber-600" aria-hidden />
+                    ) : (
+                      <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-600" aria-hidden />
                     )}
                     <span className="min-w-0">
                       <span className="font-medium text-slate-700">{row.deviceName}</span>
-                      {!row.ok && <span className="ml-1.5 text-rose-700">{row.error}</span>}
+                      {!row.ok ? (
+                        <span className="ml-1.5 text-rose-700">{row.error}</span>
+                      ) : (
+                        row.pending === true && (
+                          <Badge tone="warning" className="ml-1.5 uppercase">
+                            <T k="app.status.pendingTerminal" />
+                          </Badge>
+                        )
+                      )}
                     </span>
                   </li>
                 ))}
@@ -671,11 +724,29 @@ function RemoveFaceDialog({
       const payload = await api.delete<{ results: FaceResult[] }>(
         `/api/staff/${String(staff.id)}/face`,
       );
+      /*
+        A queued removal has not taken the face off the unit, so it is not counted as removed.
+
+        `removeFace` clears `faceEnrolledAt` either way, which is right — this system no longer
+        claims the terminal has it — but the terminal still matches on the template until it
+        collects the command. The second sentence names the units, in the same words the enrolment
+        path uses, because it is the same wait.
+      */
+      const waiting = payload.results.filter((row) => row.ok && row.pending === true);
+      const confirmed = payload.results.filter((row) => row.ok && row.pending !== true);
+
       await onDone(
-        t('biometrics.done.removed', {
-          name: staff.fullName,
-          count: payload.results.filter((row) => row.ok).length,
-        }),
+        [
+          t('biometrics.done.removed', { name: staff.fullName, count: confirmed.length }),
+          ...(waiting.length > 0
+            ? [
+                t('biometrics.done.removed.pending', {
+                  count: waiting.length,
+                  devices: waiting.map((row) => row.deviceName).join(', '),
+                }),
+              ]
+            : []),
+        ].join(' '),
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('biometrics.error.remove'));

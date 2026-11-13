@@ -1,9 +1,50 @@
 import { useState, type ReactNode } from 'react';
 
-import { staffApi } from '../lib/api';
-import { T, useLabels } from '../lib/translation';
+import { staffApi, type DeviceSyncOutcome } from '../lib/api';
+import { T, useLabels, type LabelVars } from '../lib/translation';
+import type { LabelKey } from '@attendance/shared';
 import { Dialog, DialogFooter, Feedback } from './Dialog';
 import { PanelNote } from './RecordPanel';
+
+/**
+ * What a deactivation actually achieved on each terminal, as one sentence or two.
+ *
+ * Exported because the staff form switches somebody off as well — the server runs the same
+ * `removeStaffFromDevices` for both — and two copies of this wording would diverge. The one that
+ * diverged would be the one still reporting a queued removal as done, which is the reading this
+ * exists to remove: a leaver who can still open a door, on the screen whose whole job is to say
+ * they cannot.
+ *
+ * `ok` with `pending` is "the command is recorded and the unit has not collected it". Its own
+ * sentence, because it is only sometimes true and a slot would leave punctuation stranded on the
+ * removals every terminal confirmed.
+ */
+export function reportRemoval(
+  t: (key: LabelKey, vars?: LabelVars) => string,
+  name: string,
+  removal: DeviceSyncOutcome[],
+): string {
+  const failed = removal.filter((row) => !row.ok);
+  const waiting = removal.filter((row) => row.ok && row.pending === true);
+
+  return [
+    failed.length === 0
+      ? t('staff.deactivate.done', { name, count: removal.length })
+      : t('staff.deactivate.partial', {
+          name,
+          count: failed.length,
+          devices: failed.map((row) => row.deviceName).join(', '),
+        }),
+    ...(waiting.length > 0
+      ? [
+          t('staff.deactivate.pending', {
+            count: waiting.length,
+            devices: waiting.map((row) => row.deviceName).join(', '),
+          }),
+        ]
+      : []),
+  ].join(' ');
+}
 
 /**
  * Confirms a deactivation, and carries it out.
@@ -30,16 +71,7 @@ export function StaffDeactivateDialog({
     setError(null);
     try {
       const result = await staffApi.deactivate(target.id);
-      const failed = result.removal.filter((row) => !row.ok);
-      await onDone(
-        failed.length === 0
-          ? t('staff.deactivate.done', { name: target.fullName, count: result.removal.length })
-          : t('staff.deactivate.partial', {
-              name: target.fullName,
-              count: failed.length,
-              devices: failed.map((row) => row.deviceName).join(', '),
-            }),
-      );
+      await onDone(reportRemoval(t, target.fullName, result.removal));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('staff.deactivate.error'));
       setBusy(false);

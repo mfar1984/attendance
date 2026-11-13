@@ -12,6 +12,7 @@ import {
   Router,
   Satellite,
   Save,
+  ScanFace,
   Server,
   ShieldCheck,
   ShieldOff,
@@ -268,6 +269,22 @@ function undeclared(device: DeviceRow, operation: DriverOperation): boolean {
  */
 function noClockOnProtocol(device: DeviceRow): boolean {
   return device.capabilities !== null && !declares(device.capabilities, DriverOperation.readClock);
+}
+
+/**
+ * Whether an absent user count is a fact about the protocol rather than a failed probe.
+ *
+ * Shaped like `noClockOnProtocol` above, asked against the same declaration, because the enrolled
+ * column has the same three states as the clock column beside it: declared and read, declared and
+ * not read, and no such call at all. TA Push has nothing that enumerates a terminal's users, so
+ * its count is not a low number — it is no number.
+ *
+ * Null capabilities deliberately answer false, as they do for the clock: nothing can drive that
+ * unit, its row already carries the driver's refusal in the Warnings cell, and a marker here would
+ * explain the same fact a second time in weaker words.
+ */
+function noCountsOnProtocol(device: DeviceRow): boolean {
+  return device.capabilities !== null && !declares(device.capabilities, DriverOperation.readCounts);
 }
 
 
@@ -733,8 +750,24 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                     </span>
                   )}
                 </td>
+                {/*
+                  Two numbers of different kinds, and neither is read from the terminal.
+
+                  The first counts `device_enrolments` rows — people this system has on record for
+                  this unit — and the second is `Device.faceCapacity`, a model figure: the ZKTeco
+                  driver answers `readCapacity` from its datasheet constant, and a Hikvision row
+                  nothing has probed still holds the schema default. Under one word, `3/1500` and
+                  `0/3000` read as one measurement of a terminal, and the zero read as an empty
+                  unit rather than as nobody being assigned to it.
+
+                  The figures stay, because this pair is exactly what `assertCapacity` in
+                  `staff/sync.ts` compares to refuse the next enrolment. The header names the
+                  second one as a limit, the limit is dimmed so the eye reads the count first, and
+                  the expanded row below says where each comes from.
+                */}
                 <td className="px-2 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">
-                  {row.enrolled}/{row.faceCapacity}
+                  {row.enrolled}
+                  <span className="text-slate-400">/{row.faceCapacity}</span>
                 </td>
                 <td className="px-2 py-2.5 font-mono text-xs tabular-nums text-slate-500">
                   {row.syncState === null ? '—' : `#${row.syncState.lastSerialNo}`}
@@ -853,6 +886,23 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                       <Detail
                         label={<T k="device.detail.recovered" />}
                         value={String(row.syncState?.recoveredByPull ?? 0)}
+                      />
+                      {/*
+                        Where the column's two figures come from, in the one place somebody opens
+                        to ask about this terminal.
+
+                        In the expanded row rather than a tooltip on the cell: this is what decides
+                        whether `0/3000` is read as an empty terminal, and a caveat that appears
+                        only on hover is one that gets acted on without being read.
+                      */}
+                      <Detail
+                        label={<T k="device.detail.enrolled" />}
+                        value={
+                          <T
+                            k="device.detail.enrolled.source"
+                            vars={{ enrolled: row.enrolled, capacity: row.faceCapacity }}
+                          />
+                        }
                       />
                     </DetailGrid>
 
@@ -2150,6 +2200,16 @@ function HealthPanel(): ReactNode {
             it dials in, so a stored figure is a real measurement and is still the thing to show.
           */
           const noClock = noClockOnProtocol(device);
+          /*
+            Whether a missing user count is the protocol rather than the probe.
+
+            The same question as `noClock`, asked the same way, against the same declaration. TA
+            Push has no call that enumerates a terminal's users, so `health.ts` wraps the read in
+            `supports()` and returns null — correctly. This cell then filled that null from
+            `device.enrolled`, substituting this system's own enrolment record for a measurement,
+            which is how a terminal that cannot count its users reported `0/3000` here.
+          */
+          const noCounts = noCountsOnProtocol(device);
           const ntpReason = why(device, DriverOperation.configureNtp);
 
           return (
@@ -2186,7 +2246,22 @@ function HealthPanel(): ReactNode {
                     ))}
                 </td>
                 <td className="px-2 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">
-                  {check?.enrolled ?? device.enrolled}/{check?.faceCapacity ?? device.faceCapacity}
+                  {check?.enrolled !== undefined && check.enrolled !== null ? (
+                    <>
+                      {check.enrolled}
+                      <span className="text-slate-400">
+                        /{check.faceCapacity ?? device.faceCapacity}
+                      </span>
+                    </>
+                  ) : noCounts ? (
+                    <NotOnProtocol label={t('device.health.counts.undeclared')} />
+                  ) : (
+                    // A dash is right here and only here: the protocol has the call and no reading
+                    // was obtained, which is what "no value" means. It used to fall through to
+                    // `device.enrolled` instead, which is a different number from a different
+                    // source rendered in a column headed as a reading.
+                    <span className="text-slate-300">—</span>
+                  )}
                 </td>
                 <td className="px-2 py-2.5 text-xs">
                   {check?.error !== undefined ? (
@@ -2323,6 +2398,22 @@ function HealthPanel(): ReactNode {
                         icon={<Clock className="size-3.5" aria-hidden />}
                       >
                         <T k="device.health.clock.undeclared.note" />
+                      </PanelNote>
+                    )}
+
+                    {/*
+                      Info for the same reason the clock one is, and it carries the extra half the
+                      clock note does not need: the List tab shows a number in a column that reads
+                      like this one, and somebody who finds no count here will go and read it as a
+                      terminal that is empty.
+                    */}
+                    {noCounts && (
+                      <PanelNote
+                        tone="info"
+                        className="mt-3"
+                        icon={<ScanFace className="size-3.5" aria-hidden />}
+                      >
+                        <T k="device.health.counts.undeclared.note" />
                       </PanelNote>
                     )}
 
