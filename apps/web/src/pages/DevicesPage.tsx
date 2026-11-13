@@ -751,19 +751,23 @@ function ListPanel({ onChanged }: { onChanged: () => void }): ReactNode {
                   )}
                 </td>
                 {/*
-                  Two numbers of different kinds, and neither is read from the terminal.
+                  Two numbers of different kinds, and the first is certainly not from the terminal.
 
-                  The first counts `device_enrolments` rows — people this system has on record for
-                  this unit — and the second is `Device.faceCapacity`, a model figure: the ZKTeco
-                  driver answers `readCapacity` from its datasheet constant, and a Hikvision row
-                  nothing has probed still holds the schema default. Under one word, `3/1500` and
-                  `0/3000` read as one measurement of a terminal, and the zero read as an empty
-                  unit rather than as nobody being assigned to it.
+                  It counts `device_enrolments` rows — people this system has on record for this
+                  unit. The second is `Device.faceCapacity`, which is the ceiling this system
+                  enforces and whose provenance is mixed: `health.ts` writes it from
+                  `driver.identity.capacity()`, so ISAPI fills it from the unit's own
+                  `FDRecordDataMaxNum` while the ZKTeco driver answers from its datasheet constant,
+                  and a row nothing has probed still holds the schema default. A probed row and a
+                  never-probed row look identical here, so this cell cannot claim either way.
+
+                  Under one word, `3/1500` and `0/3000` read as one measurement of a terminal, and
+                  the zero read as an empty unit rather than as nobody being assigned to it.
 
                   The figures stay, because this pair is exactly what `assertCapacity` in
                   `staff/sync.ts` compares to refuse the next enrolment. The header names the
                   second one as a limit, the limit is dimmed so the eye reads the count first, and
-                  the expanded row below says where each comes from.
+                  the expanded row below says what each one is.
                 */}
                 <td className="px-2 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">
                   {row.enrolled}
@@ -2249,9 +2253,23 @@ function HealthPanel(): ReactNode {
                   {check?.enrolled !== undefined && check.enrolled !== null ? (
                     <>
                       {check.enrolled}
-                      <span className="text-slate-400">
-                        /{check.faceCapacity ?? device.faceCapacity}
-                      </span>
+                      {/*
+                        The ceiling only when this probe read one, with no fall back to the stored
+                        column.
+
+                        `health.ts` catches a failed `capacity()` while keeping a successful
+                        `counts()` — capacity is advisory there, correctly — so the two halves of
+                        this cell can arrive separately. Filling the second from
+                        `device.faceCapacity` put a possibly never-probed schema default behind a
+                        slash in a column headed as a reading: a narrower version of the
+                        substitution removed from the numerator, and the same class.
+
+                        A count on its own is the honest render, and the expanded note below names
+                        the enforced limit so it is still reachable.
+                      */}
+                      {check.faceCapacity !== null && (
+                        <span className="text-slate-400">/{check.faceCapacity}</span>
+                      )}
                     </>
                   ) : noCounts ? (
                     <NotOnProtocol label={t('device.health.counts.undeclared')} />
@@ -2416,6 +2434,28 @@ function HealthPanel(): ReactNode {
                         <T k="device.health.counts.undeclared.note" />
                       </PanelNote>
                     )}
+
+                    {/*
+                      The half-read cell, explained where the missing half would have been faked.
+
+                      Only when this probe got a count and no ceiling. The limit is still the thing
+                      that refuses the next enrolment, so it is named here rather than quietly
+                      substituted into the cell above.
+                    */}
+                    {check?.enrolled !== undefined &&
+                      check.enrolled !== null &&
+                      check.faceCapacity === null && (
+                        <PanelNote
+                          tone="info"
+                          className="mt-3"
+                          icon={<ScanFace className="size-3.5" aria-hidden />}
+                        >
+                          <T
+                            k="device.health.capacity.unread.note"
+                            vars={{ capacity: device.faceCapacity }}
+                          />
+                        </PanelNote>
+                      )}
 
                     {off && (
                       <PanelNote tone="warn" className="mt-3">

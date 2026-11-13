@@ -28,6 +28,14 @@
  * dialog was reporting it as done. If `pending` ever disagreed with those, the field would be the
  * thing that is wrong rather than the screens.
  *
+ * ## Every route the browser now branches on
+ *
+ * Five, because a path that is only reasoned about is a path that is not covered: create, re-push,
+ * face enrol, face removal, the staff form's switch-off branch of `PATCH /api/staff/:id`, and the
+ * deactivate action. The last two reach the same `removeStaffFromDevices` through different routes
+ * and share one notice helper in the browser, so both are injected rather than one standing in for
+ * the other.
+ *
  * Every row is prefixed `ujian-pending-` and removed at the end.
  */
 import { DeviceProtocol, DeviceStatus, DeviceVendor } from '@attendance/shared';
@@ -284,6 +292,89 @@ try {
   check(
     'and `staff.numOfFace` stays at zero, so the directory does not claim they can scan',
     mirrored?.numOfFace === 0,
+  );
+
+  // -------------------------------------------------------------------------
+  section('removing a face, where the template still matches until the unit collects');
+
+  /*
+    The opposite consequence from the enrolment above, which is why the biometrics screen gives it
+    its own sentence rather than one label with a swappable verb: a queued delete means the face is
+    still on the unit and still opens the door.
+
+    `removeFace` sets `outcome.pending = !ack.confirmed` exactly as `enrolFace` does, so this is
+    coverage of a path the browser now branches on rather than a suspected break.
+  */
+  const faceRemoved = await app.inject({
+    method: 'DELETE',
+    url: `/api/staff/${String(subject)}/face`,
+    headers: { cookie },
+  });
+  check('the face removal answers 200', faceRemoved.statusCode === 200);
+
+  const faceRemovedBody = faceRemoved.json() as { results: Outcome[] };
+  const faceRemovedQueued = forDevice(faceRemovedBody.results, queued.id);
+  check('the queued terminal accepts the removal', faceRemovedQueued?.ok === true);
+  check('and reports it as not yet collected', faceRemovedQueued?.pending === true);
+  check(
+    'the `pending` key is present on that row, not merely absent',
+    faceRemovedQueued !== undefined && 'pending' in faceRemovedQueued,
+  );
+  check(
+    'and it survives serialisation on this route too',
+    faceRemoved.body.includes('"pending":true'),
+  );
+
+  // -------------------------------------------------------------------------
+  section('switching somebody off through the staff form, not the deactivate action');
+
+  /*
+    A second staff row, because this is a different route reaching the same removal.
+
+    `PATCH /api/staff/:id` with `active: false` runs `removeStaffFromDevices` and answers
+    `{ sync: [], removal }` — the branch the staff form takes when somebody unticks "active", and
+    the one that shares `reportRemoval` with the deactivate dialog. It cannot be exercised on the
+    subject above: `removeStaffFromDevices` deletes the enrolment rows, so whichever of the two
+    routes ran first would leave the other with nothing to remove.
+  */
+  const secondNo = `UJIANPENDING-STAF2-${String(stamp)}`;
+  const second = await app.inject({
+    method: 'POST',
+    url: '/api/staff',
+    headers: { cookie },
+    payload: {
+      employeeNo: secondNo,
+      fullName: 'Ujian Pending Staf Dua',
+      active: true,
+      deviceIds: [queued.id],
+    },
+  });
+  check('the second staff member is created', second.statusCode === 200);
+
+  const secondId = (second.json() as { id: number }).id;
+  if (typeof secondId === 'number') staffIds.push(secondId);
+
+  const switchedOff = await app.inject({
+    method: 'PATCH',
+    url: `/api/staff/${String(secondId)}`,
+    headers: { cookie },
+    payload: { employeeNo: secondNo, fullName: 'Ujian Pending Staf Dua', active: false },
+  });
+  check('the switch-off answers 200', switchedOff.statusCode === 200);
+
+  const switchedBody = switchedOff.json() as { sync: Outcome[]; removal: Outcome[] };
+  check('it reports a removal rather than a push', switchedBody.removal.length === 1);
+  const switchedQueued = forDevice(switchedBody.removal, queued.id);
+  check('the removal is accepted by the driver', switchedQueued?.ok === true);
+  /*
+    The count in the first sentence of `reportRemoval` is the confirmed rows, so this reply — one
+    row, queued — is exactly the case that used to read "removed from 1 terminal" and then "1
+    terminal has not collected the removal" in the same notice.
+  */
+  check('and reported as not yet collected by the terminal', switchedQueued?.pending === true);
+  check(
+    'so no row is confirmed, which is the case the count-free notice exists for',
+    switchedBody.removal.filter((row) => row.ok === true && row.pending !== true).length === 0,
   );
 
   // -------------------------------------------------------------------------

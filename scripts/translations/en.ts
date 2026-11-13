@@ -240,7 +240,7 @@ export const EN_LABELS: Partial<Record<LabelKey, string>> = {
   'dashboard.devices.title': 'Terminals',
   'dashboard.devices.count': '{count} terminals',
   'dashboard.devices.subtitle':
-    'The enrolments this system has on record against each model’s limit, and clock accuracy. That limit is what refuses the next enrolment once it is reached, so it is drawn here rather than discovered when an enrolment fails.',
+    'The enrolments this system has on record against the limit it enforces for each terminal, and clock accuracy. That limit is what refuses the next enrolment once it is reached, so it is drawn here rather than discovered when an enrolment fails.',
   'dashboard.devices.manage': 'Manage terminals',
   'dashboard.devices.empty': 'No terminals registered yet.',
   'dashboard.devices.column.name': 'Name',
@@ -988,12 +988,15 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
     'Punches and attendance records {emphasis}. They are the evidence for pay already issued, so they are not removed along with access.',
   'staff.deactivate.submit': 'Deactivate',
   'staff.deactivate.error': 'Could not deactivate',
+  // Counts the terminals that confirmed, so the claim cannot outrun what the units hold.
   'staff.deactivate.done': '{name} deactivated and removed from {count} terminals.',
   'staff.deactivate.partial':
     '{name} deactivated, but {count} terminals could not be reached: {devices}. The mapping has already been removed, so scans from those IDs will land in the review queue.',
+  // The count-free form, for when no terminal has confirmed and there is no honest number.
+  'staff.deactivate.done.recordOnly': '{name} deactivated.',
   // The one pending state with a security consequence: a leaver who can still open a door.
   'staff.deactivate.pending':
-    '{count} terminals have not confirmed the removal: {devices}. Each collects its command on its next poll, so this person may still be able to open the door there until it does.',
+    '{count} terminals have not collected the removal command: {devices}. Each collects it on its next poll, so this person may still be able to open the door there until it does.',
 
   // ---------------------------------------------------------------------------
   // Staff detail screen
@@ -1092,8 +1095,9 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
   'staff.view.terminal.resynced': 'Pushed again to {count} terminals.',
   'staff.view.terminal.resynced.partial': 'Pushed to {count} terminals, some failed: {failed}',
   // A re-push reading as "corrected" is the failure: a queued unit still holds the old values.
+  // "Not collected", not "not confirmed" — the badge on this same tab means a confirmed pairing.
   'staff.view.terminal.resynced.pending':
-    '{count} terminals have not confirmed: {devices}. Each collects its command on its next poll, and until then those units still hold the old values.',
+    '{count} terminals have not collected this command: {devices}. Each collects it on its next poll, and until then those units still hold the old values.',
   'staff.view.terminal.resync.error': 'Could not push again',
 
   'staff.view.attendance.count': '{count} days recorded',
@@ -1199,14 +1203,15 @@ export const EN_LABELS_STAFF: Partial<Record<LabelKey, string>> = {
   'staffForm.devices.none': 'No terminals registered.',
   'staffForm.sync.heading': 'Enrolment result',
   'staffForm.sync.ok': 'succeeded',
-  // What makes a queued write confirm, read beside the rows that are waiting.
+  // What makes a queued write confirm, read beside the rows that are waiting. Unreachable when
+  // every row is queued, because that save closes the dialog — the hand-off sentence carries it.
   'staffForm.sync.pending.note':
     'The terminals that are waiting already have their command, held here. On a dial-out protocol the unit collects its own work, so it only holds this person after its next poll — there is nothing to retry from this screen. Until then they cannot scan there.',
   'staffForm.saved': '{name} saved.',
   'staffForm.saved.enrolled': '{name} saved and enrolled on {count} terminals.',
   // A full sentence joined to the one above, because it is only sometimes true.
   'staffForm.saved.pending':
-    '{count} terminals have not confirmed: {devices}. Each collects its command on its next poll, and this person cannot scan there until it does.',
+    '{count} terminals have not collected this command: {devices}. Each collects it on its next poll, and this person cannot scan there until it does.',
   'staffForm.submit.create': 'Add',
   'staffForm.error.employeeNo.required': 'Staff No. is required',
   'staffForm.error.maxChars': 'Maximum {max} characters',
@@ -1289,10 +1294,10 @@ export const EN_LABELS_ENROLMENT: Partial<Record<LabelKey, string>> = {
   'biometrics.done.removed': '{name}’s face removed from {count} terminals.',
   // The highest-stakes pending state: a face is what somebody scans with.
   'biometrics.done.pending':
-    '{count} terminals have not confirmed: {devices}. Each collects the picture on its next poll, and this person cannot scan by face there until it does.',
+    '{count} terminals have not collected this picture: {devices}. Each collects it on its next poll, and this person cannot scan by face there until it does.',
   // The same wait, the opposite consequence: the template still matches until the delete lands.
   'biometrics.done.removed.pending':
-    '{count} terminals have not confirmed the removal: {devices}. Each collects its command on its next poll, so the face is still matched there until it does.',
+    '{count} terminals have not collected the removal command: {devices}. Each collects it on its next poll, so the face is still matched there until it does.',
 
   // ---------------------------------------------------------------------------
   // Terminal ID mapping
@@ -5244,10 +5249,11 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
   'device.detail.clockMode': 'Clock mode',
   'device.detail.lastSync': 'Last sync',
   'device.detail.lastPush': 'Last push',
-  // Where the two figures in the Enrolled / limit column come from, and where they do not.
+  // What the two figures in the Enrolled / limit column are. The count is certainly not from the
+  // unit; the limit is read off it on a protocol that publishes one, and this screen cannot tell.
   'device.detail.enrolled': 'Enrolled / limit',
   'device.detail.enrolled.source':
-    '{enrolled} from this system’s own record, not a count read from the unit. The limit of {capacity} is a model figure, and it is what refuses the next enrolment once it is reached — not something the terminal reported.',
+    '{enrolled} from this system’s own record, not a count read from the unit. The limit of {capacity} is the ceiling this system enforces, and it is what refuses the next enrolment once it is reached. It is read from the unit on a protocol that publishes its limit and a model figure on one that does not — this screen cannot tell which.',
   'device.detail.recovered': 'Recovered by pull',
   /*
    * The reassurance matters as much as the diagnosis: attendance is still correct, it just arrives late.
@@ -5445,6 +5451,10 @@ export const EN_LABELS_DEVICE_HEALTH: Partial<Record<LabelKey, string>> = {
     'Read from the unit: this terminal’s protocol has no endpoint that lists its users, so no count can be read from it.',
   'device.health.counts.undeclared.note':
     'This terminal’s protocol has no endpoint that lists its users, so there is nothing to call and no count to read. The figures in the Enrolled / limit column on the List tab are this system’s own record against a model limit, not a reading from the unit — so a zero there means nobody is assigned to this terminal, not that the terminal is empty.',
+  // A probe that read a count and no ceiling. No fall back to the stored column, which on a
+  // never-probed row is the schema default, in a column headed as a reading.
+  'device.health.capacity.unread.note':
+    'This unit answered with its user count but not its limit, so only the count is shown here. The limit this system enforces is {capacity}, from the terminal’s record rather than from this probe — it is what refuses the next enrolment once it is reached.',
   /*
    * The reason the measured drift is stored on every row: a past record keeps its error, and storing the
    * drift beside it is what makes that record judgeable later.

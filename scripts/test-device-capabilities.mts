@@ -357,12 +357,18 @@ try {
     rows.length > 0 && rows.every((entry) => typeof entry.faceCapacity === 'number'),
   );
   /*
-    And that neither is a reading. A terminal nothing has ever contacted holds the schema default
-    for Hikvision and no enrolments at all, which is what `0/1500` on a fresh row means — this
-    system's own record against a model figure, which is what the expanded row now states.
+    And what each one is, which is not the same claim for the two of them.
+
+    The count is never a reading: it is `_count.enrolments`, this system's own rows, on every
+    protocol. The limit is `Device.faceCapacity`, which `health.ts` overwrites from
+    `driver.identity.capacity()` — so on a probed ISAPI row it is the unit's own
+    `FDRecordDataMaxNum` and on a ZKTeco row it is the datasheet constant. A row nothing has ever
+    contacted, like this fixture, still holds the schema default, and a probed row and a
+    never-probed row are indistinguishable here. That is why the expanded sentence names the
+    figure as the ceiling this system enforces rather than claiming where it came from.
   */
   check(
-    'a never-probed Hikvision row reports the model default, not a measurement',
+    'a never-probed Hikvision row reports the schema default, which no probe measured',
     row(hikDirect)?.faceCapacity === 1500 && row(hikDirect)?.enrolled === 0,
   );
 
@@ -400,6 +406,21 @@ try {
   check(
     'and reports it as offline, so the dash is a failed probe and not a quiet zero',
     hikHealth.status === 'offline',
+  );
+  /*
+    The denominator of this column is nullable on the wire, and that is what the cell now branches
+    on.
+
+    `health.ts` treats capacity as advisory — a firmware that hides it must not fail the whole
+    check — so a successful `counts()` and a failed `capacity()` can arrive together. The cell used
+    to fill that gap from `Device.faceCapacity`, which on a never-probed row is the schema default,
+    under a header reading "Dibaca dari unit". Proving `null` actually travels is what makes
+    `check.faceCapacity !== null` a real distinction rather than a branch that never runs.
+  */
+  check('the `faceCapacity` key is present too, never merely absent', 'faceCapacity' in hikHealth);
+  check(
+    'and a failed probe reports it as null rather than echoing the stored column',
+    hikHealth.faceCapacity === null,
   );
 
   const zkHealth = await probe(zkDirect);

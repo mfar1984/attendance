@@ -18,6 +18,13 @@ import { PanelNote } from './RecordPanel';
  * `ok` with `pending` is "the command is recorded and the unit has not collected it". Its own
  * sentence, because it is only sometimes true and a slot would leave punctuation stranded on the
  * removals every terminal confirmed.
+ *
+ * The count in the first sentence is the **confirmed** rows, not every row. It used to be
+ * `removal.length`, so one queued ZKTeco terminal produced "removed from 1 terminal" followed by
+ * "1 terminal has not collected the removal" — one notice asserting the removal landed and then
+ * denying it, on the path where the consequence is a leaver who can still open a door. With
+ * nothing confirmed there is no number worth stating, so the sentence drops it, the way
+ * `staffForm.saved` does on the save path.
  */
 export function reportRemoval(
   t: (key: LabelKey, vars?: LabelVars) => string,
@@ -26,15 +33,18 @@ export function reportRemoval(
 ): string {
   const failed = removal.filter((row) => !row.ok);
   const waiting = removal.filter((row) => row.ok && row.pending === true);
+  const confirmed = removal.length - failed.length - waiting.length;
 
   return [
-    failed.length === 0
-      ? t('staff.deactivate.done', { name, count: removal.length })
-      : t('staff.deactivate.partial', {
+    failed.length > 0
+      ? t('staff.deactivate.partial', {
           name,
           count: failed.length,
           devices: failed.map((row) => row.deviceName).join(', '),
-        }),
+        })
+      : confirmed > 0
+        ? t('staff.deactivate.done', { name, count: confirmed })
+        : t('staff.deactivate.done.recordOnly', { name }),
     ...(waiting.length > 0
       ? [
           t('staff.deactivate.pending', {
