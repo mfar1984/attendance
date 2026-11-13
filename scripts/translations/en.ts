@@ -5320,15 +5320,33 @@ export const EN_LABELS_DEVICE: Partial<Record<LabelKey, string>> = {
   'device.ingest.callback.proxyBlind':
     'Requests are arriving as {address}, so the server cannot see where they came from. Every request reads as a private network and is allowed, so the address list below refuses nothing. The reverse proxy in front of this server must set {header} before that list means anything.',
 
+  /*
+   * The counters measure this server's own listener. A terminal behind a connector dials that
+   * connector instead, so none of its traffic passes through the counted path.
+   */
+  'device.ingest.callback.subtitle.viaAgent':
+    'The counts below measure this server’s listener only. Every dial-out terminal here is reached through a site connector, so it contacts the connector rather than this server.',
+  'device.ingest.callback.viaAgent.note':
+    'Reached through a connector: {names}. Their handshakes and records land on the connector’s listener on the site LAN and are forwarded here in batches, so the counts above do not include them. The scans that arrived are in Attendance › Raw Scan Log, and the connector’s own state is on the Connector tab.',
+  'device.ingest.callback.viaAgent.only':
+    'Nothing points at the address below, so the counts above stay at zero — that is not a fault. The address a connector terminal uses is its own connector’s LAN address, shown on the Connector tab.',
+
   'device.ingest.title': 'Ingest endpoint',
   'device.ingest.subtitle': 'Where terminals send events, and how well that is going.',
   'device.ingest.pushed': 'Events via push',
   'device.ingest.pulled': 'Events via pull',
   'device.ingest.heartbeats': 'Heartbeats',
   'device.ingest.undecodable': 'Could not be read',
+  /*
+   * Two kinds of counter in one grid. The event totals are `raw_events` counts and survive a
+   * restart; the heartbeat and undecodable counters, and the last contact, do not.
+   */
+  'device.ingest.scope.allTime': 'Total in the raw scan log',
+  'device.ingest.scope.sinceRestart': 'Since the server started',
   'device.ingest.path': 'Ingest path',
   'device.ingest.auth': 'Auth method',
   'device.ingest.lastContact': 'Last contact',
+  'device.ingest.lastContact.sinceRestart': 'None since the server started',
   'device.ingest.rejected': 'Auth rejections',
   /*
    * The comparison is the point: this is worse than an unreachable terminal, because it looks like it is
@@ -5365,6 +5383,9 @@ export const EN_LABELS_DEVICE_HEALTH: Partial<Record<LabelKey, string>> = {
   'device.health.ntp': 'NTP source',
   'device.health.ntp.hint':
     'A LAN gateway is more resilient than public NTP — the clocks stay in sync even when the internet is down.',
+  /* One fleet-wide field cannot reach a protocol that has no NTP configuration, and says so. */
+  'device.health.ntp.excluded':
+    'Not applied to {names} — that terminal’s protocol has no NTP configuration, so its row carries no clock button.',
   'device.health.empty': 'No terminals to probe.',
   'device.health.column.terminal': 'Terminal',
   'device.health.column.capacity': 'Capacity',
@@ -5377,6 +5398,17 @@ export const EN_LABELS_DEVICE_HEALTH: Partial<Record<LabelKey, string>> = {
   'device.health.detail.driftTarget': 'Clock drift',
   'device.health.detail.unmeasured': 'Not measured',
   'device.health.detail.lastSeen': 'Last seen',
+  /*
+   * An absent reading the protocol never had. The short token is the cell; the sentences are its
+   * tooltip and accessible name, and each names the column it answers.
+   */
+  'device.health.notOnProtocol': 'Not on this protocol',
+  'device.health.clock.undeclared':
+    'Clock drift: this terminal’s protocol has no on-demand clock reading, so there is nothing to measure from this screen.',
+  'device.health.clockMode.undeclared':
+    'Clock mode: this terminal’s protocol does not report how its clock is set.',
+  'device.health.clock.undeclared.note':
+    'This terminal’s protocol has no on-demand clock reading — there is nothing to call, so the drift is measured when the terminal contacts the server rather than from this screen. An empty cell here is not a terminal that failed its probe.',
   /*
    * The reason the measured drift is stored on every row: a past record keeps its error, and storing the
    * drift beside it is what makes that record judgeable later.

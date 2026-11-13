@@ -4689,15 +4689,49 @@ export const LABELS = {
   'device.ingest.callback.proxyBlind':
     'Permintaan tiba sebagai {address}, jadi pelayan tidak dapat melihat dari mana ia datang. Setiap permintaan terbaca sebagai rangkaian persendirian dan dibenarkan, jadi senarai alamat di bawah tidak menolak apa-apa. Reverse proxy di hadapan pelayan ini mesti menetapkan {header} sebelum senarai itu bermakna.',
 
+  /**
+   * Which terminals the counters above cover, and which are counted somewhere else.
+   *
+   * `iclockStats()` measures **this server's** `/iclock` listener. A terminal assigned to a
+   * connector dials the connector's listener on its own LAN and its records arrive here relayed in
+   * batches, so none of it passes through the counted path — the block showed four permanent zeros
+   * on a site whose only dial-out terminal was behind a connector, and that reads as ZKTeco ingest
+   * being broken rather than as being measured in the wrong place.
+   *
+   * The connector is named per terminal because one installation can hold several, and the address
+   * such a terminal is configured with is that connector's LAN address — not the one shown above.
+   */
+  'device.ingest.callback.subtitle.viaAgent':
+    'Kiraan di bawah mengukur pendengar pelayan ini sahaja. Setiap terminal dail-keluar di sini dicapai melalui connector tapak, jadi ia menghubungi connector dan bukan pelayan ini.',
+  'device.ingest.callback.viaAgent.note':
+    'Dicapai melalui connector: {names}. Handshake dan rekod daripadanya mendarat pada pendengar connector di LAN tapak dan dihantar semula ke pelayan ini sebagai kelompok, jadi kiraan di atas tidak mengiranya. Scan yang sampai ada dalam Kehadiran › Log Scan Mentah, dan keadaan connector ada dalam tab Connector.',
+  /** The second sentence, only when nothing at all points at this server's own listener. */
+  'device.ingest.callback.viaAgent.only':
+    'Tiada terminal menuding ke alamat di bawah, jadi kiraan di atas kekal sifar — itu bukan kerosakan. Alamat yang terminal connector gunakan ialah alamat LAN connectornya sendiri, yang dipaparkan dalam tab Connector.',
+
   'device.ingest.title': 'Endpoint ingest',
   'device.ingest.subtitle': 'Tempat terminal menghantar event, dan sejauh mana ia berjaya.',
   'device.ingest.pushed': 'Event via push',
   'device.ingest.pulled': 'Event via pull',
   'device.ingest.heartbeats': 'Heartbeat',
   'device.ingest.undecodable': 'Gagal dibaca',
+  /**
+   * What period a counter covers, because two kinds sit in one grid.
+   *
+   * `pushedEvents` and `pulledEvents` are `raw_events` counts — durable, and the total since the
+   * database was created. The heartbeat and undecodable counters are in-memory and start at zero
+   * on every restart, as does `lastContactAt`. Unlabelled, the pair read as one measurement and
+   * produced a panel that contradicted itself: 1127 events via push beside "Hubungan terakhir:
+   * belum pernah", after three restarts in one day. A panel that disagrees with itself teaches
+   * the operator to distrust all of it.
+   */
+  'device.ingest.scope.allTime': 'Jumlah dalam log scan mentah',
+  'device.ingest.scope.sinceRestart': 'Sejak pelayan dimulakan',
   'device.ingest.path': 'Laluan ingest',
   'device.ingest.auth': 'Kaedah auth',
   'device.ingest.lastContact': 'Hubungan terakhir',
+  /** Distinguished from "belum pernah", which is only true when the log is empty too. */
+  'device.ingest.lastContact.sinceRestart': 'Tiada sejak pelayan dimulakan',
   'device.ingest.rejected': 'Penolakan auth',
   'device.ingest.ignored': 'Tiada event',
   'device.ingest.ignored.note':
@@ -4730,6 +4764,19 @@ export const LABELS = {
   'device.health.ntp': 'Sumber NTP',
   'device.health.ntp.hint':
     'Gateway LAN lebih tahan daripada NTP awam — jam kekal tersinkron walaupun internet terputus.',
+  /**
+   * Which terminals one fleet-wide field cannot reach.
+   *
+   * `configureNtp` is an ISAPI operation. A protocol that does not declare it gets no clock button
+   * on its row, so without this sentence the field appears to cover the whole table while quietly
+   * excluding part of it — and a control that silently does nothing for some rows is the failure
+   * this project treats as worse than no control.
+   *
+   * A full sentence appended to the hint rather than a slot inside it, because it is only
+   * sometimes true and a slot would leave its punctuation stranded when every row is reachable.
+   */
+  'device.health.ntp.excluded':
+    'Tidak dipakai pada {names} — protokol terminal itu tiada konfigurasi NTP, jadi barisnya tiada butang jam.',
   'device.health.empty': 'Tiada terminal untuk diperiksa.',
   'device.health.column.terminal': 'Terminal',
   'device.health.column.capacity': 'Kapasiti',
@@ -4742,6 +4789,30 @@ export const LABELS = {
   'device.health.detail.driftTarget': 'Sasaran jam',
   'device.health.detail.unmeasured': 'Tidak diukur',
   'device.health.detail.lastSeen': 'Dilihat terakhir',
+
+  /**
+   * A clock cell the protocol has no reading for.
+   *
+   * `devices/health.ts` wraps `readClock` in `supports()` and returns nulls for a protocol that
+   * has none — correctly, because claiming the terminal cannot read its own clock would be false.
+   * This table then rendered those nulls as empty cells, which is indistinguishable from "not
+   * checked yet" and from "the unit is unreachable". That is exactly the confusion
+   * `DriverCapabilities` exists to remove.
+   *
+   * The visible token is short because the column is `w-24`; the sentences are the `title` and
+   * the accessible name, and each names **which column** it answers — the same rule `BoolMark`
+   * follows, because a cell reporting an absence on its own does not say what is absent.
+   *
+   * Only drawn where the value is missing. A dial-out terminal's drift is measured at handshake,
+   * so a stored figure is a real measurement and is still shown.
+   */
+  'device.health.notOnProtocol': 'Tiada pada protokol',
+  'device.health.clock.undeclared':
+    'Sasaran jam: protokol terminal ini tiada bacaan jam atas permintaan, jadi tiada apa untuk diukur dari skrin ini.',
+  'device.health.clockMode.undeclared':
+    'Mod jam: protokol terminal ini tidak melaporkan cara jamnya ditetapkan.',
+  'device.health.clock.undeclared.note':
+    'Protokol terminal ini tiada bacaan jam atas permintaan — tiada apa untuk dihubungi, jadi sasaran jam diukur ketika terminal menghubungi pelayan dan bukan dari skrin ini. Sel kosong di sini bukan terminal yang gagal diperiksa.',
   'device.health.pastRecords':
     'Membetulkan jam tidak mengubah cap masa yang sudah direkod. Rekod lampau kekal dengan kesilapannya, dan sasaran yang diukur ketika itu disimpan bersama setiap baris supaya ia masih boleh dinilai kemudian.',
   'device.health.ntp.done':

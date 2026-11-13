@@ -71,11 +71,17 @@ import {
 } from '../lib/operations-api';
 import {
   DeviceVendor,
+  DriverOperation,
   VENDOR_PROTOCOLS,
+  declares,
   defaultProtocolFor,
   isCallbackProtocol,
+  supports,
+  unavailableReason,
   usesStoredCredentials,
+  type DriverCapabilities,
   type LabelKey,
+  type UnavailableReason,
 } from '@attendance/shared';
 
 /** What `/api/ingest/stats` reports for the callback path. See `iclockStats()` on the server. */
@@ -172,6 +178,20 @@ interface DeviceRow {
    * `status` cannot say so: reconcile stops touching the row once it is assigned.
    */
   agent: { id: number; name: string; status: string } | null;
+  /**
+   * What this exact unit's driver says it can be asked to do, or null when nothing can drive it.
+   *
+   * Sent with every row by `/api/devices` — `capabilitiesFor` in `devices/registry.ts` — and the
+   * only thing on this screen allowed to decide whether a control or a reading applies to a
+   * terminal. The field has been in the response since the device editor started rendering its
+   * tabs from it; this screen simply never read it, so two fleet tabs offered one protocol's
+   * controls to every protocol and rendered the resulting absences as blanks.
+   *
+   * Declared here rather than re-derived from `protocol`, because a second capability list in the
+   * browser is one free to drift from the driver it describes. That is the same reason the
+   * connector selector in `DeviceDialog` no longer has a protocol gate.
+   */
+  capabilities: DriverCapabilities | null;
   syncState: {
     lastSerialNo: string;
     lastSyncAt: string | null;
@@ -202,6 +222,52 @@ interface DeviceRow {
  */
 function reachabilityOf(protocol: string): 'inbound' | 'outbound' {
   return isCallbackProtocol(protocol) ? 'outbound' : 'inbound';
+}
+
+// ---------------------------------------------------------------------------
+// Reading a capability on a fleet row
+//
+// The same three questions, asked the same way, as `DeviceEditorPage` asks per terminal — and
+// against the same `DriverCapabilities` the same route sends. These are pass-throughs to the
+// shared predicates and hold no list of their own, which is the part that must not be duplicated:
+// one protocol's answers live in its driver, and both screens read them from there.
+//
+//   declared and supported   — draw the control, enabled.
+//   declared and unavailable — draw it disabled, with the driver's reason on it. Hiding it would
+//                              hide the explanation, which is the actionable half.
+//   not declared             — draw nothing. There is no concept to explain, and a greyed control
+//                              for an operation the vendor never had reads as a fault or as a
+//                              missing grant.
+// ---------------------------------------------------------------------------
+
+/** Whether this terminal can be asked to do one thing right now. */
+function canDo(device: DeviceRow, operation: DriverOperation): boolean {
+  return device.capabilities !== null && supports(device.capabilities, operation);
+}
+
+/** The driver's own reason this unit cannot perform an operation it has, or null. */
+function why(device: DeviceRow, operation: DriverOperation): UnavailableReason | null {
+  return device.capabilities === null ? null : unavailableReason(device.capabilities, operation);
+}
+
+/** Whether the protocol has no concept of an operation at all — the state that draws nothing. */
+function undeclared(device: DeviceRow, operation: DriverOperation): boolean {
+  return device.capabilities === null || !declares(device.capabilities, operation);
+}
+
+/**
+ * Whether an absent clock reading is a fact about the protocol rather than a failed probe.
+ *
+ * `devices/health.ts` already asks this question correctly — every read is wrapped in
+ * `supports()`, so a protocol with no clock returns null instead of claiming the terminal cannot
+ * read its own. This is the rendering half of it.
+ *
+ * Null capabilities deliberately answer false. Nothing can drive that unit at all, and its row
+ * already carries the driver's refusal in the Warnings cell; a marker here would explain the same
+ * fact a second time, in weaker words.
+ */
+function noClockOnProtocol(device: DeviceRow): boolean {
+  return device.capabilities !== null && !declares(device.capabilities, DriverOperation.readClock);
 }
 
 
@@ -1363,15 +1429,39 @@ function ConnectionPanel(): ReactNode {
   const mode = String(environment?.['connectorMode'] ?? '—');
 
   /*
-    Only terminals this server reaches itself. One behind a connector is pointed at the connector
-    from its own editor tab — this server cannot open a connection to it, and a button that tries
-    is a request that hangs until it times out.
+    Terminals this server can point at itself, which is two conditions and not one.
+
+    Reached directly: one behind a connector is pointed at the connector from its own editor tab —
+    this server cannot open a connection to it, and a button that tries is a request that hangs
+    until it times out.
+
+    And declaring `configureCallback`: a dial-out terminal collects its own work and has no push
+    target to write, so the button below would have sent it this server's `/hik/events` and failed
+    at the route. The protocol already says so; nothing here needs to know which protocol it is.
   */
-  const direct = devices.filter((device) => device.agentId === null);
+  const pushTargets = devices.filter(
+    (device) => device.agentId === null && canDo(device, DriverOperation.configureCallback),
+  );
 
   /** Terminals on the callback path, and those among them that can never be matched. */
   const callbackTerminals = devices.filter((device) => isCallbackProtocol(device.protocol));
   const missingSerial = callbackTerminals.filter((device) => device.serialNumber === null);
+
+  /*
+    Which of them this server's own `/iclock` listener will ever see.
+
+    The counters below come from `iclockStats()`, which measures that listener and nothing else. A
+    terminal assigned to a connector dials the connector's listener on its own LAN and its records
+    arrive here relayed in batches, so none of its traffic passes through the counted path. On a
+    site whose only dial-out terminal is behind a connector the block therefore showed records 0,
+    handshakes 0, unknown serial 0 permanently — which reads as ZKTeco ingest being broken rather
+    than as being measured in the wrong place.
+
+    `agentId` is what decides it, not the protocol: the protocol is what picks the listener, the
+    connector is what decides whose listener it is.
+  */
+  const callbackDirect = callbackTerminals.filter((device) => device.agentId === null);
+  const callbackViaAgent = callbackTerminals.filter((device) => device.agentId !== null);
 
   /*
     The address as the terminal must be configured with it, not as a bare path.
@@ -1424,18 +1514,31 @@ function ConnectionPanel(): ReactNode {
       />
 
       <PanelBody className="space-y-4">
+        {/*
+          Two kinds of counter in one grid, and each now says which it is.
+
+          The event totals are `raw_events` counts: durable, and the total since the database was
+          created. The heartbeat and undecodable counters live in a module-level object in
+          `ingest/routes.ts` and start again at zero on every restart — as does the last contact
+          below. Unlabelled, the two read as one measurement, and the panel contradicted itself:
+          1127 events via push beside "last contact: never", on a server restarted three times
+          that day. A panel that disagrees with itself teaches the operator to distrust all of it.
+        */}
         <div className="grid gap-4 sm:grid-cols-4">
           <StatTile
             label={<T k="device.ingest.pushed" />}
             value={String(stats?.pushedEvents ?? 0)}
+            hint={<T k="device.ingest.scope.allTime" />}
           />
           <StatTile
             label={<T k="device.ingest.pulled" />}
             value={String(stats?.pulledEvents ?? 0)}
+            hint={<T k="device.ingest.scope.allTime" />}
           />
           <StatTile
             label={<T k="device.ingest.heartbeats" />}
             value={String(stats?.heartbeats ?? 0)}
+            hint={<T k="device.ingest.scope.sinceRestart" />}
           />
           {/*
             A non-zero count means the terminal is reaching us and we are discarding the
@@ -1445,6 +1548,7 @@ function ConnectionPanel(): ReactNode {
             label={<T k="device.ingest.undecodable" />}
             value={String(stats?.undecodable ?? 0)}
             tone={(stats?.undecodable ?? 0) > 0 ? 'danger' : 'neutral'}
+            hint={<T k="device.ingest.scope.sinceRestart" />}
           />
         </div>
 
@@ -1457,11 +1561,20 @@ function ConnectionPanel(): ReactNode {
             label={<T k="device.ingest.auth" />}
             value={stats?.authMethod ?? 'MD5digest'}
           />
+          {/*
+            "Never" is only true when the log is empty too. This value is in memory, so after a
+            restart it is absent while the durable totals above are not — and reading "never"
+            beside 1127 events is what made the panel contradict itself.
+          */}
           <KeyValue
             label={<T k="device.ingest.lastContact" />}
             value={
               stats?.lastContactAt === null || stats?.lastContactAt === undefined
-                ? t('device.row.neverSeen')
+                ? t(
+                    (stats?.pushedEvents ?? 0) + (stats?.pulledEvents ?? 0) > 0
+                      ? 'device.ingest.lastContact.sinceRestart'
+                      : 'device.row.neverSeen',
+                  )
                 : formatDateTime(stats.lastContactAt)
             }
           />
@@ -1508,10 +1621,55 @@ function ConnectionPanel(): ReactNode {
         <>
           <PanelSection
             title={<T k="device.ingest.callback.title" />}
-            subtitle={<T k="device.ingest.callback.subtitle" />}
+            /*
+              "Point the terminal at the address below" is false when nothing dials this server:
+              every dial-out terminal here is pointed at its connector instead, and the address
+              below is not the one to configure. Two keys rather than a slot, because the two
+              sentences say different things rather than one with a hole in it.
+            */
+            subtitle={
+              <T
+                k={
+                  callbackDirect.length === 0
+                    ? 'device.ingest.callback.subtitle.viaAgent'
+                    : 'device.ingest.callback.subtitle'
+                }
+              />
+            }
           />
 
           <PanelBody className="space-y-4">
+            {/*
+              Above the counters, not below them.
+
+              The zeros are what somebody reads first, and this is the sentence that decides
+              whether they read them as a fault. Info rather than warn: a terminal reached through
+              a connector is the arrangement working as designed, and amber would send somebody to
+              fix it.
+            */}
+            {callbackViaAgent.length > 0 && (
+              <PanelNote tone="info" icon={<Server className="size-3.5" aria-hidden />}>
+                <T
+                  k="device.ingest.callback.viaAgent.note"
+                  vars={{
+                    names: callbackViaAgent
+                      .map((device) =>
+                        device.agent === null
+                          ? device.name
+                          : `${device.name} (${device.agent.name})`,
+                      )
+                      .join(', '),
+                  }}
+                />
+                {callbackDirect.length === 0 && (
+                  <>
+                    {' '}
+                    <T k="device.ingest.callback.viaAgent.only" />
+                  </>
+                )}
+              </PanelNote>
+            )}
+
             <div className="grid gap-4 sm:grid-cols-4">
               <StatTile
                 label={<T k="device.ingest.callback.records" />}
@@ -1706,7 +1864,7 @@ function ConnectionPanel(): ReactNode {
       )}
 
       {/* Writing the push target is the `sync` grant, so the section exists only for it. */}
-      {can('settings.devices', 'sync') && direct.length > 0 && (
+      {can('settings.devices', 'sync') && pushTargets.length > 0 && (
         <>
           <PanelSection
             title={<T k="device.push.title" />}
@@ -1731,7 +1889,7 @@ function ConnectionPanel(): ReactNode {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {direct.map((device) => (
+              {pushTargets.map((device) => (
                 <Button
                   key={device.id}
                   variant="ghost"
@@ -1784,6 +1942,26 @@ function ModeCard({
 // ---------------------------------------------------------------------------
 // Health and clock
 // ---------------------------------------------------------------------------
+
+/**
+ * A cell whose value the protocol has no concept of.
+ *
+ * Words rather than the `—` that stood here, because a dash is read as "no value" and that is the
+ * one thing this is not: nothing was attempted, because there is nothing to attempt. An empty cell
+ * is indistinguishable from "not checked yet" and from "the unit is not answering", which is the
+ * confusion `DriverCapabilities` was created to remove.
+ *
+ * `label` carries the sentence and must name **which column** it answers — the rule `BoolMark`
+ * follows, and for the same reason: a cell reporting an absence on its own does not say what is
+ * absent. It is the tooltip and the accessible name at once, so the mark is never nameless.
+ */
+function NotOnProtocol({ label }: { label: string }): ReactNode {
+  return (
+    <span className="text-[11px] text-slate-400 italic" title={label} aria-label={label}>
+      <T k="device.health.notOnProtocol" />
+    </span>
+  );
+}
 
 function HealthPanel(): ReactNode {
   const { t, tEnum } = useLabels();
@@ -1870,6 +2048,23 @@ function HealthPanel(): ReactNode {
     return drift !== null && Math.abs(drift) > 30;
   }).length;
 
+  /*
+    Which terminals one fleet-wide NTP source can reach.
+
+    `configureNtp` is an ISAPI operation; TA Push does not declare it. So this field governed part
+    of the table while appearing to govern all of it — and the clock button on a row it could not
+    reach was a control that quietly did nothing. The row buttons are gated below; the field states
+    the exclusion, and disappears when no row declares the operation at all.
+
+    `undeclared` rather than `canDo`, so a terminal whose driver declares NTP and reports it
+    unavailable still counts as in scope: its button is drawn disabled carrying the reason, and
+    that button needs this field beside it.
+  */
+  const ntpReachable = devices.filter(
+    (device) => !undeclared(device, DriverOperation.configureNtp),
+  );
+  const ntpExcluded = devices.filter((device) => undeclared(device, DriverOperation.configureNtp));
+
   return (
     <>
       <PanelSection
@@ -1896,13 +2091,31 @@ function HealthPanel(): ReactNode {
           </PanelNote>
         )}
 
-        {mayFixClock && (
+        {mayFixClock && ntpReachable.length > 0 && (
           <div className="max-w-md">
             <Field
               label={<T k="device.health.ntp" />}
               value={ntpHost}
               onChange={(event) => setNtpHost(event.target.value)}
-              hint={<T k="device.health.ntp.hint" />}
+              /*
+                The scope sits in the hint, which is where a rule about one field belongs. A
+                separate note would be a second strip in a panel that already carries one, and the
+                exclusion only matters to somebody about to type in this box.
+              */
+              hint={
+                <>
+                  <T k="device.health.ntp.hint" />
+                  {ntpExcluded.length > 0 && (
+                    <>
+                      {' '}
+                      <T
+                        k="device.health.ntp.excluded"
+                        vars={{ names: ntpExcluded.map((device) => device.name).join(', ') }}
+                      />
+                    </>
+                  )}
+                </>
+              }
             />
           </div>
         )}
@@ -1930,6 +2143,14 @@ function HealthPanel(): ReactNode {
           const expanded = open === device.id;
           // Offered only where the check found it on: elsewhere the control would do nothing.
           const remoteCheckOn = warnings.some((warning) => warning.key === 'device.warning.remoteCheck');
+          /*
+            Whether a missing clock reading is the protocol rather than the probe.
+
+            Only consulted where the value is absent. A dial-out terminal's drift is measured when
+            it dials in, so a stored figure is a real measurement and is still the thing to show.
+          */
+          const noClock = noClockOnProtocol(device);
+          const ntpReason = why(device, DriverOperation.configureNtp);
 
           return (
             <Fragment key={device.id}>
@@ -1943,17 +2164,26 @@ function HealthPanel(): ReactNode {
               >
                 <td className="px-5 py-2.5 font-medium text-slate-800">{device.name}</td>
                 <td className="px-2 py-2.5 text-right font-mono text-xs tabular-nums">
-                  {drift === null ? (
-                    <span className="text-slate-300">—</span>
-                  ) : (
+                  {drift !== null ? (
                     <span className={off ? 'font-semibold text-amber-700' : 'text-slate-600'}>
                       {drift > 0 ? '+' : ''}
                       {drift}s
                     </span>
+                  ) : noClock ? (
+                    <NotOnProtocol label={t('device.health.clock.undeclared')} />
+                  ) : (
+                    // A dash is right here and only here: the operation exists and no reading was
+                    // obtained, which is what "no value" means.
+                    <span className="text-slate-300">—</span>
                   )}
                 </td>
                 <td className="px-2 py-2.5 font-mono text-xs text-slate-600">
-                  {check?.clockMode ?? device.clockMode ?? '—'}
+                  {(check?.clockMode ?? device.clockMode) ??
+                    (noClock ? (
+                      <NotOnProtocol label={t('device.health.clockMode.undeclared')} />
+                    ) : (
+                      '—'
+                    ))}
                 </td>
                 <td className="px-2 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">
                   {check?.enrolled ?? device.enrolled}/{check?.faceCapacity ?? device.faceCapacity}
@@ -1973,12 +2203,23 @@ function HealthPanel(): ReactNode {
                 </td>
                 <td className="px-2 py-2.5 pr-4">
                   <RowActions>
-                    {mayFixClock && (
+                    {/*
+                      Drawn only where the protocol has NTP to configure, and disabled carrying the
+                      driver's own reason where it has it but this unit cannot. Ungated, this
+                      offered a clock fix on every row and the ones it could not reach failed at
+                      the route — a control that does nothing for some rows teaches the operator
+                      that the screen guesses.
+                    */}
+                    {mayFixClock && !undeclared(device, DriverOperation.configureNtp) && (
                       <RowAction
                         icon={<Clock className="size-4" aria-hidden />}
-                        label={t('device.health.row.fixClock')}
+                        label={
+                          ntpReason === null
+                            ? t('device.health.row.fixClock')
+                            : t(ntpReason.key, ntpReason.vars)
+                        }
                         tone={off ? 'warn' : 'edit'}
-                        disabled={busy || ntpHost.trim() === ''}
+                        disabled={busy || ntpHost.trim() === '' || ntpReason !== null}
                         onClick={() => void fixClock(device)}
                       />
                     )}
@@ -2019,14 +2260,21 @@ function HealthPanel(): ReactNode {
                       <Detail
                         label={<T k="device.health.detail.driftTarget" />}
                         value={
-                          drift === null
-                            ? t('device.health.detail.unmeasured')
-                            : `${String(drift)}s`
+                          drift !== null
+                            ? `${String(drift)}s`
+                            : noClock
+                              ? // "Not measured" would be the wrong half-truth here: nothing
+                                // measures it from this screen on this protocol.
+                                <T k="device.health.notOnProtocol" />
+                              : t('device.health.detail.unmeasured')
                         }
                       />
                       <Detail
                         label={<T k="device.detail.clockMode" />}
-                        value={check?.clockMode ?? device.clockMode ?? '—'}
+                        value={
+                          (check?.clockMode ?? device.clockMode) ??
+                          (noClock ? <T k="device.health.notOnProtocol" /> : '—')
+                        }
                       />
                       <Detail
                         label={<T k="device.detail.firmware" />}
@@ -2060,6 +2308,21 @@ function HealthPanel(): ReactNode {
                     {check?.error !== undefined && (
                       <PanelNote tone="danger" className="mt-3">
                         {check.error}
+                      </PanelNote>
+                    )}
+
+                    {/*
+                      Info, not warn. A protocol with fewer concepts than Hikvision is information;
+                      amber would read as a fault to chase, which is the reading this whole change
+                      exists to remove. Same tone, and same reason, as `device.editor.scope.limited`.
+                    */}
+                    {noClock && (
+                      <PanelNote
+                        tone="info"
+                        className="mt-3"
+                        icon={<Clock className="size-3.5" aria-hidden />}
+                      >
+                        <T k="device.health.clock.undeclared.note" />
                       </PanelNote>
                     )}
 
